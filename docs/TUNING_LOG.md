@@ -74,3 +74,12 @@ The user felt the legs worse after the 00:32 deploy. Reverted for an A/B
 comparison. Lesson: user perception overrides the metrics; part of the forward
 bias may be the ground truth's camera-facing bias, and a change trading swing
 following or jitter for static accuracy should not be deployed.
+
+## 2026-10-17 00:52 - bouncing: feet below the hips (a95e212)
+
+Observed: fast squat bounces / small hops never meet the zero-velocity stance
+test; after 1.5 s the legs had no anchor and no dead reckoning, the straight-leg
+prior swung the feet ~40 cm backward (shins tilted forward). Changed: in that
+case only, a prior keeps the ankle below its hip joint and near the floor.
+Bounce window: foot_far 7.6% -> 0.4%, standing_air 1.4% -> 0.7%. Kinect median
+L/R 15.9/14.8 -> 15.8/14.7 cm, p90 36.1/40.7 -> 35.2/37.0 cm. Knee jitter +4%.
