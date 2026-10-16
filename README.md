@@ -16,10 +16,38 @@ Full-body tracking in SteamVR with only **3 SlimeVR trackers** (both ankles + wa
 trackers (ESP8266 + ICM-45686 + QMC6309)
    | UDP 6969, SlimeVR protocol + raw mag packet
    v
-driver_slimevr_lite.dll (SteamVR driver)       slimevr_lite_overlay.exe (dashboard UI)
+slimelite_engine.dll (hot-reloaded)            slimevr_lite_overlay.exe (dashboard UI)
    tracker hub -> mag calibration + heading      <-- localhost JSON (docs/IPC.md) -->
-   body solver -> waist / left foot / right foot virtual trackers
+   body solver, calibration, session recorder
+   ^ C ABI (engine/include/slimelite/engine_api.h)
+driver_slimevr_lite.dll (thin SteamVR host: HMD/controller poses in, 3 virtual trackers out)
 ```
+
+## Changing the algorithm without restarting SteamVR
+
+The SteamVR driver is a thin host that loads `slimelite_engine.dll` from a temporary copy
+and reloads it when the file changes. Rebuilding is enough:
+
+```
+cmake --build build --config Release --target slimelite_engine
+```
+
+A post-build step copies the engine into the installed driver folder; within a second the
+running driver hands the state over (tracker addresses, mag headings, floor, recording
+file) to the new engine and continues. The overlay is restarted the same way when it is
+rebuilt. Only changes to `driver/` or to `engine_api.h` need a SteamVR restart (and an
+`install.ps1`); the host refuses an engine built against another API version.
+
+`slimelite_engine_host.exe <engine.dll>` runs the engine with a fake headset, without
+SteamVR, to test the reload path.
+
+## Session recordings
+
+While SteamVR runs, every raw tracker packet, every SteamVR device pose (headset,
+controllers), the engine outputs, calibrations and config snapshots are written to
+`%LOCALAPPDATA%\SlimeVR-liteecordings\session_*.jsonl` (about 400 MB per hour, toggle
+in the overlay settings). Format: `engine/src/recorder.h`. They are meant for offline
+replay, tuning and training.
 
 ## Repository
 

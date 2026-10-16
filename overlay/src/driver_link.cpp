@@ -99,6 +99,12 @@ DriverState parseState(const json& j) {
     s.settings.footPlantStrength = getFloat(set, "footPlantStrength", def.footPlantStrength);
     s.settings.inertialWeight = getFloat(set, "inertialWeight", def.inertialWeight);
     s.settings.velocityPrediction = getBool(set, "velocityPrediction", def.velocityPrediction);
+    s.settings.recording = getBool(set, "recording", def.recording);
+
+    const json& rec = getObject(j, "recording");
+    s.recording.active = getBool(rec, "active", false);
+    s.recording.file = getString(rec, "file", "");
+    s.recording.megabytes = getFloat(rec, "megabytes", 0.0f);
 
     if (auto it = j.find("trackers"); it != j.end() && it->is_array()) {
         for (const json& t : *it)

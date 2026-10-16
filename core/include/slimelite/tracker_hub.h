@@ -8,6 +8,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <nlohmann/json.hpp>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -54,6 +55,8 @@ struct TrackerSnapshot {
 class TrackerHub {
 public:
 	using MagCalibrationCallback = std::function<void(const std::string& mac, const MagCalibration&)>;
+	// Every parsed packet, from the network thread (recording). Set before start().
+	using EventSink = std::function<void(const std::string& mac, const proto::Event& e, double t)>;
 
 	TrackerHub();
 	~TrackerHub();
@@ -68,11 +71,17 @@ public:
 	void setMagSettings(bool enabled, const HeadingFilterSettings& s);
 	// Called from the network thread when a calibration is found (guided or online)
 	void onMagCalibration(MagCalibrationCallback cb);
+	void setEventSink(EventSink sink) { m_eventSink = std::move(sink); }
 	// Known calibration for a tracker (from the config), applied when it connects
 	void setStoredMagCalibration(const std::string& mac, const MagCalibration& cal);
 	void startGuidedMagCalibration(const std::string& mac);
 	void cancelGuidedMagCalibration(const std::string& mac);
 	void resetMagCalibration(const std::string& mac);
+
+	// Hot reload of the engine: tracker addresses and headings, so the trackers
+	// keep streaming to the new engine without reconnecting. Import before start().
+	nlohmann::json exportHandover() const;
+	void importHandover(const nlohmann::json& j, double now);
 
 	// Entry points used by the network thread, public for the replay tool
 	void processEvent(const std::string& mac, const proto::Event& e, double now);
@@ -87,6 +96,7 @@ private:
 	std::map<std::string, std::unique_ptr<Tracker>> m_trackers;
 	std::map<std::string, MagCalibration> m_storedMag;
 	MagCalibrationCallback m_magCallback;
+	EventSink m_eventSink;
 	bool m_magEnabled = true;
 	HeadingFilterSettings m_headingSettings;
 

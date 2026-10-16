@@ -1,0 +1,20 @@
+# Copies SRC into DST if DST exists (the installed SteamVR driver folder).
+# With RESTART_OVERLAY, stops the running overlay first and starts the new one.
+if(NOT IS_DIRECTORY "${DST}")
+  return()
+endif()
+get_filename_component(name "${SRC}" NAME)
+if(RESTART_OVERLAY)
+  execute_process(COMMAND taskkill /IM "${name}" /F OUTPUT_QUIET ERROR_QUIET RESULT_VARIABLE killed)
+endif()
+execute_process(COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${SRC}" "${DST}/${name}"
+                RESULT_VARIABLE res)
+if(NOT res EQUAL 0)
+  message(WARNING "hot deploy: could not copy ${name} to ${DST}")
+  return()
+endif()
+message(STATUS "hot deploy: ${name} -> ${DST}")
+if(RESTART_OVERLAY AND killed EQUAL 0)
+  # Only restart it if it was running (i.e. SteamVR is up)
+  execute_process(COMMAND cmd /c start "" "${DST}/${name}")
+endif()

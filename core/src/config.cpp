@@ -61,6 +61,7 @@ bool Config::load(const std::filesystem::path& path) {
 			settings.footPlantStrength = s.value("footPlantStrength", settings.footPlantStrength);
 			settings.inertialWeight = s.value("inertialWeight", settings.inertialWeight);
 			settings.velocityPrediction = s.value("velocityPrediction", settings.velocityPrediction);
+			settings.recording = s.value("recording", settings.recording);
 		}
 		trackers.clear();
 		for (auto& [mac, t] : j.value("trackers", json::object()).items()) {
@@ -88,7 +89,7 @@ bool Config::load(const std::filesystem::path& path) {
 	}
 }
 
-bool Config::save(const std::filesystem::path& path) const {
+json Config::toJson() const {
 	json j;
 	j["mode"] = modeName(mode);
 	j["userHeight"] = userHeight;
@@ -98,7 +99,8 @@ bool Config::save(const std::filesystem::path& path) const {
 					 {"smoothing", settings.smoothing},
 					 {"footPlantStrength", settings.footPlantStrength},
 					 {"inertialWeight", settings.inertialWeight},
-					 {"velocityPrediction", settings.velocityPrediction}};
+					 {"velocityPrediction", settings.velocityPrediction},
+					 {"recording", settings.recording}};
 	json ts = json::object();
 	for (const auto& [mac, t] : trackers) {
 		json tj = {{"role", roleName(t.role)},
@@ -117,7 +119,11 @@ bool Config::save(const std::filesystem::path& path) const {
 		ts[mac] = tj;
 	}
 	j["trackers"] = ts;
+	return j;
+}
 
+bool Config::save(const std::filesystem::path& path) const {
+	json j = toJson();
 	std::error_code ec;
 	std::filesystem::create_directories(path.parent_path(), ec);
 	auto tmp = path;

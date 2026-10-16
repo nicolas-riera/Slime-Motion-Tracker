@@ -24,6 +24,7 @@ Read over USB serial (`GET INFO` / `GET CONFIG`) on 2026-10-16:
 |----------------------|-----------------------------------|---------|
 | B4:E6:2D:36:36:94    | `B4E62D363694_full_4MB.bin`       | `30C7844BF91B769EAAB1E6E592C78D118C33781FB1055707E8DB8744CA54D5B2` |
 | 2C:F4:32:7B:FF:D1    | `2CF4327BFFD1_full_4MB.bin`       | `A2501A5A909693B261357FD1C170FDCF87BC4065C8F165CAA7AA48A2B2861392` |
+| A4:CF:12:EE:B1:AB    | `A4CF12EEB1AB_full_4MB.bin`       | `2ECC5171AB8C236CBAE83C22171AAA4300DB0D3A82F82D0DA45829E091A4F3AF` |
 
 Add a row each time another tracker is backed up (`tools/flash_tracker.py` does it automatically).
 

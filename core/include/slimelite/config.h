@@ -3,6 +3,7 @@
 
 #include <filesystem>
 #include <map>
+#include <nlohmann/json.hpp>
 #include <optional>
 #include <string>
 
@@ -26,6 +27,7 @@ struct Settings {
 	double footPlantStrength = 0.7;
 	double inertialWeight = 0.5;
 	bool velocityPrediction = false;
+	bool recording = true;  // record sessions for offline tuning
 };
 
 struct TrackerConfig {
@@ -48,6 +50,7 @@ struct Config {
 	std::map<std::string, TrackerConfig> trackers;  // by MAC
 
 	static std::filesystem::path defaultPath();
+	nlohmann::json toJson() const;
 	bool load(const std::filesystem::path& path);
 	bool save(const std::filesystem::path& path) const;
 };

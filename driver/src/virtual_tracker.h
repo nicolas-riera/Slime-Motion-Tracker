@@ -5,7 +5,7 @@
 
 #include <string>
 
-#include "slimelite/body_solver.h"
+#include "slimelite/engine_api.h"
 
 namespace slimelite {
 
@@ -18,7 +18,7 @@ public:
 	const std::string& role() const { return m_role; }
 	bool isActive() const { return m_id != vr::k_unTrackedDeviceIndexInvalid; }
 
-	void updatePose(bool valid, const Pose& pose, const Vec3& velocity, bool sendVelocity);
+	void updatePose(const SlPose& pose, bool sendVelocity);
 
 	vr::EVRInitError Activate(uint32_t unObjectId) override;
 	void Deactivate() override;

@@ -42,21 +42,16 @@ vr::EVRInitError VirtualTracker::Activate(uint32_t unObjectId) {
 
 void VirtualTracker::Deactivate() { m_id = vr::k_unTrackedDeviceIndexInvalid; }
 
-void VirtualTracker::updatePose(bool valid, const Pose& pose, const Vec3& velocity, bool sendVelocity) {
+void VirtualTracker::updatePose(const SlPose& pose, bool sendVelocity) {
 	if (!isActive()) return;
 	vr::DriverPose_t p = emptyPose();
-	if (valid) {
+	if (pose.valid) {
 		p.poseIsValid = true;
 		p.result = vr::TrackingResult_Running_OK;
-		p.vecPosition[0] = pose.position.x;
-		p.vecPosition[1] = pose.position.y;
-		p.vecPosition[2] = pose.position.z;
-		p.qRotation = {pose.rotation.w, pose.rotation.x, pose.rotation.y, pose.rotation.z};
-		if (sendVelocity) {
-			p.vecVelocity[0] = velocity.x;
-			p.vecVelocity[1] = velocity.y;
-			p.vecVelocity[2] = velocity.z;
-		}
+		for (int i = 0; i < 3; i++) p.vecPosition[i] = pose.position[i];
+		p.qRotation = {pose.rotation[0], pose.rotation[1], pose.rotation[2], pose.rotation[3]};
+		if (sendVelocity)
+			for (int i = 0; i < 3; i++) p.vecVelocity[i] = pose.velocity[i];
 	} else {
 		// Keep the last position so SteamVR does not snap the tracker to the origin
 		p = m_pose;

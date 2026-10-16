@@ -153,6 +153,40 @@ void TrackerHub::resetMagCalibration(const std::string& mac) {
 	if (cb) cb(mac, MagCalibration{});
 }
 
+nlohmann::json TrackerHub::exportHandover() const {
+	std::lock_guard lock(m_mutex);
+	nlohmann::json arr = nlohmann::json::array();
+	for (const auto& [mac, t] : m_trackers) {
+		if (!t->snap.connected) continue;
+		arr.push_back({{"mac", mac},
+					   {"ip", t->snap.ip},
+					   {"port", ntohs(t->addr.sin_port)},
+					   {"bootCount", t->snap.bootCount},
+					   {"hasHeading", t->heading.hasHeading()},
+					   {"heading", t->heading.heading()}});
+	}
+	return {{"trackers", arr}, {"packetNumber", m_packetNumber}};
+}
+
+void TrackerHub::importHandover(const nlohmann::json& j, double t) {
+	std::lock_guard lock(m_mutex);
+	m_packetNumber = j.value("packetNumber", uint64_t(0));
+	for (const auto& tj : j.value("trackers", nlohmann::json::array())) {
+		std::string mac = tj.value("mac", "");
+		if (mac.empty()) continue;
+		Tracker& tr = trackerFor(mac);
+		tr.addr.sin_family = AF_INET;
+		tr.addr.sin_port = htons(tj.value("port", uint16_t(6969)));
+		std::string ip = tj.value("ip", "");
+		inet_pton(AF_INET, ip.c_str(), &tr.addr.sin_addr);
+		tr.snap.ip = ip;
+		tr.snap.connected = true;
+		tr.snap.bootCount = tj.value("bootCount", 0);
+		tr.lastPacketTime = t;
+		if (tj.value("hasHeading", false)) tr.heading.restore(tj.value("heading", 0.0));
+	}
+}
+
 TrackerHub::Tracker& TrackerHub::trackerFor(const std::string& mac) {
 	auto& p = m_trackers[mac];
 	if (!p) {
@@ -334,6 +368,7 @@ void TrackerHub::networkLoop() {
 			}
 			if (!mac.empty()) {
 				for (const auto& e : events) {
+					if (m_eventSink) m_eventSink(mac, e, t);
 					if (e.kind == proto::Event::Kind::Handshake) continue;
 					if (e.kind == proto::Event::Kind::SensorInfo)
 						sendTo(from, proto::sensorInfoAck(e.sensorId, e.sensorState));

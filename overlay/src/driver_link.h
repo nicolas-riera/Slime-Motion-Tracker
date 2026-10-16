@@ -55,6 +55,13 @@ struct DriverSettings {
     float footPlantStrength = 0.7f;
     float inertialWeight = 0.5f;
     bool velocityPrediction = false;
+    bool recording = true;
+};
+
+struct RecordingInfo {
+    bool active = false;
+    std::string file;
+    float megabytes = 0.0f;
 };
 
 struct OutputsInfo {
@@ -78,6 +85,7 @@ struct DriverState {
     DriverSettings settings;
     std::vector<TrackerInfo> trackers;
     OutputsInfo outputs;
+    RecordingInfo recording;
 };
 
 class DriverLink {

@@ -30,8 +30,10 @@ publishes and sends commands. The driver starts the overlay process when SteamVR
     "smoothing": 0.3,
     "footPlantStrength": 0.7,
     "inertialWeight": 0.5,
-    "velocityPrediction": false
+    "velocityPrediction": false,
+    "recording": true
   },
+  "recording": { "active": true, "file": "C:\...\recordings\session_20261016_223000.jsonl", "megabytes": 12.5 },
   "trackers": [
     {
       "mac": "B4:E6:2D:36:36:94",
@@ -73,6 +75,7 @@ Field notes:
   `disturbed` (anti-mag: field rejected, gyro only).
 - `mag.residual`: fit residual of the current calibration (lower is better, < 0.08 is good).
 - `outputs`: which virtual SteamVR trackers are currently published.
+- `recording`: session recording status (see `engine/src/recorder.h` for the file format).
 
 ## Overlay -> driver
 

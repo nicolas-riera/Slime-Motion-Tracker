@@ -93,6 +93,13 @@ public:
 	void updateCalibration(MagCalibration cal, const Quat& qWorld,
 						   const std::array<int16_t, 3>& raw);
 	void reset();
+	// Hot reload: resume with a known heading instead of re-acquiring
+	void restore(double heading) {
+		if (!m_cal.valid) return;
+		m_heading = heading;
+		m_initialized = true;
+		m_state = State::Ok;
+	}
 
 	void update(const Quat& qWorld, const std::array<int16_t, 3>& raw, double angularSpeed,
 				double dt, const HeadingFilterSettings& s);

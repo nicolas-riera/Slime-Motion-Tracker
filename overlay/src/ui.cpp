@@ -430,6 +430,15 @@ void drawSettings(DriverLink& link, const DriverState& s) {
     ImGui::Text("Inertial weight");
     settingSlider(link, "##inertialWeight", "inertialWeight", st.inertialWeight);
     settingCheckbox(link, "Velocity prediction", "velocityPrediction", st.velocityPrediction);
+
+    ImGui::SeparatorText("Recording");
+    settingCheckbox(link, "Record sessions (trackers, headset, controllers)", "recording", st.recording);
+    if (s.recording.active)
+        ImGui::TextColored(kGreen, "Recording: %.0f MB", s.recording.megabytes);
+    else
+        ImGui::TextColored(kGrey, "Not recording");
+    if (!s.recording.file.empty()) helpText(s.recording.file.c_str());
+    helpText("Used to replay sessions offline and tune the tracking. About 400 MB per hour.");
 }
 
 void drawFooter(const DriverState& s, bool connected, const FrameInfo& info) {
