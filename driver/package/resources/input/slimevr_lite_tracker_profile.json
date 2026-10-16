@@ -1,0 +1,13 @@
+{
+  "jsonid": "input_profile",
+  "controller_type": "slimevr_lite_tracker",
+  "device_class": "TrackedDeviceClass_GenericTracker",
+  "input_bindingui_mode": "controller_handed",
+  "should_show_binding_errors": false,
+  "input_source": {
+    "/pose/raw": {
+      "type": "pose",
+      "binding_image_point": [0, 0]
+    }
+  }
+}

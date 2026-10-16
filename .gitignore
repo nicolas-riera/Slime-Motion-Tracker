@@ -11,7 +11,7 @@ firmware/SlimeVR-Tracker-ESP/.pio/
 firmware/SlimeVR-Tracker-ESP/cache/
 
 # CMake / MSVC
-build/
+build*/
 out/
 .vs/
 *.user
