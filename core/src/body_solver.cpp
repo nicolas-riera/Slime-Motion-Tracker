@@ -468,6 +468,7 @@ BodyOutput BodySolver::update(const BodyInput& in) {
 	}
 	out.debug.neck = neck;
 	out.debug.hip0 = hip0;
+	for (int i = 0; i < 2; i++) out.debug.hipJoints[i] = hip + legOffset[i];
 	out.debug.standing = standing;
 
 	// ---- waist orientation in ankles-only mode: spine from hip to neck ----

@@ -74,7 +74,8 @@ int main(int argc, char** argv) {
 				 "standing,hip0_y,l_ins_y,r_ins_y,l_ins_sigma,r_ins_sigma,l_anchor_y,r_anchor_y,floor,"
 				 "ankle_floor,eye_h,lc_x,lc_y,lc_z,rc_x,rc_y,rc_z,"
 				 "hmd_yaw,rec_w_yaw,rec_w_tilt,w_yaw,w_tilt,l_shin_yaw,r_shin_yaw,hip0_x,hip0_z,"
-				 "l_td_swing,r_td_swing,l_td_h,r_td_h\n");
+				 "l_td_swing,r_td_swing,l_td_h,r_td_h,"
+				 "lkx,lky,lkz,rkx,rky,rkz,l_flex,r_flex,l_abd,r_abd\n");
 
 	Config config;
 	bool haveConfig = false;
@@ -242,8 +243,18 @@ int main(int argc, char** argv) {
 						 tilt(o.waist.rotation), rad2deg(bin.legs[0].shin.yawAngle()),
 						 rad2deg(bin.legs[1].shin.yawAngle()), o.debug.hip0.x, o.debug.hip0.z);
 			const auto& dbg = o.debug;
-			std::fprintf(csv, "%.3f,%.3f,%.4f,%.4f\n", dbg.touchdownSwing[0], dbg.touchdownSwing[1],
+			std::fprintf(csv, "%.3f,%.3f,%.4f,%.4f,", dbg.touchdownSwing[0], dbg.touchdownSwing[1],
 						 dbg.touchdownHeight[0], dbg.touchdownHeight[1]);
+			// Thigh direction in the pelvis frame: flexion (sagittal) and abduction
+			// (outward > 0), deg
+			std::array<double, 2> flex{}, abd{};
+			for (int i = 0; i < 2; i++) {
+				Vec3 th = o.waist.rotation.conj().rotate(o.knees[i] - dbg.hipJoints[i]);
+				flex[i] = rad2deg(std::atan2(-th.z, -th.y));
+				abd[i] = rad2deg(std::atan2(th.x * (i == 0 ? -1 : 1), std::hypot(th.y, th.z)));
+			}
+			std::fprintf(csv, "%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.1f,%.1f,%.1f,%.1f\n", o.knees[0].x, o.knees[0].y,
+						 o.knees[0].z, o.knees[1].x, o.knees[1].y, o.knees[1].z, flex[0], flex[1], abd[0], abd[1]);
 		}
 	}
 	std::fclose(csv);

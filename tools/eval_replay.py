@@ -5,7 +5,7 @@ implausible outputs (feet in the air while standing, skating, legs bent while th
 user stands straight...). Use them as guidance: always look at plots of the worst
 windows (tools/plot_replay.py) before changing the solver.
 
-Usage: python tools/eval_replay.py replay.csv [--window S] [--rec] [--worst N]
+Usage: python tools/eval_replay.py replay.csv [--window S] [--rec] [--worst N] [--from S] [--to S]
   --rec: evaluate the recorded engine outputs (rec_* columns) instead of the replay
 """
 import argparse
@@ -131,11 +131,13 @@ def main():
     ap.add_argument("--rec", action="store_true")
     ap.add_argument("--worst", type=int, default=3)
     ap.add_argument("--quiet", action="store_true", help="overall line only")
+    ap.add_argument("--from", dest="t_from", type=float, default=-1e18)
+    ap.add_argument("--to", dest="t_to", type=float, default=1e18)
     args = ap.parse_args()
 
     d = np.genfromtxt(args.csv, delimiter=",", names=True, invalid_raise=False)
     prefix = "rec_" if args.rec else ""
-    d = d[(d[prefix + "valid"] > 0)]
+    d = d[(d[prefix + "valid"] > 0) & (d["t"] >= args.t_from) & (d["t"] <= args.t_to)]
     if len(d) == 0:
         print("no valid frames")
         return

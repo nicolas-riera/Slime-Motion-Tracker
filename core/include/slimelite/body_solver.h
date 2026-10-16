@@ -105,6 +105,7 @@ struct BodyOutput {
 	// Solver internals, for the recorder and the offline replay
 	struct Debug {
 		Vec3 neck, hip0;
+		std::array<Vec3, 2> hipJoints;  // unsmoothed
 		double standing = 0;  // 0..1, how much the head height says "standing"
 		std::array<Vec3, 2> anchors, ins;
 		std::array<double, 2> insSigma{};  // 0 when the swing prediction is off
