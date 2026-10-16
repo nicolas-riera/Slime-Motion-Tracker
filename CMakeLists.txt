@@ -7,26 +7,20 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 include(FetchContent)
 
+# SOURCE_SUBDIR pointing nowhere: download only, we use the headers/sources directly
 FetchContent_Declare(openvr
   URL https://github.com/ValveSoftware/openvr/archive/refs/tags/v2.5.1.tar.gz
-  DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+  SOURCE_SUBDIR do-not-add)
 FetchContent_Declare(imgui
   URL https://github.com/ocornut/imgui/archive/refs/tags/v1.91.9.tar.gz
-  DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+  SOURCE_SUBDIR do-not-add)
 FetchContent_Declare(json
   URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
 
-# Only populate openvr/imgui: we use their headers/sources directly
-FetchContent_GetProperties(openvr)
-if(NOT openvr_POPULATED)
-  FetchContent_Populate(openvr)
-endif()
-FetchContent_GetProperties(imgui)
-if(NOT imgui_POPULATED)
-  FetchContent_Populate(imgui)
-endif()
-FetchContent_MakeAvailable(json)
+FetchContent_MakeAvailable(openvr imgui json)
 
 if(MSVC)
   add_compile_options(/W4 /permissive- /utf-8 /wd4100)
@@ -60,6 +54,9 @@ endif()
 # ---- offline tools ----
 add_executable(slimelite_replay tools/replay/replay.cpp)
 target_link_libraries(slimelite_replay PRIVATE slimelite_core)
+
+add_executable(slimelite_monitor tools/monitor/monitor.cpp)
+target_link_libraries(slimelite_monitor PRIVATE slimelite_core)
 
 add_executable(slimelite_tests tests/tests.cpp)
 target_link_libraries(slimelite_tests PRIVATE slimelite_core)
