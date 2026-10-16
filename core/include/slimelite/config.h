@@ -46,6 +46,9 @@ struct Config {
 	Mode mode = Mode::Three;
 	double userHeight = 1.75;
 	std::optional<double> measuredEyeHeight;
+	// Wall clock (Unix seconds) of the last successful calibrations, 0 = never
+	double lastFullCalibration = 0;
+	double lastQuickReset = 0;
 	Settings settings;
 	std::map<std::string, TrackerConfig> trackers;  // by MAC
 

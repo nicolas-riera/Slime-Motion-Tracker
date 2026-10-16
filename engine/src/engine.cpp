@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+#include <chrono>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
@@ -263,6 +264,11 @@ void Engine::frame(const SlFrameInput& fin, SlFrameOutput& fout) {
 		static const char* names[] = {"idle", "stand", "ski", "done", "error"};
 		m_recordedPhase = m_calPhase;
 		recordEvent("calibration", std::string(names[int(m_calPhase)]) + ": " + m_calMessage);
+		if (m_calPhase == CalPhase::Done) {
+			double wall = std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
+			(m_calQuick ? m_config.lastQuickReset : m_config.lastFullCalibration) = wall;
+			markDirty();
+		}
 	}
 	bool waistOk = out.valid && (m_config.mode == Mode::Ankles || in.hasWaist);
 	toSlPose(waistOk, out.waist, out.waistVelocity, fout.devices[SL_DEVICE_WAIST]);
@@ -501,6 +507,9 @@ void Engine::publishState(const std::vector<TrackerSnapshot>& trackers, const Bo
 		{"floorKnown", m_floorKnown},
 		{"calibrated", calibrated},
 		{"calibration", {{"phase", phases[int(m_calPhase)]}, {"countdown", countdown}, {"message", m_calMessage}}},
+		{"lastCalibration",
+		 {{"full", m_config.lastFullCalibration > 0 ? json(m_config.lastFullCalibration) : json(nullptr)},
+		  {"reset", m_config.lastQuickReset > 0 ? json(m_config.lastQuickReset) : json(nullptr)}}},
 		{"settings",
 		 {{"magEnabled", s.magEnabled},
 		  {"magSensitivity", s.magSensitivity},

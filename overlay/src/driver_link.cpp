@@ -90,6 +90,9 @@ DriverState parseState(const json& j) {
     s.calibration.phase = getString(cal, "phase", "idle");
     s.calibration.countdown = getFloat(cal, "countdown", 0.0f);
     s.calibration.message = getString(cal, "message", "");
+    const json& last = getObject(j, "lastCalibration");
+    if (auto it = last.find("full"); it != last.end() && it->is_number()) s.calibration.lastFull = it->get<double>();
+    if (auto it = last.find("reset"); it != last.end() && it->is_number()) s.calibration.lastReset = it->get<double>();
 
     const json& set = getObject(j, "settings");
     const DriverSettings def;

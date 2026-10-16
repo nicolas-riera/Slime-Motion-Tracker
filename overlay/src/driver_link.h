@@ -46,6 +46,9 @@ struct CalibrationInfo {
     std::string phase = "idle";  // idle|stand|ski|done|error
     float countdown = 0.0f;
     std::string message;
+    // Unix seconds of the last successful full calibration / quick reset
+    std::optional<double> lastFull;
+    std::optional<double> lastReset;
 };
 
 struct DriverSettings {

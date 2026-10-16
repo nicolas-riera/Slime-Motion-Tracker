@@ -24,6 +24,7 @@ publishes and sends commands. The driver starts the overlay process when SteamVR
   "floorKnown": true,
   "calibrated": true,
   "calibration": { "phase": "idle", "countdown": 0.0, "message": "" },
+  "lastCalibration": { "full": 1792187460.0, "reset": null },
   "settings": {
     "magEnabled": true,
     "magSensitivity": 0.5,
@@ -67,6 +68,8 @@ Field notes:
 - `calibration.phase`: `idle` | `stand` | `ski` | `done` | `error`.
   During `stand` and `ski`, `countdown` is the time left before the pose is captured.
   `message` is a human-readable instruction or error.
+- `lastCalibration`: wall clock (Unix seconds) of the last successful full calibration
+  and quick reset, `null` when never done. Persisted in the config.
 - `trackers[].role`: `waist` | `left_ankle` | `right_ankle` | `none`.
 - `battery`: 0..1, or `-1` when unknown. `rssi` in dBm, `0` when unknown.
 - `activity`: 0..1, smoothed angular speed. Lets the user find a tracker by shaking it.

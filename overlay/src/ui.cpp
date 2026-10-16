@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <ctime>
 #include <map>
 #include <string>
 #include <type_traits>
@@ -245,6 +246,31 @@ void drawSetup(DriverLink& link, const DriverState& s) {
         ImGui::TextColored(kOrange, "Floor height: unknown (set up the SteamVR play area)");
 }
 
+// "Label: 23:41 (38 min ago)", local time
+void lastCalibrationLine(const char* label, const std::optional<double>& when) {
+    if (!when) {
+        ImGui::TextColored(kGrey, "%s: never", label);
+        return;
+    }
+    std::time_t t = static_cast<std::time_t>(*when);
+    std::tm local{};
+    localtime_s(&local, &t);
+    char clock[16];
+    std::strftime(clock, sizeof(clock), "%H:%M", &local);
+    double now = std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
+    int minutes = static_cast<int>(std::max(0.0, now - *when) / 60.0);
+    char ago[32];
+    if (minutes < 1)
+        std::snprintf(ago, sizeof(ago), "just now");
+    else if (minutes < 60)
+        std::snprintf(ago, sizeof(ago), "%d min ago", minutes);
+    else if (minutes < 48 * 60)
+        std::snprintf(ago, sizeof(ago), "%dh%02d ago", minutes / 60, minutes % 60);
+    else
+        std::snprintf(ago, sizeof(ago), "%d days ago", minutes / (24 * 60));
+    ImGui::TextColored(kGrey, "%s: %s (%s)", label, clock, ago);
+}
+
 void drawCalibration(DriverLink& link, const DriverState& s) {
     const CalibrationInfo& cal = s.calibration;
     const bool running = isCalibrationRunning(cal.phase);
@@ -254,6 +280,8 @@ void drawCalibration(DriverLink& link, const DriverState& s) {
     else
         ImGui::TextColored(kOrange, "Status: not calibrated - run a full calibration");
     if (!s.floorKnown) ImGui::TextColored(kOrange, "Floor height unknown: heights may be off.");
+    lastCalibrationLine("Last full calibration", cal.lastFull);
+    lastCalibrationLine("Last quick reset", cal.lastReset);
 
     const float bigButtonH = ImGui::GetFrameHeight() * 2.2f;
     if (running) {

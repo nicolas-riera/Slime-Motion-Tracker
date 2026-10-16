@@ -59,6 +59,8 @@ bool Config::fromJson(const json& j) {
 		mode = modeFromName(j.value("mode", "three"));
 		userHeight = j.value("userHeight", 1.75);
 		measuredEyeHeight.reset();
+		lastFullCalibration = j.value("lastFullCalibration", 0.0);
+		lastQuickReset = j.value("lastQuickReset", 0.0);
 		if (j.contains("measuredEyeHeight") && j["measuredEyeHeight"].is_number())
 			measuredEyeHeight = j["measuredEyeHeight"].get<double>();
 		if (j.contains("settings")) {
@@ -103,6 +105,8 @@ json Config::toJson() const {
 	j["mode"] = modeName(mode);
 	j["userHeight"] = userHeight;
 	j["measuredEyeHeight"] = measuredEyeHeight ? json(*measuredEyeHeight) : json(nullptr);
+	j["lastFullCalibration"] = lastFullCalibration;
+	j["lastQuickReset"] = lastQuickReset;
 	j["settings"] = {{"magEnabled", settings.magEnabled},
 					 {"magSensitivity", settings.magSensitivity},
 					 {"smoothing", settings.smoothing},
