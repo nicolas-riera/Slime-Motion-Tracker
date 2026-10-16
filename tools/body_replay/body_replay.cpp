@@ -75,7 +75,7 @@ int main(int argc, char** argv) {
 				 "ankle_floor,eye_h,lc_x,lc_y,lc_z,rc_x,rc_y,rc_z,"
 				 "hmd_yaw,rec_w_yaw,rec_w_tilt,w_yaw,w_tilt,l_shin_yaw,r_shin_yaw,hip0_x,hip0_z,"
 				 "l_td_swing,r_td_swing,l_td_h,r_td_h,"
-				 "lkx,lky,lkz,rkx,rky,rkz,l_flex,r_flex,l_abd,r_abd\n");
+				 "lkx,lky,lkz,rkx,rky,rkz,l_flex,r_flex,l_abd,r_abd,l_ins_x,l_ins_z,r_ins_x,r_ins_z\n");
 
 	Config config;
 	bool haveConfig = false;
@@ -253,8 +253,9 @@ int main(int argc, char** argv) {
 				flex[i] = rad2deg(std::atan2(-th.z, -th.y));
 				abd[i] = rad2deg(std::atan2(th.x * (i == 0 ? -1 : 1), std::hypot(th.y, th.z)));
 			}
-			std::fprintf(csv, "%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.1f,%.1f,%.1f,%.1f\n", o.knees[0].x, o.knees[0].y,
+			std::fprintf(csv, "%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.1f,%.1f,%.1f,%.1f,", o.knees[0].x, o.knees[0].y,
 						 o.knees[0].z, o.knees[1].x, o.knees[1].y, o.knees[1].z, flex[0], flex[1], abd[0], abd[1]);
+			std::fprintf(csv, "%.4f,%.4f,%.4f,%.4f\n", dbg.ins[0].x, dbg.ins[0].z, dbg.ins[1].x, dbg.ins[1].z);
 		}
 	}
 	std::fclose(csv);
