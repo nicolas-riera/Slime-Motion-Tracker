@@ -46,3 +46,24 @@ sinks (0.5 s); swing target pulls the hip with a 5x sigma.
 | standing_air | 0.0023 / 0.0080 | 0.0029 / 0.0081 |
 | swing_follow (m) | 0.017 / 0.023 | 0.022 / 0.028 |
 | jit_foot (mm) | 0.546 / 0.556 | 0.561 / 0.575 |
+
+## 2026-10-17 00:32 - hip further back, from Kinect ground truth (see git log)
+
+Kinect ankle ground truth (tools/kinect_gt, session 232318 t=1810-2710 s) is now
+the main metric. Signed errors in the pelvis frame: feet on the floor 4-7 cm too
+far forward, stance ~7 cm too wide (both feet outward), plus a 5-8 cm bias toward
+the camera that is likely in the ground-truth extraction. Sweeps: knee valgus
+(thigh tilted medially) fixed the width but not the overall error (shin yaws are
+splayed 20-40 deg, so the shin's medial axis is not the body's); headBack and a
+horizontal hip back offset fixed the forward bias.
+
+Changed: headBack 0.050 -> 0.065 h, hipBack 0.029 h (horizontal).
+
+| ankle error vs Kinect (cm, L / R) | before | after |
+|---|---|---|
+| all, median | 15.9 / 14.8 | 11.0 / 12.6 |
+| on the floor, median | 14.1 / 11.7 | 9.5 / 10.2 |
+| lifted, median | 35.7 / 29.2 | 35.3 / 27.1 |
+
+Remaining: lifted feet 27-35 cm median error (vertical part 17-24 cm): the
+solved foot does not go as high as the real one during knee lifts.
