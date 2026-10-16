@@ -73,7 +73,9 @@ private:
 };
 
 struct HeadingFilterSettings {
-	double timeConstant = 6.0;  // seconds, heading low-pass
+	// Seconds, heading low-pass. The gyro drifts ~1 deg/min while indoor fields vary
+	// by tens of degrees across a room: correct slowly
+	double timeConstant = 20.0;
 	double sensitivity = 0.5;  // 0 = tolerant, 1 = rejects small disturbances
 	double clearTime = 1.0;  // seconds of consistent field before trusting it again
 	double reacquireTime = 10.0;  // persistent heading-only offset: slowly re-acquire
@@ -103,6 +105,13 @@ public:
 
 	void update(const Quat& qWorld, const std::array<int16_t, 3>& raw, double angularSpeed,
 				double dt, const HeadingFilterSettings& s);
+	// The device orientation jumped (sensor glitch, fusion reset): the gyro is wrong
+	// this time, so re-lock onto the next clean mag samples instead of rejecting them
+	void gyroGlitch() {
+		if (!m_initialized) return;
+		m_relock = true;
+		m_relockSin = m_relockCos = m_relockTime = 0;
+	}
 
 	// Yaw to apply on the left of the device orientation: q_corrected = Ry(-h) * q
 	bool hasHeading() const { return m_initialized; }
@@ -124,6 +133,9 @@ private:
 	double m_lastNorm = 0, m_lastDip = 0;
 	// Initial acquisition: circular mean of the first consistent samples
 	double m_acqSin = 0, m_acqCos = 0, m_acqTime = 0;
+	// Re-lock after a gyro glitch: circular mean of the innovation
+	bool m_relock = false;
+	double m_relockSin = 0, m_relockCos = 0, m_relockTime = 0;
 };
 
 // Heading of the horizontal part of v, increasing with rotations around +Y

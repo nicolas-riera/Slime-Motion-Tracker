@@ -177,6 +177,15 @@ static void testHeadingFilter() {
 	// Back to normal: recovers
 	for (int i = 0; i < 200; i++) hf.update(drift * truth, mag.raw(truth, rng), 0.0, dt, s);
 	CHECK(hf.state() == HeadingFilter::State::Ok, "not recovered after disturbance");
+
+	// Gyro glitch: the device yaw jumps by 180 deg while the field does not move. The
+	// mag must win within a second instead of being rejected as a disturbance
+	Quat jumped = Quat::yaw(kPi) * drift;
+	hf.gyroGlitch();
+	for (int i = 0; i < 50; i++) hf.update(jumped * truth, mag.raw(truth, rng), 0.0, dt, s);
+	Quat afterGlitch = Quat::yaw(-hf.heading()) * jumped * truth;
+	CHECK(angleBetween(afterGlitch, corrected) < 1.0 && hf.state() == HeadingFilter::State::Ok,
+		  "no re-lock after a gyro glitch: %.2f deg", angleBetween(afterGlitch, corrected));
 }
 
 static void testMounting() {

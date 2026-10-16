@@ -20,6 +20,7 @@ void HeadingFilter::reset() {
 	m_initialized = false;
 	m_cleanTime = m_headingOnlyTime = m_rejectRatio = 0;
 	m_acqSin = m_acqCos = m_acqTime = 0;
+	m_relock = false;
 }
 
 void HeadingFilter::updateCalibration(MagCalibration cal, const Quat& qWorld,
@@ -77,6 +78,24 @@ void HeadingFilter::update(const Quat& qWorld, const std::array<int16_t, 3>& raw
 	}
 
 	double innovation = wrapAngle(h - m_heading);
+	if (m_relock) {
+		// After a gyro glitch, any clean field is right whatever the heading says
+		if (!fieldOk) {
+			m_relockSin = m_relockCos = m_relockTime = 0;
+			m_state = State::Disturbed;
+			return;
+		}
+		m_relockSin += std::sin(innovation);
+		m_relockCos += std::cos(innovation);
+		m_relockTime += dt;
+		if (m_relockTime >= 0.3) {
+			m_heading = wrapAngle(m_heading + std::atan2(m_relockSin, m_relockCos));
+			m_relock = false;
+			m_rejectRatio = m_cleanTime = m_headingOnlyTime = 0;
+			m_state = State::Ok;
+		}
+		return;
+	}
 	headTol += s.headingTolPerRadPerSec * angularSpeed;
 	bool headingOk = std::fabs(innovation) < headTol;
 	// Recent fraction of heading outliers (time constant 0.5 s)

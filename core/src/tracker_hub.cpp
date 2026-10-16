@@ -13,6 +13,11 @@
 
 namespace slimelite {
 
+namespace {
+// rad/s between two rotation packets; no limb turns this fast (kicks peak ~20)
+constexpr double kGlitchAngularSpeed = 40.0;
+}  // namespace
+
 const char* magStateName(MagState s) {
 	switch (s) {
 		case MagState::Absent: return "absent";
@@ -218,6 +223,8 @@ void TrackerHub::processEvent(const std::string& mac, const proto::Event& e, dou
 					if (dt > 1e-4 && dt < 0.5) {
 						double ang = (tr.prevRotation.conj() * q).angle();
 						double w = ang / dt;
+						// Faster than any limb: a sensor glitch, not a motion
+						if (w > kGlitchAngularSpeed && ang > deg2rad(20)) tr.heading.gyroGlitch();
 						s.angularSpeed += (w - s.angularSpeed) * std::min(1.0, dt / 0.05);
 						double act = std::min(1.0, w / 6.0);
 						s.activity += (act - s.activity) * std::min(1.0, dt / 0.3);
