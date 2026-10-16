@@ -1,0 +1,450 @@
+/*
+	SlimeVR Code is placed under the MIT license
+	Copyright (c) 2021 Eiren Rain & SlimeVR contributors
+
+	Permission is hereby granted, free of charge, to any person obtaining a copy
+	of this software and associated documentation files (the "Software"), to deal
+	in the Software without restriction, including without limitation the rights
+	to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+	copies of the Software, and to permit persons to whom the Software is
+	furnished to do so, subject to the following conditions:
+
+	The above copyright notice and this permission notice shall be included in
+	all copies or substantial portions of the Software.
+
+	THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+	IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+	FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+	AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+	LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+	OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+	THE SOFTWARE.
+*/
+
+#include "serialcommands.h"
+
+#include <CmdCallback.hpp>
+
+#include "GlobalVars.h"
+#include "base64.hpp"
+#include "batterymonitor.h"
+#include "logging/Logger.h"
+#include "utils.h"
+
+#if defined(CONFIG_IDF_TARGET_ESP32C3)
+#include "soc/rtc_cntl_reg.h"
+#endif
+
+#ifdef EXT_SERIAL_COMMANDS
+#define CALLBACK_SIZE 7  // Increase callback size to allow for debug commands
+#include "i2cscan.h"
+#endif
+
+#ifndef CALLBACK_SIZE
+#define CALLBACK_SIZE 6  // Default callback size
+#endif
+
+#if defined(VENDOR_URL) && defined(VENDOR_NAME) && defined(PRODUCT_NAME) \
+	&& defined(UPDATE_ADDRESS) && defined(UPDATE_NAME)
+constexpr const char* FULL_VENDOR_STR
+	= "Vendor: " VENDOR_NAME " (" VENDOR_URL "), product: " PRODUCT_NAME
+	  ", firmware update url: " UPDATE_ADDRESS ", name: " UPDATE_NAME;
+#elif defined(VENDOR_URL) && defined(VENDOR_NAME) && defined(PRODUCT_NAME)
+constexpr const char* FULL_VENDOR_STR
+	= "Vendor: " VENDOR_NAME " (" VENDOR_URL "), product: " PRODUCT_NAME;
+#elif defined(VENDOR_NAME) && defined(PRODUCT_NAME)
+constexpr const char* FULL_VENDOR_STR
+	= "Vendor: " VENDOR_NAME ", product: " PRODUCT_NAME;
+#else
+constexpr const char* FULL_VENDOR_STR = "Vendor: Unknown, product: Unknown";
+#endif
+
+static const char sCMDFlashmdoe[] PROGMEM
+	= "Entering flashing mode.\r\n"
+	  "You can now close the serial monitor\r\n"
+	  "and go to the firmware flasher to flash\r\n"
+	  "your tracker over USB.\r\n"
+	  "If you entered the flashing mode by accident,\r\n"
+	  "turn your tracker off and on.";
+
+namespace SerialCommands {
+SlimeVR::Logging::Logger logger("SerialCommands");
+
+CmdCallback<CALLBACK_SIZE> cmdCallbacks;
+CmdParser cmdParser;
+CmdBuffer<256> cmdBuffer;
+
+bool lengthCheck(
+	const char* const text,
+	unsigned int length,
+	const char* const cmd,
+	const char* const name
+) {
+	size_t l = text != nullptr ? strlen(text) : 0;
+	if ((l > length)) {
+		logger.error(
+			"%s ERROR: %s is longer than %d bytes / Characters",
+			cmd,
+			name,
+			length
+		);
+		return false;
+	}
+	return true;
+}
+
+unsigned int
+decode_base64_length_null(const char* const b64char, unsigned int* b64ssidlength) {
+	if (b64char == NULL) {
+		return 0;
+	}
+	*b64ssidlength = (unsigned int)strlen(b64char);
+	return decode_base64_length((unsigned char*)b64char, *b64ssidlength);
+}
+
+void cmdSet(CmdParser* parser) {
+	if (parser->getParamCount() != 1) {
+		if (parser->equalCmdParam(1, "WIFI")) {
+			if (parser->getParamCount() < 3) {
+				logger.error("CMD SET WIFI ERROR: Too few arguments");
+				logger.info("Syntax: SET WIFI \"<SSID>\" \"<PASSWORD>\"");
+			} else {
+				const char* sc_ssid = parser->getCmdParam(2);
+				const char* sc_pw = parser->getCmdParam(3);
+
+				if (!lengthCheck(sc_ssid, 32, "CMD SET WIFI", "SSID")
+					&& !lengthCheck(sc_pw, 64, "CMD SET WIFI", "Password")) {
+					return;
+				}
+
+				wifiNetwork.setWiFiCredentials(sc_ssid, sc_pw);
+				logger.info("CMD SET WIFI OK: New wifi credentials set, reconnecting");
+			}
+		} else if (parser->equalCmdParam(1, "BWIFI")) {
+			if (parser->getParamCount() < 3) {
+				logger.error("CMD SET BWIFI ERROR: Too few arguments");
+				logger.info("Syntax: SET BWIFI <B64SSID> <B64PASSWORD>");
+			} else {
+				const char* b64ssid = parser->getCmdParam(2);
+				const char* b64pass = parser->getCmdParam(3);
+				unsigned int b64ssidlength = 0;
+				unsigned int b64passlength = 0;
+				unsigned int ssidlength
+					= decode_base64_length_null(b64ssid, &b64ssidlength);
+				unsigned int passlength
+					= decode_base64_length_null(b64pass, &b64passlength);
+
+				// alloc the strings and set them to 0 (null terminating)
+				char ssid[ssidlength + 1];
+				memset(ssid, 0, ssidlength + 1);
+				char pass[passlength + 1];
+				memset(pass, 0, passlength + 1);
+				// make a pointer to pass
+				char* ppass = pass;
+				decode_base64(
+					(const unsigned char*)b64ssid,
+					b64ssidlength,
+					(unsigned char*)ssid
+				);
+				if (!lengthCheck(ssid, 32, "CMD SET BWIFI", "SSID")) {
+					return;
+				}
+
+				if ((b64pass != NULL) && (b64passlength > 0)) {
+					decode_base64(
+						(const unsigned char*)b64pass,
+						b64passlength,
+						(unsigned char*)pass
+					);
+					if (!lengthCheck(pass, 64, "CMD SET BWIFI", "Password")) {
+						return;
+					}
+				} else {
+					// set the pointer for pass to null for no password
+					ppass = NULL;
+				}
+				wifiNetwork.setWiFiCredentials(ssid, ppass);
+				logger.info("CMD SET BWIFI OK: New wifi credentials set, reconnecting");
+			}
+		} else if (parser->equalCmdParam(1, "FLASHMODE")) {
+#if ESP8266
+			logger.info(sCMDFlashmdoe);
+			delay(1000);
+			ESP.rebootIntoUartDownloadMode();
+#elif defined(CONFIG_IDF_TARGET_ESP32C3)
+			logger.info(sCMDFlashmdoe);
+			delay(1000);
+			// from https://esp32.com/viewtopic.php?t=33180
+			REG_WRITE(RTC_CNTL_OPTION1_REG, RTC_CNTL_FORCE_DOWNLOAD_BOOT);
+			esp_restart();
+#else
+			logger.error(PSTR("Flashmode is not supported on this device"));
+#endif
+#if EXT_SERIAL_COMMANDS
+		} else if (parser->equalCmdParam(1, "CRASH")) {
+			// well target of this function is to crash the tracker
+			// used for debuging/testing
+			while (true) {
+				int* ptr = NULL;
+				*ptr = 0;
+			}
+#endif
+		} else {
+			logger.error("CMD SET ERROR: Unrecognized variable to set");
+		}
+	} else {
+		logger.error("CMD SET ERROR: No variable to set");
+	}
+}
+
+void printState() {
+	logger.info(
+		"SlimeVR Tracker, board: %d, hardware: %d, protocol: %d, firmware: %s, "
+		"address: %s, mac: %s, status: %d, wifi state: %d",
+		BOARD,
+		HARDWARE_MCU,
+		PROTOCOL_VERSION,
+		FIRMWARE_VERSION,
+		wifiNetwork.getAddress().toString().c_str(),
+		WiFi.macAddress().c_str(),
+		statusManager.getStatus(),
+		static_cast<int>(wifiNetwork.getWiFiState())
+	);
+
+	logger.info("%s", FULL_VENDOR_STR);
+
+	for (auto& sensor : sensorManager.getSensors()) {
+		logger.info(
+			"Sensor[%d]: %s (%.3f %.3f %.3f %.3f) is working: %s, had data: %s",
+			sensor->getSensorId(),
+			getIMUNameByType(sensor->getSensorType()),
+			UNPACK_QUATERNION(sensor->getFusedRotation()),
+			sensor->isWorking() ? "true" : "false",
+			sensor->getHadData() ? "true" : "false"
+		);
+		const char* mag = sensor->getAttachedMagnetometer();
+		if (mag) {
+			logger.info("Sensor[%d] magnetometer: %s", sensor->getSensorId(), mag);
+		}
+	}
+	logger.info(
+		"Battery voltage: %.3f, level: %.1f%%",
+		battery.getVoltage(),
+		battery.getLevel() * 100
+	);
+}
+
+#ifdef ESP32
+String getEncryptionTypeName(wifi_auth_mode_t type) {
+	switch (type) {
+		case WIFI_AUTH_OPEN:
+			return "OPEN";
+		case WIFI_AUTH_WEP:
+			return "WEP";
+		case WIFI_AUTH_WPA_PSK:
+			return "WPA_PSK";
+		case WIFI_AUTH_WPA2_PSK:
+			return "WPA2_PSK";
+		case WIFI_AUTH_WPA_WPA2_PSK:
+			return "WPA_WPA2_PSK";
+		case WIFI_AUTH_WPA2_ENTERPRISE:
+			return "WPA2_ENTERPRISE";
+		case WIFI_AUTH_WPA3_PSK:
+			return "WPA3_PSK";
+		case WIFI_AUTH_WPA2_WPA3_PSK:
+			return "WPA2_WPA3_PSK";
+		case WIFI_AUTH_WAPI_PSK:
+			return "WAPI_PSK";
+		case WIFI_AUTH_WPA3_ENT_192:
+			return "WPA3_ENT_192";
+	}
+#else
+String getEncryptionTypeName(uint8_t type) {
+	switch (type) {
+		case ENC_TYPE_NONE:
+			return "OPEN";
+		case ENC_TYPE_WEP:
+			return "WEP";
+		case ENC_TYPE_TKIP:
+			return "WPA_PSK";
+		case ENC_TYPE_CCMP:
+			return "WPA2_PSK";
+		case ENC_TYPE_AUTO:
+			return "WPA_WPA2_PSK";
+	}
+#endif
+	return "UNKNOWN";
+}
+
+void cmdGet(CmdParser* parser) {
+	if (parser->getParamCount() < 2) {
+		return;
+	}
+
+	if (parser->equalCmdParam(1, "INFO")) {
+		printState();
+
+		// We don't want to print this on every timed state output
+		logger.info("Git commit: %s", GIT_REV);
+	}
+
+	if (parser->equalCmdParam(1, "CONFIG")) {
+		Serial.printf(sSlVRPrInfo);
+	}
+
+	if (parser->equalCmdParam(1, "TEST")) {
+		logger.info(
+			"[TEST] Board: %d, hardware: %d, protocol: %d, firmware: %s, address: %s, "
+			"mac: %s, status: %d, wifi state: %d",
+			BOARD,
+			HARDWARE_MCU,
+			PROTOCOL_VERSION,
+			FIRMWARE_VERSION,
+			wifiNetwork.getAddress().toString().c_str(),
+			WiFi.macAddress().c_str(),
+			statusManager.getStatus(),
+			static_cast<int>(wifiNetwork.getWiFiState())
+		);
+		auto& sensor0 = sensorManager.getSensors()[0];
+		sensor0->motionLoop();
+		logger.info(
+			"[TEST] Sensor[0]: %s (%.3f %.3f %.3f %.3f) is working: %s, had data: %s",
+			getIMUNameByType(sensor0->getSensorType()),
+			UNPACK_QUATERNION(sensor0->getFusedRotation()),
+			sensor0->isWorking() ? "true" : "false",
+			sensor0->getHadData() ? "true" : "false"
+		);
+
+		const char* mag = sensor0->getAttachedMagnetometer();
+		if (mag) {
+			logger.info("[TEST] Sensor[0] magnetometer: %s", mag);
+		} else {
+			logger.info("[TEST] Sensor[0] has no magnetometer attached");
+		}
+
+		if (!sensor0->getHadData()) {
+			logger.error("[TEST] Sensor[0] didn't send any data yet!");
+		} else {
+			logger.info("[TEST] Sensor[0] sent some data, looks working.");
+		}
+	}
+
+	if (parser->equalCmdParam(1, "WIFISCAN")) {
+		logger.info("[WSCAN] Scanning for WiFi networks...");
+
+		// Scan would fail if connecting, stop connecting before scan
+		if (WiFi.status() != WL_CONNECTED) {
+			WiFi.disconnect();
+		}
+		if (wifiProvisioning.isProvisioning()) {
+			wifiProvisioning.stopProvisioning();
+		}
+
+		WiFi.scanNetworks();
+
+		int scanRes = WiFi.scanComplete();
+		if (scanRes >= 0) {
+			logger.info("[WSCAN] Found %d networks:", scanRes);
+			for (int i = 0; i < scanRes; i++) {
+				logger.info(
+					"[WSCAN] %d:\t%02d\t'%s'\t(%d dBm)\t%s",
+					i,
+					WiFi.SSID(i).length(),
+					WiFi.SSID(i).c_str(),
+					WiFi.RSSI(i),
+					getEncryptionTypeName(WiFi.encryptionType(i)).c_str()
+				);
+			}
+			WiFi.scanDelete();
+		} else {
+			logger.info("[WSCAN] Scan failed!");
+		}
+
+		// Restore conencting state
+		if (WiFi.status() != WL_CONNECTED) {
+			WiFi.begin();
+		}
+	}
+}
+
+void cmdReboot(CmdParser* parser) {
+	logger.info("REBOOT");
+	ESP.restart();
+}
+
+void cmdFactoryReset(CmdParser* parser) {
+	logger.info("FACTORY RESET");
+	configuration.factoryReset();
+	// No return here factoryReset will reboot the tracker.
+}
+
+void cmdTemperatureCalibration(CmdParser* parser) {
+	if (parser->getParamCount() > 1) {
+		if (parser->equalCmdParam(1, "PRINT")) {
+			for (auto& sensor : sensorManager.getSensors()) {
+				sensor->printTemperatureCalibrationState();
+			}
+			return;
+		} else if (parser->equalCmdParam(1, "DEBUG")) {
+			for (auto& sensor : sensorManager.getSensors()) {
+				sensor->printDebugTemperatureCalibrationState();
+			}
+			return;
+		} else if (parser->equalCmdParam(1, "RESET")) {
+			for (auto& sensor : sensorManager.getSensors()) {
+				sensor->resetTemperatureCalibrationState();
+			}
+			return;
+		} else if (parser->equalCmdParam(1, "SAVE")) {
+			for (auto& sensor : sensorManager.getSensors()) {
+				sensor->saveTemperatureCalibration();
+			}
+			return;
+		}
+	}
+	logger.info("Usage:");
+	logger.info("  TCAL PRINT: print current temperature calibration config");
+	logger.info(
+		"  TCAL DEBUG: print debug values for the current temperature calibration "
+		"profile"
+	);
+	logger.info(
+		"  TCAL RESET: reset current temperature calibration in RAM (does not delete "
+		"already saved)"
+	);
+	logger.info("  TCAL SAVE: save current temperature calibration to persistent flash"
+	);
+	logger.info("Note:");
+	logger.info(
+		"  Temperature calibration config saves automatically when calibration percent "
+		"is at 100%%"
+	);
+}
+
+void cmdDeleteCalibration(CmdParser* parser) {
+	logger.info("ERASE CALIBRATION");
+
+	configuration.eraseSensors();
+}
+
+#if EXT_SERIAL_COMMANDS
+void cmdScanI2C(CmdParser* parser) {
+	logger.info("Forcing I2C scan...");
+	I2CSCAN::scani2cports();
+}
+#endif
+
+void setUp() {
+	cmdCallbacks.addCmd("SET", &cmdSet);
+	cmdCallbacks.addCmd("GET", &cmdGet);
+	cmdCallbacks.addCmd("FRST", &cmdFactoryReset);
+	cmdCallbacks.addCmd("REBOOT", &cmdReboot);
+	cmdCallbacks.addCmd("DELCAL", &cmdDeleteCalibration);
+	cmdCallbacks.addCmd("TCAL", &cmdTemperatureCalibration);
+#if EXT_SERIAL_COMMANDS
+	cmdCallbacks.addCmd("SCANI2C", &cmdScanI2C);
+#endif
+}
+
+void update() { cmdCallbacks.updateCmdProcessing(&cmdParser, &cmdBuffer, &Serial); }
+}  // namespace SerialCommands

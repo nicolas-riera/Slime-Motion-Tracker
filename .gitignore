@@ -1,0 +1,20 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Firmware flash dumps contain WiFi credentials: never commit them
+firmware/backup/*.bin
+
+# PlatformIO
+firmware/SlimeVR-Tracker-ESP/.pio/
+firmware/SlimeVR-Tracker-ESP/cache/
+
+# CMake / MSVC
+build/
+out/
+.vs/
+*.user
+
+# Recordings from tools/
+recordings/
