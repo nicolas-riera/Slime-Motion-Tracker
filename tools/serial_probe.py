@@ -3,7 +3,10 @@
 Usage: python tools/serial_probe.py COM20 [--no-reset] [--cmd "GET INFO" ...]
 """
 import argparse
+import sys
 import time
+
+sys.stdout.reconfigure(errors="replace")
 
 import serial
 

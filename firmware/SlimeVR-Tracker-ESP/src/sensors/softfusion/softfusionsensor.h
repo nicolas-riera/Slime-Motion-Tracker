@@ -242,6 +242,9 @@ public:
 	void motionLoop() final {
 		calibrator.tick();
 
+		// Poll the mag before the early returns below, so it streams at rest too
+		pollMagIfNeeded();
+
 		// read fifo updating fusion
 		uint32_t now = micros();
 
@@ -309,8 +312,6 @@ public:
 			setAcceleration(m_fusion.getLinearAccVec());
 			optimistic_yield(100);
 		}
-
-		pollMagIfNeeded();
 
 		if (calibrationDetector.update(m_fusion)) {
 			markRestCalibrationComplete();
