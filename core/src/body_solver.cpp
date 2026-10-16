@@ -1,43 +1,65 @@
 #include "slimelite/body_solver.h"
 
 #include <algorithm>
-#include <vector>
+#include <cmath>
 
 namespace slimelite {
 
 namespace {
 
+// Knee angle range (straight to fully bent)
+constexpr double kPhiMin = -5.0 * kPi / 180;
+constexpr double kPhiMax = 150.0 * kPi / 180;
+constexpr int kPhiSteps = 78;
+// Hip flexion range: thigh direction relative to the pelvis, in its sagittal plane
+constexpr double kFlexMin = -35.0 * kPi / 180;
+constexpr double kFlexMax = 135.0 * kPi / 180;
+// Among the allowed poses, prefer straight legs (sigma of the knee angle prior)
+constexpr double kStraightSigma = 1.2;
+// Clearances above the floor: knee center when kneeling, hip joint when lying
+constexpr double kKneeClearance = 0.05;
+constexpr double kHipClearance = 0.08;
+// Stance anchors follow the solution with this time constant (s), and jump to it
+// when farther than kAnchorReset (m)
+constexpr double kAnchorLeak = 1.0;
+constexpr double kAnchorReset = 0.15;
+// Swing prediction is dropped after this long without a stance (s)
+constexpr double kMaxSwing = 1.5;
+// Lift-off detection from the accelerometer integrated during stance
+constexpr double kStanceVelLeak = 0.25;  // s
+constexpr double kStanceDispLeak = 0.3;  // s
+constexpr double kLiftOffSpeed = 0.2;  // m/s
+// Landing detection: downward speed just before the stance (m/s), and how far
+// above the floor a landing is still snapped to it (m)
+constexpr double kLandingSpeed = 0.1;
+constexpr double kLandingSnap = 0.4;
+// A still foot in the air while standing sinks to the floor with this time
+// constant (s): holding a knee up is possible, just not for long
+constexpr double kAirRestTime = 4.0;
+// The swing prediction keeps its pull further than the stance anchors (in sigmas)
+constexpr double kInsRobust = 5.0;
+
+double sq(double x) { return x * x; }
 double lerp(double a, double b, double t) { return a + (b - a) * t; }
 
+double smoothstep(double e0, double e1, double x) {
+	double t = std::clamp((x - e0) / (e1 - e0), 0.0, 1.0);
+	return t * t * (3 - 2 * t);
+}
+
+// Cauchy loss of a squared normalized error: quadratic below k, logarithmic
+// beyond, so a constraint that cannot be met stops dominating
+double robust(double e2, double k) { return k * k * std::log1p(e2 / (k * k)); }
+// Iteratively reweighted least squares weight of the same loss
+double robustWeight(double e2, double k) { return 1.0 / (1.0 + e2 / (k * k)); }
+
+double squaredNorm(const Vec3& v) { return v.dot(v); }
+
 // Yaw of a shin from its left-right axis, which stays horizontal-ish for a hinge
-// leg even when the shin itself is horizontal (sitting, kneeling)
+// leg even when the shin itself is horizontal (sitting, kneeling, lying)
 double shinYaw(const Quat& shin) {
 	Vec3 r = shin.rotate({1, 0, 0});
 	return std::atan2(-r.z, r.x);
-}
-
-// Solves the n x n system A x = b in place (Gaussian elimination, partial pivot)
-bool solveLinear(int n, std::vector<double>& A, std::vector<double>& b) {
-	for (int c = 0; c < n; c++) {
-		int p = c;
-		for (int r = c + 1; r < n; r++)
-			if (std::fabs(A[r * n + c]) > std::fabs(A[p * n + c])) p = r;
-		if (std::fabs(A[p * n + c]) < 1e-12) return false;
-		if (p != c) {
-			for (int k = 0; k < n; k++) std::swap(A[c * n + k], A[p * n + k]);
-			std::swap(b[c], b[p]);
-		}
-		for (int r = c + 1; r < n; r++) {
-			double f = A[r * n + c] / A[c * n + c];
-			for (int k = c; k < n; k++) A[r * n + k] -= f * A[c * n + k];
-			b[r] -= f * b[c];
-		}
-	}
-	for (int c = n - 1; c >= 0; c--) {
-		for (int k = c + 1; k < n; k++) b[c] -= A[c * n + k] * b[k];
-		b[c] /= A[c * n + c];
-	}
-	return true;
 }
 
 }  // namespace
@@ -69,32 +91,27 @@ BodyDimensions BodyDimensions::fromHeight(double h, std::optional<double> eyeHei
 	d.hipWidth = 0.095 * h;
 	d.headDown = 0.060 * h;  // eyes to the top of the neck, rotates with the head
 	d.headBack = 0.050 * h;
-	d.neckDown = 0.058 * h;  // neck, assumed vertical
-	double eye = eyeHeight.value_or(0.936 * h);
-	double neckBase = eye - d.headDown - d.neckDown;
-	double hipCenter = d.ankleHeight + d.shin + d.thigh;
-	d.spine = std::clamp(neckBase - hipCenter, 0.22 * h, 0.36 * h);
+	d.neckDown = 0.058 * h;  // neck, along the torso
+	d.eyeHeight = eyeHeight.value_or(0.936 * h);
+	double neckBase = d.eyeHeight - d.headDown - d.neckDown;
+	d.spine = std::clamp(neckBase - d.standingHipHeight(), 0.22 * h, 0.36 * h);
 	return d;
 }
 
-struct BodySolver::Frame {
-	Vec3 hip0;  // prior hip center
+struct BodySolver::LegProblem {
+	Vec3 hipJoint;
+	Vec3 down, forward;  // shin axes
+	bool pelvisKnown = false;
 	Quat pelvis;
-	struct Leg {
-		bool valid = false;
-		Vec3 hipOffset;  // hip center -> hip joint
-		Vec3 down, forward;  // shin axes
-		bool planted = false;
-		Vec3 anchor;
-		bool predicted = false;
-		Vec3 prediction;
-		double phiPrev = 0;
-	};
-	std::array<Leg, 2> legs;
-	Vec3 hipOffsetPrev;
-	double floorY = 0;
-	// 1 / sigma
-	double wPlant = 0, wPredict = 0, wPhiSmooth = 0, wHipH = 0, wHipV = 0, wHipSmooth = 0;
+	double floorY = 0, ankleY = 0;
+	double phiPrev = 0, sigmaPhi = 0.1;
+	bool planted = false;
+	Vec3 anchor;
+	double anchorSigma = 0.02;
+	double insSigma = 0;  // 0: no swing prediction
+	Vec3 ins;
+	double support = 0;  // weight of "at least one foot on the floor"
+	double otherHeight = 0;  // other ankle above its floor position
 };
 
 void BodySolver::configure(const BodyDimensions& dims, const Settings& settings, Mode mode) {
@@ -112,37 +129,68 @@ void BodySolver::reset() {
 	m_smoothedWaist = {};
 }
 
-void BodySolver::residuals(const Frame& f, const double* x, std::vector<double>& r) const {
-	r.clear();
-	Vec3 hipOffset{x[2], x[3], x[4]};
-	Vec3 hip = f.hip0 + hipOffset;
-	for (int i = 0; i < 2; i++) {
-		const auto& leg = f.legs[i];
-		double phi = x[i];
-		if (!leg.valid) {
-			r.push_back((phi - leg.phiPrev) * 1.0);
-			continue;
-		}
-		Vec3 thighDir = leg.down * std::cos(phi) + leg.forward * std::sin(phi);
-		Vec3 ankle = hip + leg.hipOffset + thighDir * m_dims.thigh + leg.down * m_dims.shin;
-		if (leg.planted) {
-			Vec3 e = (ankle - leg.anchor) * f.wPlant;
-			r.insert(r.end(), {e.x, e.y, e.z});
-		} else if (leg.predicted) {
-			Vec3 e = (ankle - leg.prediction) * f.wPredict;
-			r.insert(r.end(), {e.x, e.y, e.z});
-		}
-		double penetration = f.floorY + m_dims.ankleHeight - ankle.y;
-		r.push_back(std::max(0.0, penetration) * 200.0);
-		r.push_back((phi - leg.phiPrev) * f.wPhiSmooth);
-		r.push_back(std::max(0.0, -0.05 - phi) * 100.0);
-		r.push_back(std::max(0.0, phi - 2.6) * 100.0);
+double BodySolver::legCost(const LegProblem& p, double phi) const {
+	const auto& d = m_dims;
+	Vec3 thighDir = p.down * std::cos(phi) + p.forward * std::sin(phi);
+	Vec3 knee = p.hipJoint + thighDir * d.thigh;
+	Vec3 ankle = knee + p.down * d.shin;
+
+	double c = sq(phi / kStraightSigma);
+	double pen = p.ankleY - ankle.y;
+	if (pen > 0) c += sq(pen / 0.01);
+	double penKnee = p.floorY + kKneeClearance - knee.y;
+	if (penKnee > 0) c += sq(penKnee / 0.01);
+	if (p.pelvisKnown) {
+		Vec3 t = p.pelvis.conj().rotate(thighDir);
+		double flex = std::atan2(-t.z, -t.y);
+		if (flex > kFlexMax) c += sq((flex - kFlexMax) / 0.1);
+		if (flex < kFlexMin) c += sq((kFlexMin - flex) / 0.1);
 	}
-	r.push_back(hipOffset.x * f.wHipH);
-	r.push_back(hipOffset.y * f.wHipV);
-	r.push_back(hipOffset.z * f.wHipH);
-	Vec3 d = (hipOffset - f.hipOffsetPrev) * f.wHipSmooth;
-	r.insert(r.end(), {d.x, d.y, d.z});
+	if (p.planted) c += robust(squaredNorm(ankle - p.anchor) / sq(p.anchorSigma), 3.0);
+	if (p.insSigma > 0) c += robust(squaredNorm(ankle - p.ins) / sq(p.insSigma), kInsRobust);
+	if (p.support > 0) {
+		double h = std::min(std::max(0.0, ankle.y - p.ankleY), p.otherHeight);
+		c += p.support * sq(h / 0.03);
+	}
+	c += robust(sq((phi - p.phiPrev) / p.sigmaPhi), 2.0);
+	return c;
+}
+
+double BodySolver::solveLeg(const LegProblem& p) const {
+	// Global grid search (the cost has several minima: leg straight, knee folded
+	// up...), then golden-section refinement around the best cell
+	double best = std::clamp(p.phiPrev, kPhiMin, kPhiMax);
+	double bestCost = legCost(p, best);
+	const double step = (kPhiMax - kPhiMin) / kPhiSteps;
+	for (int k = 0; k <= kPhiSteps; k++) {
+		double phi = kPhiMin + step * k;
+		double c = legCost(p, phi);
+		if (c < bestCost) {
+			bestCost = c;
+			best = phi;
+		}
+	}
+	const double g = 0.6180339887498949;
+	double a = std::max(kPhiMin, best - step), b = std::min(kPhiMax, best + step);
+	double x1 = b - g * (b - a), x2 = a + g * (b - a);
+	double f1 = legCost(p, x1), f2 = legCost(p, x2);
+	for (int i = 0; i < 16; i++) {
+		if (f1 < f2) {
+			b = x2;
+			x2 = x1;
+			f2 = f1;
+			x1 = b - g * (b - a);
+			f1 = legCost(p, x1);
+		} else {
+			a = x1;
+			x1 = x2;
+			f1 = f2;
+			x2 = a + g * (b - a);
+			f2 = legCost(p, x2);
+		}
+	}
+	double refined = 0.5 * (a + b);
+	return legCost(p, refined) < bestCost ? refined : best;
 }
 
 BodyOutput BodySolver::update(const BodyInput& in) {
@@ -152,72 +200,59 @@ BodyOutput BodySolver::update(const BodyInput& in) {
 	const auto& d = m_dims;
 	const auto& s = m_settings;
 	const double ankleY = in.floorY + d.ankleHeight;
+	const Vec3 up{0, 1, 0};
 
-	// ---- upper body: neck point and pelvis ----
+	// ---- upper body: head pivot, pelvis, neck base, hip center ----
 	const Quat& hq = in.hmd.rotation;
-	Vec3 neck = in.hmd.position + hq.rotate({0, -d.headDown, d.headBack}) + Vec3{0, -d.neckDown, 0};
+	Vec3 headPivot = in.hmd.position + hq.rotate({0, -d.headDown, d.headBack});
+	double eyeRatio = (in.hmd.position.y - in.floorY) / std::max(0.5, d.eyeHeight);
 
 	bool useWaistTracker = m_mode == Mode::Three && in.hasWaist;
-	double pelvisYaw;
 	Quat pelvis;
 	if (useWaistTracker) {
 		pelvis = in.waist;
-		pelvisYaw = pelvis.yawAngle();
 	} else {
-		// Ankles only: heading from the shins (feet point roughly forward) and the head
+		// Ankles only. Heading from the shins (feet point roughly forward) and the head
+		// (unreliable lying down, when the head looks at the ceiling)
+		double lying = smoothstep(0.55, 0.3, eyeRatio);
 		double sx = 0, sz = 0;
 		auto add = [&](double yaw, double w) {
 			sx += std::sin(yaw) * w;
 			sz += std::cos(yaw) * w;
 		};
-		add(hq.yawAngle(), 0.6);
+		add(hq.yawAngle(), 0.6 * (1 - lying));
 		add(shinYaw(in.legs[0].shin), 1.0);
 		add(shinYaw(in.legs[1].shin), 1.0);
-		pelvisYaw = std::atan2(sx, sz);
-		// Torso lean follows a fraction of the head pitch
+		double pelvisYaw = std::atan2(sx, sz);
+		// Upright: the torso leans by a fraction of the head pitch. Head low: the user
+		// lies down and the torso follows the head's up axis
 		Vec3 hf = hq.rotate({0, 0, -1});
 		double headPitch = std::asin(std::clamp(-hf.y, -1.0, 1.0));  // > 0 looking down
 		double lean = std::clamp(0.3 * headPitch, deg2rad(-15), deg2rad(30));
-		pelvis = Quat::yaw(pelvisYaw) * Quat::fromAxisAngle({1, 0, 0}, -lean);
+		Quat upright = Quat::yaw(pelvisYaw) * Quat::fromAxisAngle({1, 0, 0}, -lean);
+		Vec3 torsoUp = (upright.rotate(up) * (1 - lying) + hq.rotate(up) * lying).normalized();
+		pelvis = Quat::fromTwoVectors(up, torsoUp) * Quat::yaw(pelvisYaw);
 	}
+	const Vec3 torsoUp = pelvis.rotate(up);
+	const Vec3 neck = headPivot - torsoUp * d.neckDown;
+	const Vec3 hip0 = neck - torsoUp * d.spine;
+	const double standing = smoothstep(0.55, 0.8, (hip0.y - in.floorY) / d.standingHipHeight());
 
-	Frame f;
-	f.pelvis = pelvis;
-	f.hip0 = neck - pelvis.rotate({0, d.spine, 0});
-	f.floorY = in.floorY;
-	f.hipOffsetPrev = m_hipOffset;
-	double plant = std::clamp(s.footPlantStrength, 0.0, 1.0);
-	double inertial = std::clamp(s.inertialWeight, 0.0, 1.0);
-	f.wPlant = 1.0 / lerp(0.08, 0.004, plant);
-	f.wPredict = inertial > 0.01 ? 1.0 / lerp(0.30, 0.01, inertial) : 0.0;
-	f.wPhiSmooth = 1.0 / 0.35;
-	if (useWaistTracker) {
-		f.wHipH = 1.0 / 0.05;
-		f.wHipV = 1.0 / 0.06;
-	} else {
-		f.wHipH = 1.0 / 0.15;
-		f.wHipV = 1.0 / 0.10;
-	}
-	f.wHipSmooth = 1.0 / std::max(0.002, 1.5 * dt);
-
-	// ---- per-leg stance detection (zero velocity) and inertial prediction ----
+	// ---- per-leg geometry, stance detection (zero velocity), swing dead reckoning ----
+	std::array<Vec3, 2> legOffset, down, forward;
 	for (int i = 0; i < 2; i++) {
 		const auto& li = in.legs[i];
 		LegState& ls = m_legs[i];
-		auto& fl = f.legs[i];
-		fl.valid = true;
-		double side = i == 0 ? -0.5 : 0.5;
-		fl.hipOffset = pelvis.rotate({side * d.hipWidth, 0, 0});
-		fl.down = li.shin.rotate({0, -1, 0});
-		fl.forward = li.shin.rotate({0, 0, -1});
-		fl.phiPrev = ls.phi;
+		legOffset[i] = pelvis.rotate({(i == 0 ? -0.5 : 0.5) * d.hipWidth, 0, 0});
+		down[i] = li.shin.rotate({0, -1, 0});
+		forward[i] = li.shin.rotate({0, 0, -1});
 
 		if (!m_initialized || !ls.initialized) {
 			// Start standing: straight leg below the hip joint
-			ls.phi = 0.05;
-			ls.ankle = f.hip0 + fl.hipOffset + fl.down * (d.thigh + d.shin);
-			ls.velocity = {};
+			ls = LegState{};
 			ls.initialized = true;
+			ls.ankle = hip0 + legOffset[i] + down[i] * (d.thigh + d.shin);
+			ls.anchor = ls.insPos = ls.ankle;
 		}
 
 		// Shin-mounted IMU: during stance the shin pivots around the ankle (moderate
@@ -225,85 +260,152 @@ BodyOutput BodySolver::update(const BodyInput& in) {
 		double a = li.accelWorld.norm();
 		bool still = a < 1.2 && li.angularSpeed < 2.5;
 		ls.stillTime = still ? ls.stillTime + dt : 0;
+		if (ls.planted) {
+			// Leaky integration: bounded by the accelerometer bias, but a deliberate
+			// lift reaches the threshold within ~0.1 s
+			double vLeak = std::exp(-dt / kStanceVelLeak), pLeak = std::exp(-dt / kStanceDispLeak);
+			ls.stanceVel = (ls.stanceVel + li.accelWorld * dt) * vLeak;
+			ls.stanceDisp = (ls.stanceDisp + ls.stanceVel * dt) * pLeak;
+		}
 		if (!ls.planted && ls.stillTime >= 0.05) {
 			ls.planted = true;
 			ls.anchor = ls.ankle;
-			if (std::fabs(ls.anchor.y - ankleY) < 0.10) ls.anchor.y = ankleY;
-			ls.velocity = {};
-		} else if (ls.planted && (a > 2.5 || li.angularSpeed > 4.0)) {
+			// A foot coming down and stopping while the user stands has landed on the
+			// floor (dead reckoning errors are a few cm per swing and would pile up).
+			// A held knee lift stops without coming down and stays in the air
+			double h = ls.anchor.y - ankleY;
+			bool landed = standing > 0.5 && ls.descent > kLandingSpeed && h < kLandingSnap;
+			if (landed || std::fabs(h) < 0.10) ls.anchor.y = ankleY;
+			ls.stanceVel = ls.stanceDisp = {};
+		} else if (ls.planted && (a > 2.0 || li.angularSpeed > 4.0 || ls.stanceVel.norm() > kLiftOffSpeed)) {
+			// Lift-off: the swing starts with the motion already integrated
 			ls.planted = false;
-			ls.velocity = {};
+			ls.swingTime = 0;
+			ls.insPos = ls.ankle + ls.stanceDisp;
+			ls.insVel = ls.stanceVel;
 		}
-		fl.planted = ls.planted;
-		fl.anchor = ls.anchor;
-		if (!ls.planted && f.wPredict > 0) {
-			ls.velocity += li.accelWorld * dt;
-			fl.predicted = true;
-			fl.prediction = ls.ankle + ls.velocity * dt;
+		if (!ls.planted) {
+			ls.insVel += li.accelWorld * dt;
+			ls.insPos += ls.insVel * dt;
+			ls.swingTime += dt;
+			ls.descent = std::max(ls.descent * std::exp(-dt / 0.5), -ls.insVel.y);
+		} else {
+			ls.descent = 0;
 		}
 	}
 
-	// ---- Gauss-Newton on x = [phiL, phiR, hip offset] ----
-	double x[5] = {m_legs[0].phi, m_legs[1].phi, m_hipOffset.x, m_hipOffset.y, m_hipOffset.z};
-	std::vector<double> r0, r1;
-	for (int iter = 0; iter < 4; iter++) {
-		residuals(f, x, r0);
-		const int m = int(r0.size());
-		std::vector<double> J(m * 5);
-		for (int k = 0; k < 5; k++) {
-			double xs[5];
-			std::copy(x, x + 5, xs);
-			const double eps = 1e-5;
-			xs[k] += eps;
-			residuals(f, xs, r1);
-			for (int j = 0; j < m; j++) J[j * 5 + k] = (r1[j] - r0[j]) / eps;
-		}
-		std::vector<double> A(25, 0.0), b(5, 0.0);
-		for (int j = 0; j < m; j++)
-			for (int p = 0; p < 5; p++) {
-				b[p] -= J[j * 5 + p] * r0[j];
-				for (int q = 0; q < 5; q++) A[p * 5 + q] += J[j * 5 + p] * J[j * 5 + q];
-			}
-		for (int p = 0; p < 5; p++) A[p * 5 + p] += 1e-6;
-		if (!solveLinear(5, A, b)) break;
-		double step = 0;
-		for (int p = 0; p < 5; p++) {
-			x[p] += b[p];
-			step += b[p] * b[p];
-		}
-		if (step < 1e-10) break;
+	// ---- solve: legs by global search, then the hip offset, alternated ----
+	const double plant = std::clamp(s.footPlantStrength, 0.0, 1.0);
+	const double inertial = std::clamp(s.inertialWeight, 0.0, 1.0);
+	const double anchorSigma = lerp(0.08, 0.01, plant);
+	const double insScale = std::pow(4.0, 1.0 - 2.0 * inertial);
+	std::array<double, 2> insSigma{};
+	for (int i = 0; i < 2; i++) {
+		const LegState& ls = m_legs[i];
+		if (!ls.planted && inertial > 0.01 && ls.swingTime < kMaxSwing)
+			insSigma[i] = (0.01 + 0.25 * sq(ls.swingTime)) * insScale;
 	}
-	x[0] = std::clamp(x[0], -0.1, 2.7);
-	x[1] = std::clamp(x[1], -0.1, 2.7);
-	m_hipOffset = {std::clamp(x[2], -0.4, 0.4), std::clamp(x[3], -0.4, 0.4), std::clamp(x[4], -0.4, 0.4)};
-	Vec3 hip = f.hip0 + m_hipOffset;
+	const double hipSigmaH = useWaistTracker ? 0.05 : 0.15;
+	const double hipSigmaV = useWaistTracker ? 0.06 : 0.10;
+	const double hipSigmaSmooth = std::max(0.002, 1.5 * dt);
+	const double hipLimitH = useWaistTracker ? 0.25 : 0.4;
 
-	// ---- legs: positions, velocity fusion, slip handling, foot orientation ----
+	auto legVector = [&](int i, double phi) {
+		Vec3 thighDir = down[i] * std::cos(phi) + forward[i] * std::sin(phi);
+		return legOffset[i] + thighDir * d.thigh + down[i] * d.shin;
+	};
+	Vec3 hipOffset = m_hipOffset;
+	std::array<double, 2> phi{m_legs[0].phi, m_legs[1].phi};
+	for (int iter = 0; iter < 3; iter++) {
+		for (int i = 0; i < 2; i++) {
+			const LegState& ls = m_legs[i];
+			int o = 1 - i;
+			LegProblem p;
+			p.hipJoint = hip0 + hipOffset + legOffset[i];
+			p.down = down[i];
+			p.forward = forward[i];
+			p.pelvisKnown = useWaistTracker;
+			p.pelvis = pelvis;
+			p.floorY = in.floorY;
+			p.ankleY = ankleY;
+			p.phiPrev = ls.phi;
+			p.sigmaPhi = 0.03 + dt * (3.0 + 2.0 * in.legs[i].angularSpeed);
+			p.planted = ls.planted;
+			p.anchor = ls.anchor;
+			p.anchorSigma = anchorSigma;
+			p.insSigma = insSigma[i];
+			p.ins = ls.insPos;
+			p.support = standing * (ls.planted ? 1.0 : 0.1);
+			p.otherHeight = std::max(0.0, (hip0 + hipOffset + legVector(o, phi[o])).y - ankleY);
+			phi[i] = solveLeg(p);
+		}
+
+		// Hip offset with the legs fixed: per-axis weighted least squares, robust
+		// terms reweighted (IRLS)
+		Vec3 num = m_hipOffset * (1.0 / sq(hipSigmaSmooth));
+		Vec3 den = Vec3{1, 1, 1} * (1.0 / sq(hipSigmaSmooth));
+		den += Vec3{1 / sq(hipSigmaH), 1 / sq(hipSigmaV), 1 / sq(hipSigmaH)};
+		auto addTarget = [&](const Vec3& target, double sigma, double k) {
+			double e2 = squaredNorm(hipOffset - target) / sq(sigma);
+			double w = robustWeight(e2, k) / sq(sigma);
+			num += target * w;
+			den += Vec3{w, w, w};
+		};
+		for (int i = 0; i < 2; i++) {
+			Vec3 base = hip0 + legVector(i, phi[i]);  // ankle without hip offset
+			if (m_legs[i].planted) addTarget(m_legs[i].anchor - base, anchorSigma, 3.0);
+			if (insSigma[i] > 0) addTarget(m_legs[i].insPos - base, insSigma[i], kInsRobust);
+		}
+		hipOffset = {num.x / den.x, num.y / den.y, num.z / den.z};
+		hipOffset.x = std::clamp(hipOffset.x, -hipLimitH, hipLimitH);
+		hipOffset.z = std::clamp(hipOffset.z, -hipLimitH, hipLimitH);
+		hipOffset.y = std::clamp(hipOffset.y, -0.3, 0.3);
+		// The hip stays above the floor (the leg search keeps the ankles above it)
+		hipOffset.y = std::max(hipOffset.y, in.floorY + kHipClearance - hip0.y);
+	}
+	m_hipOffset = hipOffset;
+	const Vec3 hip = hip0 + hipOffset;
+
+	// ---- legs: positions, anchors, swing correction, foot orientation ----
 	for (int i = 0; i < 2; i++) {
 		LegState& ls = m_legs[i];
-		const auto& fl = f.legs[i];
-		ls.phi = x[i];
-		Vec3 thighDir = fl.down * std::cos(ls.phi) + fl.forward * std::sin(ls.phi);
-		Vec3 knee = hip + fl.hipOffset + thighDir * d.thigh;
-		Vec3 ankle = knee + fl.down * d.shin;
+		ls.phi = phi[i];
+		Vec3 thighDir = down[i] * std::cos(ls.phi) + forward[i] * std::sin(ls.phi);
+		Vec3 knee = hip + legOffset[i] + thighDir * d.thigh;
+		Vec3 ankle = knee + down[i] * d.shin;
 		ankle.y = std::max(ankle.y, ankleY);
 
 		if (ls.planted) {
-			// The anchor was wrong (or the foot slid): move it
-			if ((ankle - ls.anchor).norm() > 0.12) {
+			// The anchor follows the solution slowly, and jumps when it was wrong
+			// (the foot slid, the body moved away)
+			if ((ankle - ls.anchor).norm() > kAnchorReset) {
 				ls.anchor = ankle;
-				if (std::fabs(ls.anchor.y - ankleY) < 0.10) ls.anchor.y = ankleY;
+			} else {
+				// Horizontally only: vertically, the floor decides (below)
+				double k = std::min(1.0, dt / kAnchorLeak);
+				ls.anchor.x += (ankle.x - ls.anchor.x) * k;
+				ls.anchor.z += (ankle.z - ls.anchor.z) * k;
 			}
-			ls.velocity = {};
+			// Standing, a foot does not stay still in the air for long: sink it
+			if (ls.anchor.y > ankleY)
+				ls.anchor.y += (ankleY - ls.anchor.y) * std::min(1.0, standing * dt / kAirRestTime);
+			ls.insPos = ankle;
+			ls.insVel = {};
 		} else {
+			// Long swings: pull the dead reckoning toward the solution so its drift
+			// stays bounded
+			double gain = std::min(1.0, dt * 3.0 * smoothstep(0.4, 1.0, ls.swingTime));
 			Vec3 kinematicVelocity = (ankle - ls.ankle) / dt;
-			ls.velocity += (kinematicVelocity - ls.velocity) * 0.3;
-			double v = ls.velocity.norm();
-			if (v > 8.0) ls.velocity = ls.velocity * (8.0 / v);
+			ls.insPos += (ankle - ls.insPos) * gain;
+			ls.insVel += (kinematicVelocity - ls.insVel) * gain;
+			double v = ls.insVel.norm();
+			if (v > 8.0) ls.insVel = ls.insVel * (8.0 / v);
 		}
 		ls.ankle = ankle;
 
-		bool onFloor = ls.planted && std::fabs(ankle.y - ankleY) < 0.06;
+		// Flat on the floor when standing on it; following the shin otherwise (in the
+		// air, kneeling, lying down)
+		bool onFloor = ls.planted && std::fabs(ankle.y - ankleY) < 0.06 && down[i].y < -0.5;
 		double target = onFloor ? 0.0 : 1.0;
 		ls.footBlend += (target - ls.footBlend) * std::min(1.0, dt / 0.12);
 		Quat flat = Quat::yaw(shinYaw(in.legs[i].shin));
@@ -313,15 +415,17 @@ BodyOutput BodySolver::update(const BodyInput& in) {
 		out.planted[i] = ls.planted;
 		out.knees[i] = knee;
 		out.kneeAngles[i] = rad2deg(ls.phi);
+		out.debug.anchors[i] = ls.anchor;
+		out.debug.ins[i] = ls.insPos;
+		out.debug.insSigma[i] = insSigma[i];
 	}
+	out.debug.neck = neck;
+	out.debug.hip0 = hip0;
+	out.debug.standing = standing;
 
 	// ---- waist orientation in ankles-only mode: spine from hip to neck ----
 	Quat waistRot = pelvis;
-	if (!useWaistTracker) {
-		Vec3 up = (neck - hip).normalized();
-		Vec3 upLocal = Quat::yaw(-pelvisYaw).rotate(up);
-		waistRot = Quat::yaw(pelvisYaw) * Quat::fromTwoVectors({0, 1, 0}, upLocal);
-	}
+	if (!useWaistTracker) waistRot = Quat::fromTwoVectors(torsoUp, (neck - hip).normalized()) * pelvis;
 	out.waist = {hip, waistRot};
 
 	// ---- smoothing and velocities ----

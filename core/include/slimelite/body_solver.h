@@ -3,22 +3,37 @@
 // IMUs only give orientations; positions come from a kinematic model anchored to
 // the HMD, solved every frame:
 //
-//  * Neck point from the HMD pose, hip center = neck - spine along the pelvis up
-//    axis (pelvis from the waist tracker, or estimated in ankles-only mode).
+//  * Upper body: head pivot from the HMD pose, neck base below it along the torso
+//    axis (not assumed vertical, so lying down works), hip center = neck base -
+//    spine along the pelvis up axis (pelvis from the waist tracker, or estimated
+//    from the head and the shins in ankles-only mode). A small free hip offset
+//    absorbs the spine curvature.
 //  * Each knee is a hinge around the shin's left-right axis, so with the shin
 //    orientation known, a leg has a single unknown: the knee angle phi.
 //      thigh direction t = cos(phi) * shinDown + sin(phi) * shinForward
 //      ankle = hipJoint + thigh * t + shin * shinDown
-//  * Unknowns x = [phiL, phiR, hip offset (3)] minimize, by Gauss-Newton:
-//      - planted foot: when the ankle IMU is still (zero velocity, ZUPT), the ankle
-//        stays where it was when it landed, snapped to the floor when close;
-//      - swing foot: stays close to the position predicted by integrating the
-//        ankle's linear acceleration from its last state;
-//      - never below the floor; knee angle limits;
-//      - hip offset prior (small in 3-tracker mode, looser with ankles only) and
-//        temporal smoothness.
+//  * phi is found per leg by a global search (no local minima: a wrong knee
+//    solution cannot get stuck) over a cost made of:
+//      - floor: ankle and knee never below the floor;
+//      - straight-leg prior: among the poses the other terms allow, the leg is as
+//        straight as possible (standing, sitting with feet on the floor and lying
+//        down all follow from this plus the floor);
+//      - hip flexion limits relative to the pelvis;
+//      - stance: when the ankle IMU is still (zero velocity), the ankle stays where
+//        it landed. Robust cost, so an anchor that the body cannot reach any more
+//        (after lying down, a slip...) loses its pull instead of folding the leg;
+//      - swing: the ankle follows the position dead-reckoned from its linear
+//        acceleration since it left the ground, with an uncertainty growing with
+//        time. This is the main term in the air: lifting a knee keeps the shin
+//        vertical, only the accelerometer sees it. Lift-off is detected from the
+//        accelerometer too (velocity integrated during stance), and the motion
+//        already integrated seeds the swing;
+//      - support: when the head says the user is standing, at least one foot is on
+//        the floor;
+//      - temporal smoothness (robust as well).
+//    The hip offset is then solved with the legs fixed, and both are alternated.
 //  * Outputs: waist pose, foot poses (flat on the floor when planted, following
-//    the shin in the air).
+//    the shin otherwise).
 #pragma once
 
 #include <array>
@@ -37,8 +52,12 @@ struct Pose {
 
 struct BodyDimensions {
 	double height = 1.75;
+	double eyeHeight = 0;  // standing eye height above the floor
 	double shin = 0, thigh = 0, ankleHeight = 0, hipWidth = 0, spine = 0;
 	double headDown = 0, headBack = 0, neckDown = 0;
+
+	// Hip joint height above the floor when standing straight
+	double standingHipHeight() const { return ankleHeight + shin + thigh; }
 
 	// Anthropometric ratios (Drillis & Contini); eyeHeight, when measured,
 	// fixes the spine length so the chain matches the real standing HMD height
@@ -71,6 +90,14 @@ struct BodyOutput {
 	std::array<bool, 2> planted{};
 	std::array<Vec3, 2> knees;  // for debugging/visualization
 	std::array<double, 2> kneeAngles{};
+
+	// Solver internals, for the recorder and the offline replay
+	struct Debug {
+		Vec3 neck, hip0;
+		double standing = 0;  // 0..1, how much the head height says "standing"
+		std::array<Vec3, 2> anchors, ins;
+		std::array<double, 2> insSigma{};  // 0 when the swing prediction is off
+	} debug;
 };
 
 class BodySolver {
@@ -81,13 +108,19 @@ public:
 
 private:
 	struct LegState {
-		double phi = 0.1;
+		bool initialized = false;
+		double phi = 0.05;
 		bool planted = false;
 		double stillTime = 0;
-		Vec3 anchor;
-		Vec3 ankle;
-		Vec3 velocity;
-		bool initialized = false;
+		Vec3 anchor;  // stance position, leaks toward the solution
+		Vec3 ankle;  // last solved ankle
+		// Accelerometer integrated during stance (leaky): a slow knee lift keeps the
+		// shin vertical and accelerates gently, the velocity still shows it
+		Vec3 stanceVel, stanceDisp;
+		// Swing dead reckoning from the last stance
+		Vec3 insPos, insVel;
+		double swingTime = 0;
+		double descent = 0;  // recent downward speed in the swing (m/s, decaying)
 		double footBlend = 0;  // 0 flat on the floor, 1 follows the shin
 	};
 
@@ -98,8 +131,9 @@ private:
 		Vec3 filter(const Vec3& v, double dt, double minCutoff, double beta);
 	};
 
-	struct Frame;  // per-update precomputed geometry
-	void residuals(const Frame& f, const double* x, std::vector<double>& r) const;
+	struct LegProblem;  // per-frame, per-leg cost inputs
+	double legCost(const LegProblem& p, double phi) const;
+	double solveLeg(const LegProblem& p) const;
 
 	BodyDimensions m_dims;
 	Settings m_settings;

@@ -48,9 +48,17 @@ bool Config::load(const std::filesystem::path& path) {
 	std::ifstream in(path);
 	if (!in) return false;
 	try {
-		json j = json::parse(in);
+		return fromJson(json::parse(in));
+	} catch (const std::exception&) {
+		return false;
+	}
+}
+
+bool Config::fromJson(const json& j) {
+	try {
 		mode = modeFromName(j.value("mode", "three"));
 		userHeight = j.value("userHeight", 1.75);
+		measuredEyeHeight.reset();
 		if (j.contains("measuredEyeHeight") && j["measuredEyeHeight"].is_number())
 			measuredEyeHeight = j["measuredEyeHeight"].get<double>();
 		if (j.contains("settings")) {
@@ -64,7 +72,8 @@ bool Config::load(const std::filesystem::path& path) {
 			settings.recording = s.value("recording", settings.recording);
 		}
 		trackers.clear();
-		for (auto& [mac, t] : j.value("trackers", json::object()).items()) {
+		const json trackersJson = j.value("trackers", json::object());
+		for (auto& [mac, t] : trackersJson.items()) {
 			TrackerConfig tc;
 			tc.role = roleFromName(t.value("role", "none"));
 			tc.mountingValid = t.value("mountingValid", false);

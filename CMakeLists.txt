@@ -55,6 +55,9 @@ endif()
 add_executable(slimelite_replay tools/replay/replay.cpp)
 target_link_libraries(slimelite_replay PRIVATE slimelite_core)
 
+add_executable(slimelite_body_replay tools/body_replay/body_replay.cpp)
+target_link_libraries(slimelite_body_replay PRIVATE slimelite_core)
+
 add_executable(slimelite_monitor tools/monitor/monitor.cpp)
 target_link_libraries(slimelite_monitor PRIVATE slimelite_core)
 

@@ -51,6 +51,7 @@ struct Config {
 
 	static std::filesystem::path defaultPath();
 	nlohmann::json toJson() const;
+	bool fromJson(const nlohmann::json& j);
 	bool load(const std::filesystem::path& path);
 	bool save(const std::filesystem::path& path) const;
 };

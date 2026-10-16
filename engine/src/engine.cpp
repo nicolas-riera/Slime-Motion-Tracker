@@ -17,6 +17,7 @@ namespace {
 
 constexpr const char* kVersion = "0.2.0";
 constexpr double kStandSeconds = 5.0;
+constexpr double kQuickResetSeconds = 3.0;
 constexpr double kSkiSeconds = 5.0;
 
 Pose poseFromMatrix(const double m[3][4]) {
@@ -72,8 +73,9 @@ Engine::Engine(const SlEngineHost& host, const char* handover)
 		m_floorKnown = h.value("floorKnown", false);
 		m_floorFromOverlay = h.value("floorFromOverlay", false);
 		m_floorY = h.value("floorY", 0.0);
-		for (auto& [mac, boot] : h.value("bootAtCalibration", json::object()).items())
-			m_bootAtCalibration[mac] = boot.get<int>();
+		const json boots = h.value("bootAtCalibration", json::object());
+		for (auto& [mac, boot] : boots.items())
+			if (boot.is_number_integer()) m_bootAtCalibration[mac] = boot.get<int>();
 		if (h.contains("hub")) m_hub.importHandover(h["hub"], TrackerHub::now());
 		m_handoverRecording = h.value("recordingPath", "");
 		log("hot reload: state restored");
@@ -285,7 +287,9 @@ void Engine::handleCommand(const json& cmd) {
 	if (type == "hello") return;
 	if (type == "floor") {
 		if (cmd.value("valid", false) && cmd.contains("y")) {
-			m_floorY = cmd["y"].get<double>();
+			double y = cmd["y"].get<double>();
+			if (!m_floorKnown || std::fabs(y - m_floorY) > 0.002) recordEvent("floor", std::to_string(y));
+			m_floorY = y;
 			m_floorKnown = m_floorFromOverlay = true;
 		}
 		return;
@@ -323,7 +327,7 @@ void Engine::handleCommand(const json& cmd) {
 	} else if (type == "calibrate" || type == "quickReset") {
 		m_calQuick = type == "quickReset";
 		m_calPhase = CalPhase::Stand;
-		m_calDeadline = TrackerHub::now() + kStandSeconds;
+		m_calDeadline = TrackerHub::now() + (m_calQuick ? kQuickResetSeconds : kStandSeconds);
 		m_calMessage = "Stand straight, feet parallel, look straight ahead";
 		return;
 	} else if (type == "cancelCalibration") {
@@ -524,7 +528,11 @@ extern "C" __declspec(dllexport) int sl_engine_api_version() { return SL_ENGINE_
 extern "C" __declspec(dllexport) void* sl_engine_create(const SlEngineHost* host, const char* handover) {
 	try {
 		return new slimelite::Engine(*host, handover);
+	} catch (const std::exception& e) {
+		if (host && host->log) host->log((std::string("engine failed to start: ") + e.what()).c_str());
+		return nullptr;
 	} catch (...) {
+		if (host && host->log) host->log("engine failed to start: unknown exception");
 		return nullptr;
 	}
 }
