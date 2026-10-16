@@ -58,7 +58,7 @@ constexpr double kNoSupportSinkTime = 0.5;
 // it the straight-leg prior swung the feet far backward when the shins tilted
 // forward (m)
 constexpr double kUnderDeadZone = 0.05;
-constexpr double kUnderSigma = 0.15;
+constexpr double kUnderSigma = 0.08;
 // ... and near the floor (the knee bending to bring it below the hip must not
 // lift it into the air)
 constexpr double kUnderHeightSigma = 0.10;
