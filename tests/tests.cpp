@@ -246,6 +246,17 @@ static void testBodySolver() {
 	std::printf("standing: ankle y %.3f, knee %.1f deg, hip y %.3f\n", out.feet[0].position.y,
 				out.kneeAngles[0], out.waist.position.y);
 
+	// Standing slouched: head 5 cm below the calibrated height, shins vertical. The
+	// hip rises a little instead of the knees bending (they used to bend ~25 deg)
+	BodySolver slouch;
+	slouch.configure(d, Settings{}, Mode::Three);
+	runPose(slouch, d, eye, 0, 30);
+	out = runPose(slouch, d, eye - 0.05, 0, 200);
+	CHECK(out.kneeAngles[0] < 10 && out.kneeAngles[1] < 10, "slouched knees %.1f %.1f deg", out.kneeAngles[0],
+		  out.kneeAngles[1]);
+	CHECK(std::fabs(out.feet[0].position.y - d.ankleHeight) < 0.03, "slouched ankle height %.3f",
+		  out.feet[0].position.y);
+
 	// Sitting on a chair: head ~0.45 m lower, shins vertical, feet on the floor
 	BodySolver sit;
 	sit.configure(d, Settings{}, Mode::Three);

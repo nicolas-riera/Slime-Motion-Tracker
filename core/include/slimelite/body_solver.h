@@ -17,7 +17,11 @@
 //      - floor: ankle and knee never below the floor;
 //      - straight-leg prior: among the poses the other terms allow, the leg is as
 //        straight as possible (standing, sitting with feet on the floor and lying
-//        down all follow from this plus the floor);
+//        down all follow from this plus the floor). It saturates: a small bend
+//        costs nearly as much as a large one, so while standing a head a few cm
+//        lower than calibrated (slouching, looking down) lifts the hip offset
+//        (a straight leg may push the hip up by a few cm) instead of bending
+//        the knees with vertical shins;
 //      - hip flexion limits relative to the pelvis;
 //      - stance: when the ankle IMU is still (zero velocity), the ankle stays where
 //        it landed. Robust cost, so an anchor that the body cannot reach any more

@@ -7,6 +7,7 @@
 // Usage: slimelite_body_replay session.jsonl out.csv [--from S] [--to S] [--floor Y]
 //   --from/--to: seconds from the start of the recording
 //   --floor: floor height in raw tracking space (default: from the recording)
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -70,13 +71,16 @@ int main(int argc, char** argv) {
 				 "rec_valid,rec_wx,rec_wy,rec_wz,rec_lx,rec_ly,rec_lz,rec_rx,rec_ry,rec_rz,rec_kl,rec_kr,rec_pl,rec_pr,"
 				 "valid,wx,wy,wz,lx,ly,lz,rx,ry,rz,kl,kr,pl,pr,"
 				 "pelvis_up_y,lshin_up_y,rshin_up_y,l_accel_y,r_accel_y,l_accel,r_accel,l_gyro,r_gyro,"
-				 "standing,hip0_y,l_ins_y,r_ins_y,l_ins_sigma,r_ins_sigma,l_anchor_y,r_anchor_y,floor\n");
+				 "standing,hip0_y,l_ins_y,r_ins_y,l_ins_sigma,r_ins_sigma,l_anchor_y,r_anchor_y,floor,"
+				 "ankle_floor,eye_h,lc_x,lc_y,lc_z,rc_x,rc_y,rc_z,"
+				 "hmd_yaw,rec_w_yaw,rec_w_tilt,w_yaw,w_tilt,l_shin_yaw,r_shin_yaw,hip0_x,hip0_z\n");
 
 	Config config;
 	bool haveConfig = false;
 	std::map<std::string, TrackerState> trackers;
 	Pose hmd;
 	bool hmdValid = false;
+	std::array<Vec3, 2> controllers;  // left, right hand (for diagnosis only)
 	double floorY = floorArg.value_or(0);
 	bool floorKnown = floorArg.has_value();
 	// Old recordings have no floor line: floor = HMD height at the stand capture -
@@ -85,14 +89,19 @@ int main(int argc, char** argv) {
 	BodySolver solver;
 	double t0 = -1, lastFrame = -1;
 	int frames = 0;
+	double solveSeconds = 0;
 
+	BodyDimensions dims;
 	auto configureSolver = [&] {
-		solver.configure(BodyDimensions::fromHeight(config.userHeight, config.measuredEyeHeight),
-						 config.settings, config.mode);
+		dims = BodyDimensions::fromHeight(config.userHeight, config.measuredEyeHeight);
+		solver.configure(dims, config.settings, config.mode);
 	};
 
 	std::string line;
 	while (std::getline(in, line)) {
+		// Skip the kinds the replay does not use without parsing them (speed)
+		if (line.find("\"k\":\"mag\"") != std::string::npos || line.find("\"k\":\"bat\"") != std::string::npos)
+			continue;
 		json j = json::parse(line, nullptr, false);
 		if (j.is_discarded() || !j.contains("k")) continue;
 		double t = j.value("t", 0.0);
@@ -143,7 +152,9 @@ int main(int argc, char** argv) {
 			ts.hasHeading = j.value("hh", 0) != 0;
 			ts.heading = j.value("hdg", 0.0);
 		} else if (k == "dev") {
-			if (j.value("cls", 0) != 1) continue;
+			int cls = j.value("cls", 0), role = j.value("role", 0);
+			if (cls == 2 && (role == 1 || role == 2)) controllers[role - 1] = vec(j["p"]);
+			if (cls != 1) continue;
 			hmdValid = j.value("ok", 0) != 0;
 			auto q = j["q"];
 			hmd.position = vec(j["p"]);
@@ -184,7 +195,9 @@ int main(int argc, char** argv) {
 					gyro[i] = ts.angularSpeed;
 				}
 			}
+			auto solveStart = std::chrono::steady_clock::now();
 			BodyOutput o = solver.update(bin);
+			solveSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - solveStart).count();
 			if (std::getenv("REPLAY_DEBUG") && frames % 5000 == 0) {
 				std::printf("t=%.1f cfg trackers %zu, states %zu, legs %d %d hmd %d floor %d\n", t - t0,
 							config.trackers.size(), trackers.size(), bin.legs[0].valid, bin.legs[1].valid,
@@ -214,12 +227,23 @@ int main(int argc, char** argv) {
 			std::fprintf(csv, "%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,", bin.waist.rotate({0, 1, 0}).y,
 						 bin.legs[0].shin.rotate({0, 1, 0}).y, bin.legs[1].shin.rotate({0, 1, 0}).y, accel[0].y,
 						 accel[1].y, accel[0].norm(), accel[1].norm(), gyro[0], gyro[1]);
-			std::fprintf(csv, "%.3f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f\n", o.debug.standing, o.debug.hip0.y,
+			std::fprintf(csv, "%.3f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,", o.debug.standing, o.debug.hip0.y,
 						 o.debug.ins[0].y, o.debug.ins[1].y, o.debug.insSigma[0], o.debug.insSigma[1],
 						 o.debug.anchors[0].y, o.debug.anchors[1].y, floorY);
+			std::fprintf(csv, "%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,", floorY + dims.ankleHeight, dims.eyeHeight,
+						 controllers[0].x, controllers[0].y, controllers[0].z, controllers[1].x, controllers[1].y,
+						 controllers[1].z);
+			// Orientations as yaw and tilt of the up axis (deg)
+			auto tilt = [](const Quat& q) { return rad2deg(std::acos(std::clamp(q.rotate({0, 1, 0}).y, -1.0, 1.0))); };
+			Quat recWaist{w[4].get<double>(), w[5].get<double>(), w[6].get<double>(), w[7].get<double>()};
+			std::fprintf(csv, "%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.4f,%.4f\n", rad2deg(hmd.rotation.yawAngle()),
+						 rad2deg(recWaist.yawAngle()), tilt(recWaist), rad2deg(o.waist.rotation.yawAngle()),
+						 tilt(o.waist.rotation), rad2deg(bin.legs[0].shin.yawAngle()),
+						 rad2deg(bin.legs[1].shin.yawAngle()), o.debug.hip0.x, o.debug.hip0.z);
 		}
 	}
 	std::fclose(csv);
-	std::printf("%d frames written, floor %.3f%s\n", frames, floorY, floorKnown ? "" : " (unknown)");
+	std::printf("%d frames written, floor %.3f%s, solver %.2f s\n", frames, floorY, floorKnown ? "" : " (unknown)",
+				solveSeconds);
 	return 0;
 }

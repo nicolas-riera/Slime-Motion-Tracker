@@ -16,6 +16,19 @@ constexpr double kFlexMin = -35.0 * kPi / 180;
 constexpr double kFlexMax = 135.0 * kPi / 180;
 // Among the allowed poses, prefer straight legs (sigma of the knee angle prior)
 constexpr double kStraightSigma = 1.2;
+// Bending a knee a little costs about as much as bending it a lot (saturating
+// prior): small head drops while standing are slouching, not knee bends. Without
+// it the knees absorbed the few cm between the calibrated and the actual head
+// height by bending 20-40 deg with vertical shins (the hip sitting back)
+constexpr double kBendCost = 3.0;
+constexpr double kBendSigma = 0.35;  // rad
+// A leg can push the hip up instead of bending: ankle penetration of the floor
+// up to kMaxHipLift (m) costs this sigma (m) in the leg search, and the hip solve
+// then lifts the hip by as much. Only when the head says standing (the gap is the
+// posture of the upper body); deeper penetrations are not allowed (sitting,
+// squatting: the knees bend)
+constexpr double kHipLiftSigma = 0.04;
+constexpr double kMaxHipLift = 0.07;
 // Clearances above the floor: knee center when kneeling, hip joint when lying
 constexpr double kKneeClearance = 0.05;
 constexpr double kHipClearance = 0.08;
@@ -104,6 +117,7 @@ struct BodySolver::LegProblem {
 	bool pelvisKnown = false;
 	Quat pelvis;
 	double floorY = 0, ankleY = 0;
+	double maxLift = 0;  // how far the hip may rise to keep this leg straight
 	double phiPrev = 0, sigmaPhi = 0.1;
 	bool planted = false;
 	Vec3 anchor;
@@ -135,9 +149,9 @@ double BodySolver::legCost(const LegProblem& p, double phi) const {
 	Vec3 knee = p.hipJoint + thighDir * d.thigh;
 	Vec3 ankle = knee + p.down * d.shin;
 
-	double c = sq(phi / kStraightSigma);
+	double c = sq(phi / kStraightSigma) + kBendCost * (1 - std::exp(-0.5 * sq(phi / kBendSigma)));
 	double pen = p.ankleY - ankle.y;
-	if (pen > 0) c += sq(pen / 0.01);
+	if (pen > 0) c += sq(std::min(pen, p.maxLift) / kHipLiftSigma) + sq(std::max(0.0, pen - p.maxLift) / 0.01);
 	double penKnee = p.floorY + kKneeClearance - knee.y;
 	if (penKnee > 0) c += sq(penKnee / 0.01);
 	if (p.pelvisKnown) {
@@ -328,6 +342,7 @@ BodyOutput BodySolver::update(const BodyInput& in) {
 			p.pelvis = pelvis;
 			p.floorY = in.floorY;
 			p.ankleY = ankleY;
+			p.maxLift = std::max(0.0, kMaxHipLift * standing - hipOffset.y);
 			p.phiPrev = ls.phi;
 			p.sigmaPhi = 0.03 + dt * (3.0 + 2.0 * in.legs[i].angularSpeed);
 			p.planted = ls.planted;
@@ -360,8 +375,13 @@ BodyOutput BodySolver::update(const BodyInput& in) {
 		hipOffset.x = std::clamp(hipOffset.x, -hipLimitH, hipLimitH);
 		hipOffset.z = std::clamp(hipOffset.z, -hipLimitH, hipLimitH);
 		hipOffset.y = std::clamp(hipOffset.y, -0.3, 0.3);
-		// The hip stays above the floor (the leg search keeps the ankles above it)
+		// The hip stays above the floor, and lifts the legs out of it (the leg search
+		// may leave an ankle a few cm in the floor rather than bend the knee)
 		hipOffset.y = std::max(hipOffset.y, in.floorY + kHipClearance - hip0.y);
+		for (int i = 0; i < 2; i++) {
+			double lift = ankleY - (hip0 + legVector(i, phi[i])).y;
+			hipOffset.y = std::max(hipOffset.y, std::min(lift, kMaxHipLift * standing));
+		}
 	}
 	m_hipOffset = hipOffset;
 	const Vec3 hip = hip0 + hipOffset;
