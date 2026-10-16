@@ -55,8 +55,18 @@ def backup(port, mac):
     if path.exists():
         print(f"[backup] already exists: {path.name}")
         return
-    print(f"[backup] dumping 4 MB flash to {path.name} (about 2 minutes)...")
-    esptool("--port", port, "--baud", "460800", "read-flash", "0", "ALL", str(path))
+    tmp = path.with_suffix(".part")
+    for baud in ("460800", "230400", "115200"):
+        print(f"[backup] dumping 4 MB flash to {path.name} at {baud} baud (2-6 minutes)...")
+        res = subprocess.run([sys.executable, "-m", "esptool", "--port", port, "--baud", baud,
+                              "read-flash", "0", "ALL", str(tmp)], capture_output=True, text=True)
+        if res.returncode == 0 and tmp.exists() and tmp.stat().st_size == 4 * 1024 * 1024:
+            tmp.replace(path)
+            break
+        print(f"[backup] failed at {baud} baud: {res.stdout.strip().splitlines()[-1] if res.stdout.strip() else res.stderr.strip()}")
+    else:
+        tmp.unlink(missing_ok=True)
+        raise SystemExit("backup failed, nothing was flashed")
     digest = hashlib.sha256(path.read_bytes()).hexdigest().upper()
     readme = BACKUP_DIR / "README.md"
     text = readme.read_text(encoding="utf-8")

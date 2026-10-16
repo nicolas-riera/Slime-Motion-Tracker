@@ -4,7 +4,7 @@
       "protocol": "I2C",
       "imu": "IMU_ICM45686",
       "int": "D5",
-      "rotation": "DEG_90",
+      "rotation": "DEG_270",
       "scl": "D1",
       "sda": "D2"
     }
