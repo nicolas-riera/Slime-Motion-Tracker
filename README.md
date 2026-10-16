@@ -45,7 +45,7 @@ SteamVR, to test the reload path.
 
 While SteamVR runs, every raw tracker packet, every SteamVR device pose (headset,
 controllers), the engine outputs, calibrations and config snapshots are written to
-`%LOCALAPPDATA%\SlimeVR-liteecordings\session_*.jsonl` (about 400 MB per hour, toggle
+`%LOCALAPPDATA%\SlimeVR-lite\recordings\session_*.jsonl` (about 400 MB per hour, toggle
 in the overlay settings). Format: `engine/src/recorder.h`. They are meant for offline
 replay, tuning and training.
 
