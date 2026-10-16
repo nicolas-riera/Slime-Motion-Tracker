@@ -53,6 +53,15 @@ constexpr double kFloorSinkTime = 2.0;
 // Standing with no planted foot on the floor, the lowest one sinks to it with this
 // time constant (s)
 constexpr double kNoSupportSinkTime = 0.5;
+// Standing, a foot with neither a stance anchor nor a swing prediction (long
+// swings: continuous bouncing, hops) stays roughly below its hip joint: without
+// it the straight-leg prior swung the feet far backward when the shins tilted
+// forward (m)
+constexpr double kUnderDeadZone = 0.05;
+constexpr double kUnderSigma = 0.15;
+// ... and near the floor (the knee bending to bring it below the hip must not
+// lift it into the air)
+constexpr double kUnderHeightSigma = 0.10;
 // The swing prediction keeps its pull further than the stance anchors (in sigmas)
 constexpr double kInsRobust = 5.0;
 // ... and pulls the hip offset with a sigma this many times larger
@@ -131,6 +140,7 @@ struct BodySolver::LegProblem {
 	double insSigma = 0;  // 0: no swing prediction
 	Vec3 ins;
 	double support = 0;  // weight of "at least one foot on the floor"
+	double under = 0;  // weight of "the foot is below the hip" (no other position cue)
 	double otherHeight = 0;  // other ankle above its floor position
 };
 
@@ -168,6 +178,12 @@ double BodySolver::legCost(const LegProblem& p, double phi) const {
 	}
 	if (p.planted) c += robust(squaredNorm(ankle - p.anchor) / sq(p.anchorSigma), 3.0);
 	if (p.insSigma > 0) c += robust(squaredNorm(ankle - p.ins) / sq(p.insSigma), kInsRobust);
+	if (p.under > 0) {
+		Vec3 h = ankle - p.hipJoint;
+		double dist = std::sqrt(h.x * h.x + h.z * h.z);
+		c += p.under * sq(std::max(0.0, dist - kUnderDeadZone) / kUnderSigma);
+		c += p.under * sq(std::max(0.0, ankle.y - p.ankleY) / kUnderHeightSigma);
+	}
 	if (p.support > 0) {
 		double h = std::min(std::max(0.0, ankle.y - p.ankleY), p.otherHeight);
 		c += p.support * sq(h / 0.03);
@@ -355,6 +371,7 @@ BodyOutput BodySolver::update(const BodyInput& in) {
 			p.insSigma = insSigma[i];
 			p.ins = ls.insPos;
 			p.support = standing * (ls.planted ? 1.0 : 0.1);
+			p.under = !ls.planted && insSigma[i] <= 0 ? standing : 0.0;
 			p.otherHeight = std::max(0.0, (hip0 + hipOffset + legVector(o, phi[o])).y - ankleY);
 			phi[i] = solveLeg(p);
 		}

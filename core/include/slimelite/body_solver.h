@@ -38,6 +38,10 @@
 //        already integrated seeds the swing;
 //      - support: when the head says the user is standing, at least one foot is on
 //        the floor;
+//      - fallback: standing, a foot with neither a stance anchor nor a swing
+//        prediction (continuous bouncing or hops never pass the zero-velocity
+//        test) stays near the floor below its hip joint, so the knees bend with
+//        the shins instead of swinging straight legs backward;
 //      - temporal smoothness (robust as well).
 //    The hip offset is then solved with the legs fixed, and both are alternated.
 //    Stance anchors pull the hip; a swinging leg reaches its dead-reckoned
