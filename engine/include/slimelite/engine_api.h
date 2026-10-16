@@ -5,8 +5,10 @@
  * pose and publishes the poses the engine computes. Everything else (network,
  * mag fusion, calibration, body solver, overlay link) lives in the engine.
  *
- * Bump SL_ENGINE_API_VERSION on any change to this file: the host refuses to load
- * an engine with a different version and keeps the current one.
+ * Bump SL_ENGINE_API_VERSION on any change to this file, except new optional
+ * exports: the host refuses to load an engine with a different version and keeps
+ * the current one. Optional exports are looked up by name; a host or an engine
+ * without them keeps working, so they can be added without a SteamVR restart.
  */
 #ifndef SLIMELITE_ENGINE_API_H
 #define SLIMELITE_ENGINE_API_H
@@ -69,6 +71,15 @@ typedef void (*SlEngineFrameFn)(void* engine, const SlFrameInput* in, SlFrameOut
 /* Writes the handover JSON (NUL-terminated, truncated to capacity) and frees the engine.
  * Returns the full JSON length. */
 typedef size_t (*SlEngineDestroyFn)(void* engine, char* handover, size_t capacity);
+
+/* Optional export "sl_engine_batteries": battery of the tracker behind each
+ * virtual tracker slot (SL_DEVICE_*) */
+typedef struct SlBattery {
+	int known;  /* 0: no battery information for this slot */
+	float level;  /* 0..1 */
+	int charging;
+} SlBattery;
+typedef void (*SlEngineBatteriesFn)(void* engine, SlBattery out[SL_DEVICE_COUNT]);
 
 #ifdef __cplusplus
 }

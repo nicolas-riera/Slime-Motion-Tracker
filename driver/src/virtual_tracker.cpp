@@ -42,6 +42,16 @@ vr::EVRInitError VirtualTracker::Activate(uint32_t unObjectId) {
 
 void VirtualTracker::Deactivate() { m_id = vr::k_unTrackedDeviceIndexInvalid; }
 
+void VirtualTracker::updateBattery(const SlBattery& battery) {
+	if (!isActive()) return;
+	auto props = vr::VRProperties();
+	auto c = props->TrackedDeviceToPropertyContainer(m_id);
+	props->SetBoolProperty(c, vr::Prop_DeviceProvidesBatteryStatus_Bool, battery.known != 0);
+	if (!battery.known) return;
+	props->SetFloatProperty(c, vr::Prop_DeviceBatteryPercentage_Float, battery.level);
+	props->SetBoolProperty(c, vr::Prop_DeviceIsCharging_Bool, battery.charging != 0);
+}
+
 void VirtualTracker::updatePose(const SlPose& pose, bool sendVelocity) {
 	if (!isActive()) return;
 	vr::DriverPose_t p = emptyPose();

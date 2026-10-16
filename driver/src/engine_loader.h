@@ -21,6 +21,8 @@ public:
 	// Checks the file (at most twice a second) and hot-reloads it when it changed
 	void poll(double now);
 	void frame(const SlFrameInput& in, SlFrameOutput& out);
+	// False when the engine does not export it (older engine)
+	bool batteries(SlBattery out[SL_DEVICE_COUNT]);
 	void unload();
 
 private:
@@ -30,6 +32,7 @@ private:
 		SlEngineCreateFn create = nullptr;
 		SlEngineFrameFn frame = nullptr;
 		SlEngineDestroyFn destroy = nullptr;
+		SlEngineBatteriesFn batteries = nullptr;  // optional
 	};
 	bool loadModule(Module& m);
 	void freeModule(Module& m);

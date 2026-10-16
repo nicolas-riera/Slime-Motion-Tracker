@@ -23,6 +23,8 @@ public:
 	~Engine();
 
 	void frame(const SlFrameInput& in, SlFrameOutput& out);
+	// Battery of the tracker behind each virtual tracker slot
+	void batteries(SlBattery out[SL_DEVICE_COUNT]) const;
 	// State passed to the next engine on hot reload
 	nlohmann::json handover() const;
 

@@ -431,6 +431,24 @@ void Engine::updateCalibration(double now, const Pose& hmd, bool hmdValid,
 	}
 }
 
+void Engine::batteries(SlBattery out[SL_DEVICE_COUNT]) const {
+	for (int i = 0; i < SL_DEVICE_COUNT; i++) out[i] = SlBattery{};
+	for (const auto& t : m_hub.snapshot()) {
+		auto it = m_config.trackers.find(t.mac);
+		if (it == m_config.trackers.end() || !t.connected || t.batteryLevel < 0) continue;
+		int slot = -1;
+		switch (it->second.role) {
+			case Role::Waist: slot = SL_DEVICE_WAIST; break;
+			case Role::LeftAnkle: slot = SL_DEVICE_LEFT_FOOT; break;
+			case Role::RightAnkle: slot = SL_DEVICE_RIGHT_FOOT; break;
+			default: break;
+		}
+		if (slot < 0) continue;
+		// The trackers do not report charging
+		out[slot] = SlBattery{1, std::clamp(t.batteryLevel, 0.0f, 1.0f), 0};
+	}
+}
+
 void Engine::finishCalibration(const Pose& hmd) {
 	// Eye height above the floor tunes the spine length
 	if (m_floorKnown) m_config.measuredEyeHeight = hmd.position.y - m_floorY;
@@ -544,6 +562,10 @@ extern "C" __declspec(dllexport) void* sl_engine_create(const SlEngineHost* host
 		if (host && host->log) host->log("engine failed to start: unknown exception");
 		return nullptr;
 	}
+}
+
+extern "C" __declspec(dllexport) void sl_engine_batteries(void* engine, SlBattery* out) {
+	static_cast<const slimelite::Engine*>(engine)->batteries(out);
 }
 
 extern "C" __declspec(dllexport) void sl_engine_frame(void* engine, const SlFrameInput* in, SlFrameOutput* out) {

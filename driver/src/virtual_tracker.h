@@ -19,6 +19,7 @@ public:
 	bool isActive() const { return m_id != vr::k_unTrackedDeviceIndexInvalid; }
 
 	void updatePose(const SlPose& pose, bool sendVelocity);
+	void updateBattery(const SlBattery& battery);
 
 	vr::EVRInitError Activate(uint32_t unObjectId) override;
 	void Deactivate() override;

@@ -75,6 +75,9 @@ void DeviceProvider::RunFrame() {
 
 	if (now - m_lastInfoRefresh > 3.0) {
 		m_lastInfoRefresh = now;
+		SlBattery batteries[SL_DEVICE_COUNT] = {};
+		if (m_engine->batteries(batteries))
+			for (int i = 0; i < SL_DEVICE_COUNT; i++) m_devices[i]->updateBattery(batteries[i]);
 		auto props = vr::VRProperties();
 		for (uint32_t i = 0; i < SL_MAX_DEVICES; i++) {
 			auto& info = m_deviceInfo[i];
