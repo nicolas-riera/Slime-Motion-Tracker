@@ -67,3 +67,10 @@ Changed: headBack 0.050 -> 0.065 h, hipBack 0.029 h (horizontal).
 
 Remaining: lifted feet 27-35 cm median error (vertical part 17-24 cm): the
 solved foot does not go as high as the real one during knee lifts.
+
+## 2026-10-17 00:40 - reverted the hip back offset (e07d725)
+
+The user felt the legs worse after the 00:32 deploy. Reverted for an A/B
+comparison. Lesson: user perception overrides the metrics; part of the forward
+bias may be the ground truth's camera-facing bias, and a change trading swing
+following or jitter for static accuracy should not be deployed.
