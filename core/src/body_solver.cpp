@@ -109,12 +109,11 @@ BodyDimensions BodyDimensions::fromHeight(double h, std::optional<double> eyeHei
 	d.thigh = 0.245 * h;
 	d.hipWidth = 0.095 * h;
 	d.headDown = 0.060 * h;  // eyes to the top of the neck, rotates with the head
-	d.headBack = 0.065 * h;  // HMD origin (in front of the eyes) to the neck pivot
+	d.headBack = 0.050 * h;
 	d.neckDown = 0.058 * h;  // neck, along the torso
 	d.eyeHeight = eyeHeight.value_or(0.936 * h);
 	double neckBase = d.eyeHeight - d.headDown - d.neckDown;
 	d.spine = std::clamp(neckBase - d.standingHipHeight(), 0.22 * h, 0.36 * h);
-	d.hipBack = 0.029 * h;
 	return d;
 }
 
@@ -256,10 +255,7 @@ BodyOutput BodySolver::update(const BodyInput& in) {
 	}
 	const Vec3 torsoUp = pelvis.rotate(up);
 	const Vec3 neck = headPivot - torsoUp * d.neckDown;
-	// Hip back offset: horizontal, fading out as the pelvis tilts (lying down)
-	Vec3 pelvisBack = pelvis.rotate({0, 0, 1});
-	pelvisBack.y = 0;
-	const Vec3 hip0 = neck - torsoUp * d.spine + pelvisBack * d.hipBack;
+	const Vec3 hip0 = neck - torsoUp * d.spine;
 	const double standing = smoothstep(0.55, 0.8, (hip0.y - in.floorY) / d.standingHipHeight());
 
 	// ---- per-leg geometry, stance detection (zero velocity), swing dead reckoning ----

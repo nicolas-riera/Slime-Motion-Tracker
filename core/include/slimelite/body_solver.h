@@ -5,9 +5,9 @@
 //
 //  * Upper body: head pivot from the HMD pose, neck base below it along the torso
 //    axis (not assumed vertical, so lying down works), hip center = neck base -
-//    spine along the pelvis up axis, a few cm back along the pelvis (pelvis from
-//    the waist tracker, or estimated from the head and the shins in ankles-only
-//    mode). A small free hip offset absorbs the spine curvature.
+//    spine along the pelvis up axis (pelvis from the waist tracker, or estimated
+//    from the head and the shins in ankles-only mode). A small free hip offset
+//    absorbs the spine curvature.
 //  * Each knee is a hinge around the shin's left-right axis, so with the shin
 //    orientation known, a leg has a single unknown: the knee angle phi.
 //      thigh direction t = cos(phi) * shinDown + sin(phi) * shinForward
@@ -66,9 +66,6 @@ struct BodyDimensions {
 	double eyeHeight = 0;  // standing eye height above the floor
 	double shin = 0, thigh = 0, ankleHeight = 0, hipWidth = 0, spine = 0;
 	double headDown = 0, headBack = 0, neckDown = 0;
-	// Hip joint center behind the neck base - spine line, horizontally (fitted
-	// on Kinect ground truth standing: the feet were ~5 cm too far forward)
-	double hipBack = 0;
 
 	// Hip joint height above the floor when standing straight
 	double standingHipHeight() const { return ankleHeight + shin + thigh; }
