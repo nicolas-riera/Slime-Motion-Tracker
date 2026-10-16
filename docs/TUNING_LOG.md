@@ -83,3 +83,13 @@ prior swung the feet ~40 cm backward (shins tilted forward). Changed: in that
 case only, a prior keeps the ankle below its hip joint and near the floor.
 Bounce window: foot_far 7.6% -> 0.4%, standing_air 1.4% -> 0.7%. Kinect median
 L/R 15.9/14.8 -> 15.8/14.7 cm, p90 36.1/40.7 -> 35.2/37.0 cm. Knee jitter +4%.
+
+## 2026-10-17 01:06 - stronger bouncing fallback (ed68029)
+
+User: hops better, legs still go backward. Feet with no anchor and no swing
+prediction were still 17-18 cm behind the waist in the bounce window; the
+fallback sigma 0.15 -> 0.08 m brings them to 6-9 cm. Kinect error unchanged,
+knee jitter +5% overall (knees now follow the squats). Not deployed: pelvic
+tilt attenuation in the spine axis (waist jitter -15% but Kinect ankles +2-3 cm
+worse). Still open: during short swings with dead reckoning the right foot goes
+back up to 30 cm (p10) in bounces: dead reckoning around impacts.
