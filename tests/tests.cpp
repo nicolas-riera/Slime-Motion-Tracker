@@ -120,6 +120,22 @@ static void testMagCalibration() {
 	std::printf("mag calibration: dip %.2f, residual %.4f, heading spread %.2f deg\n",
 				rad2deg(res->dip), res->residual, maxErr);
 
+	// The tracker's environment changes (another hard iron): on the new samples the
+	// old calibration fits badly, a new solve fits well
+	SyntheticMag moved = mag;
+	moved.hardIron = mag.hardIron + Vec3{600, -400, 300};
+	MagCalibrator later;
+	for (int i = 0; i < 5000 && later.coverage() < 1.0; i++) {
+		Quat q = randomQuat(rng);
+		later.addSample(q, moved.raw(q, rng), 0.5, i * 0.05);
+	}
+	auto oldOnNew = later.residualOf(*res);
+	auto refit = later.solve();
+	CHECK(oldOnNew && refit && refit->residual < 0.5 * *oldOnNew,
+		  "changed field not detected: old %.3f, new %.3f", oldOnNew.value_or(-1), refit ? refit->residual : -1.0);
+	auto sameOnSame = later.residualOf(*refit);
+	CHECK(sameOnSame && std::fabs(*sameOnSame - refit->residual) < 0.01, "residualOf mismatch");
+
 	// Degenerate data: only yaw rotations must not produce a calibration
 	MagCalibrator flat;
 	for (int i = 0; i < 2000; i++) {

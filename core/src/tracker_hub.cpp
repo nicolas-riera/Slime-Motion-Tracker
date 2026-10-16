@@ -262,11 +262,15 @@ void TrackerHub::processEvent(const std::string& mac, const proto::Event& e, dou
 					}
 					if (t - tr.guidedStart > 180) tr.guided = false;
 				} else if (t - tr.lastOnlineSolve > 20) {
-					// Online refinement, only when clearly better than the current fit
+					// Automatic calibration: from scratch with enough orientations, then
+					// replaced when a new fit explains the recent samples clearly better
+					// than the current one (another room, the tracker's own field
+					// changed), both measured on the same samples
 					tr.lastOnlineSolve = t;
 					if (auto cal = tr.calibrator.solve()) {
 						const MagCalibration& cur = tr.heading.calibration();
-						if (!cur.valid || cal->residual < 0.8 * cur.residual) {
+						double curResidual = cur.valid ? tr.calibrator.residualOf(cur).value_or(cur.residual) : 1e9;
+						if (cal->residual < 0.8 * curResidual) {
 							tr.heading.updateCalibration(*cal, s.qWorld, e.mag);
 							found = tr.heading.calibration();
 						}

@@ -59,6 +59,10 @@ public:
 	// Solves with the collected samples. Returns nullopt if the data is degenerate
 	// or the fit does not pass the sanity checks.
 	std::optional<MagCalibration> solve() const;
+	// Residual of a given calibration on the current samples (same scale as
+	// MagCalibration::residual), so an old fit and a new one compare on the same
+	// data. The earth field direction is re-fitted: the device's world yaw drifts.
+	std::optional<double> residualOf(const MagCalibration& cal) const;
 
 	// Exposed for tests and the replay tool
 	struct Sample {

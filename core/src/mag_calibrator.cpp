@@ -68,6 +68,23 @@ size_t MagCalibrator::sampleCount() const {
 	return n;
 }
 
+std::optional<double> MagCalibrator::residualOf(const MagCalibration& cal) const {
+	if (!cal.valid || sampleCount() < 30) return std::nullopt;
+	// |K m + c - R^T e| = |R (K m + c) - e|: e is the mean of R (K m + c)
+	std::vector<Vec3> v;
+	v.reserve(sampleCount());
+	Vec3 mean;
+	for (const auto& b : m_bins)
+		for (const auto& s : b) {
+			v.push_back(s.R * (cal.K * s.m + cal.c));
+			mean += v.back();
+		}
+	mean = mean / double(v.size());
+	double sq = 0;
+	for (const auto& x : v) sq += (x - mean).dot(x - mean);
+	return std::sqrt(sq / v.size());
+}
+
 void MagCalibrator::reset() {
 	for (auto& b : m_bins) b.clear();
 	m_lastAdded.fill(-1e9);
