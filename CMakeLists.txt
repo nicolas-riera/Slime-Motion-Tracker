@@ -58,6 +58,14 @@ target_link_libraries(slimelite_replay PRIVATE slimelite_core)
 add_executable(slimelite_body_replay tools/body_replay/body_replay.cpp)
 target_link_libraries(slimelite_body_replay PRIVATE slimelite_core)
 
+# Kinect v2 depth recorder (ground truth), only with the Kinect for Windows SDK 2.0
+if(WIN32 AND DEFINED ENV{KINECTSDK20_DIR})
+  file(TO_CMAKE_PATH "$ENV{KINECTSDK20_DIR}" KINECT_SDK)
+  add_executable(slimelite_kinect_recorder tools/kinect_recorder/kinect_recorder.cpp)
+  target_include_directories(slimelite_kinect_recorder PRIVATE ${KINECT_SDK}/inc)
+  target_link_libraries(slimelite_kinect_recorder PRIVATE ${KINECT_SDK}/Lib/x64/Kinect20.lib Cabinet Ole32)
+endif()
+
 add_executable(slimelite_monitor tools/monitor/monitor.cpp)
 target_link_libraries(slimelite_monitor PRIVATE slimelite_core)
 
