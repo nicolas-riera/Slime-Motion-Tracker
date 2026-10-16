@@ -98,6 +98,9 @@ public:
 	// PACKET_FLEX_DATA 26
 	void sendFlexData(uint8_t sensorId, float flexLevel);
 
+	// PACKET_RAW_MAGNETOMETER 210 (SlimeVR-lite extension)
+	void sendRawMagnetometer(uint8_t sensorId, const int16_t raw[3]);
+
 #if ENABLE_INSPECTION
 	void sendInspectionRawIMUData(
 		uint8_t sensorId,

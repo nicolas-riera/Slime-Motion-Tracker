@@ -366,14 +366,19 @@ struct ICM45Base {
 		writeBankRegister<typename BaseRegs::I2CMDevProfile1>(deviceId);
 	}
 
-	uint8_t readAux(uint8_t address) {
-		writeBankRegister<typename BaseRegs::I2CMDevProfile0>(address);
+	// I2CM_COMMAND_n layout (TDK inv_imu_regmap): [7] end flag, [6] channel,
+	// [5:4] R/W (00 = write, 01 = read with register), [3:0] burst length.
+	static constexpr uint8_t I2CMWrite = 0b00 << 4;
+	static constexpr uint8_t I2CMReadWithRegister = 0b01 << 4;
+	static constexpr uint32_t I2CMTimeoutMicros = 2000;
 
+	// Starts the queued I2CM command and waits for completion.
+	// Returns false on bus error or timeout.
+	bool runAuxCommand(uint8_t command) {
 		writeBankRegister<typename BaseRegs::I2CMCommand0>(
 			(0b1 << 7)  // Last transaction
 			| (0b0 << 6)  // Channel 0
-			| (0b01 << 4)  // Read with register
-			| (0b0001 << 0)  // Read 1 byte
+			| command
 		);
 		writeBankRegister<typename BaseRegs::I2CMControl>(
 			(0b0 << 6)  // No restarts
@@ -381,58 +386,72 @@ struct ICM45Base {
 			| (0b1 << 0)  // Start transaction
 		);
 
+		uint32_t start = micros();
 		uint8_t lastStatus;
 		while ((lastStatus = readBankRegister<typename BaseRegs::I2CMStatus>())
-			   & BaseRegs::I2CMStatus::Busy)
-			;
-
-		if (lastStatus != BaseRegs::I2CMStatus::Done) {
-			m_Logger.error(
-				"Aux read from address 0x%02x returned status 0x%02x",
-				address,
-				lastStatus
-			);
+			   & BaseRegs::I2CMStatus::Busy) {
+			if (micros() - start > I2CMTimeoutMicros) {
+				return false;
+			}
 		}
 
-		return readBankRegister<typename BaseRegs::I2CMRdData0>();
+		return lastStatus == BaseRegs::I2CMStatus::Done;
+	}
+
+	bool readAuxBurst(uint8_t address, uint8_t* out, uint8_t length) {
+		writeBankRegister<typename BaseRegs::I2CMDevProfile0>(address);
+		if (!runAuxCommand(I2CMReadWithRegister | (length & 0xf))) {
+			return false;
+		}
+		readBankRegister<typename BaseRegs::I2CMRdData0>(out, length);
+		return true;
+	}
+
+	uint8_t readAux(uint8_t address) {
+		uint8_t value = 0;
+		if (!readAuxBurst(address, &value, 1)) {
+			m_Logger.error("Aux read from address 0x%02x failed", address);
+		}
+		return value;
 	}
 
 	void writeAux(uint8_t address, uint8_t value) {
-		writeBankRegister<typename BaseRegs::I2CMDevProfile0>(address);
-		writeBankRegister<typename BaseRegs::I2CMWrData0>(value);
-		writeBankRegister<typename BaseRegs::I2CMCommand0>(
-			(0b1 << 7)  // Last transaction
-			| (0b0 << 6)  // Channel 0
-			| (0b01 << 4)  // Read with register
-			| (0b0001 << 0)  // Read 1 byte
-		);
-		writeBankRegister<typename BaseRegs::I2CMControl>(
-			(0b0 << 6)  // No restarts
-			| (0b0 << 3)  // Fast mode
-			| (0b1 << 0)  // Start transaction
-		);
-
-		uint8_t lastStatus;
-		while ((lastStatus = readBankRegister<typename BaseRegs::I2CMStatus>())
-			   & BaseRegs::I2CMStatus::Busy)
-			;
-
-		if (lastStatus != BaseRegs::I2CMStatus::Done) {
+		// Write payload is register address followed by the data bytes
+		uint8_t payload[] = {address, value};
+		writeBankRegister<typename BaseRegs::I2CMWrData0>(payload, sizeof(payload));
+		if (!runAuxCommand(I2CMWrite | sizeof(payload))) {
 			m_Logger.error(
-				"Aux write to address 0x%02x with value 0x%02x returned status 0x%02x",
+				"Aux write to address 0x%02x with value 0x%02x failed",
 				address,
-				value,
-				lastStatus
+				value
 			);
 		}
 	}
 
+	uint8_t auxPollReg = 0;
+	bool auxPolling = false;
+
 	void startAuxPolling(uint8_t dataReg, MagDataWidth dataWidth) {
-		// TODO:
+		// Only 6 byte (3x int16 little endian) mags are supported here
+		auxPollReg = dataReg;
+		auxPolling = dataWidth == MagDataWidth::SixByte;
 	}
 
-	void stopAuxPolling() {
-		// TODO:
+	void stopAuxPolling() { auxPolling = false; }
+
+	// Reads one magnetometer sample through the I2C master, raw sensor counts.
+	bool pollAux(int16_t out[3]) {
+		if (!auxPolling) {
+			return false;
+		}
+		uint8_t raw[6];
+		if (!readAuxBurst(auxPollReg, raw, sizeof(raw))) {
+			return false;
+		}
+		for (int i = 0; i < 3; i++) {
+			out[i] = static_cast<int16_t>(raw[2 * i] | (raw[2 * i + 1] << 8));
+		}
+		return true;
 	}
 };
 

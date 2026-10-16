@@ -87,6 +87,46 @@ class SoftFusionSensor : public Sensor {
 	void sendData() final {
 		Sensor::sendData();
 		sendTempIfNeeded();
+		sendMagIfNeeded();
+	}
+
+	// SlimeVR-lite: raw magnetometer samples are streamed to the host, which does
+	// the calibration, heading fusion and disturbance rejection. The on-device VQF
+	// stays 6D so the firmware remains fully compatible with the SlimeVR server.
+	static constexpr uint32_t MagPollIntervalMicros = 20000;  // 50 Hz
+	uint32_t m_lastMagPollTime = 0;
+	int16_t m_lastMagSample[3]{};
+	bool m_newMagSample = false;
+	uint32_t m_magPollFailures = 0;
+
+	bool hasNewDataToSend() final {
+		return Sensor::hasNewDataToSend() || m_newMagSample;
+	}
+
+	void pollMagIfNeeded() {
+		if constexpr (Consts::SupportsMags) {
+			if (!magDriver.getAttachedMagName()) {
+				return;
+			}
+			uint32_t now = micros();
+			if (now - m_lastMagPollTime < MagPollIntervalMicros) {
+				return;
+			}
+			m_lastMagPollTime = now;
+			if (m_sensor.pollAux(m_lastMagSample)) {
+				m_newMagSample = true;
+			} else if (++m_magPollFailures % 250 == 1) {
+				m_Logger.warn("Mag read failed (%u failures)", m_magPollFailures);
+			}
+		}
+	}
+
+	void sendMagIfNeeded() {
+		if (!m_newMagSample) {
+			return;
+		}
+		m_newMagSample = false;
+		networkConnection.sendRawMagnetometer(sensorId, m_lastMagSample);
 	}
 
 	void sendTempIfNeeded() {
@@ -270,6 +310,8 @@ public:
 			optimistic_yield(100);
 		}
 
+		pollMagIfNeeded();
+
 		if (calibrationDetector.update(m_fusion)) {
 			markRestCalibrationComplete();
 		}
@@ -336,7 +378,8 @@ public:
 				SoftFusion::MagInterface{
 					.readByte
 					= [&](uint8_t address) { return m_sensor.readAux(address); },
-					.writeByte = [&](uint8_t address, uint8_t value) {},
+					.writeByte = [&](uint8_t address, uint8_t value
+							  ) { m_sensor.writeAux(address, value); },
 					.setDeviceId
 					= [&](uint8_t deviceId) { m_sensor.setAuxId(deviceId); },
 					.startPolling
@@ -347,20 +390,9 @@ public:
 				Consts::Supports9ByteMag
 			);
 
-			if (toggles.getToggle(SensorToggles::MagEnabled)) {
-				magDriver.startPolling();
-			}
+			// Always stream the mag when one is present, see sendMagIfNeeded()
+			magDriver.startPolling();
 		}
-
-		toggles.onToggleChange([&](SensorToggles toggle, bool value) {
-			if (toggle == SensorToggles::MagEnabled) {
-				if (value) {
-					magDriver.startPolling();
-				} else {
-					magDriver.stopPolling();
-				}
-			}
-		});
 	}
 
 	void startCalibration(int calibrationType) final {

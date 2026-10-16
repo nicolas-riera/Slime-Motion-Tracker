@@ -57,6 +57,8 @@ enum class SendPacketType : uint8_t {
 	// PositionData = 27,
 	Bundle = 100,
 	Inspection = 105,
+	// SlimeVR-lite extension: raw magnetometer counts for host-side fusion
+	RawMagnetometer = 210,
 };
 
 enum class ReceivePacketType : uint8_t {
@@ -223,6 +225,13 @@ struct FloatRawImuDataInspectionPacket {
 	BigEndian<float> mY;
 	BigEndian<float> mZ;
 	uint8_t mA{};
+};
+
+struct RawMagnetometerPacket {
+	uint8_t sensorId{};
+	BigEndian<int16_t> x;
+	BigEndian<int16_t> y;
+	BigEndian<int16_t> z;
 };
 
 struct SetConfigFlagPacket {

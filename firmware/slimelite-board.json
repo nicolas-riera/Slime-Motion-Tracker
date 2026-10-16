@@ -1,0 +1,23 @@
+{
+  "SENSORS": [
+    {
+      "protocol": "I2C",
+      "imu": "IMU_ICM45686",
+      "int": "D5",
+      "rotation": "DEG_90",
+      "scl": "D1",
+      "sda": "D2"
+    }
+  ],
+  "BATTERY": {
+    "type": "BAT_EXTERNAL",
+    "r1": 100,
+    "r2": 220,
+    "shieldR": 180,
+    "pin": "A0"
+  },
+  "LED": {
+    "LED_PIN": "2",
+    "LED_INVERTED": true
+  }
+}

@@ -228,6 +228,20 @@ void Connection::sendSensorAcceleration(uint8_t sensorId, Vector3 vector) {
 	));
 }
 
+// PACKET_RAW_MAGNETOMETER 210 (SlimeVR-lite extension)
+void Connection::sendRawMagnetometer(uint8_t sensorId, const int16_t raw[3]) {
+	MUST(m_Connected);
+	MUST(sendPacket(
+		SendPacketType::RawMagnetometer,
+		RawMagnetometerPacket{
+			.sensorId = sensorId,
+			.x = raw[0],
+			.y = raw[1],
+			.z = raw[2],
+		}
+	));
+}
+
 // PACKET_BATTERY_LEVEL 12
 void Connection::sendBatteryLevel(float batteryVoltage, float batteryPercentage) {
 	MUST(m_Connected);
