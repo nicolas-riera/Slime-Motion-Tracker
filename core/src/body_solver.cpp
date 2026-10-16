@@ -42,15 +42,21 @@ constexpr double kMaxSwing = 1.5;
 constexpr double kStanceVelLeak = 0.25;  // s
 constexpr double kStanceDispLeak = 0.3;  // s
 constexpr double kLiftOffSpeed = 0.2;  // m/s
-// Landing detection: downward speed just before the stance (m/s), and how far
-// above the floor a landing is still snapped to it (m)
-constexpr double kLandingSpeed = 0.1;
-constexpr double kLandingSnap = 0.4;
-// A still foot in the air while standing sinks to the floor with this time
-// constant (s): holding a knee up is possible, just not for long
-constexpr double kAirRestTime = 4.0;
+// A foot that stops within this distance of the floor (m) is on the floor. The
+// dead-reckoned height at touchdown is within 5 cm of the floor for ~90% of the
+// steps; a foot stopping higher rests on furniture or is held up, and stays there
+constexpr double kFloorSnap = 0.06;
+// Standing, a planted foot still slightly above the floor (below kFloorSink, m)
+// sinks to it with this time constant (s): dead reckoning errors would pile up
+constexpr double kFloorSink = 0.10;
+constexpr double kFloorSinkTime = 2.0;
+// Standing with no planted foot on the floor, the lowest one sinks to it with this
+// time constant (s)
+constexpr double kNoSupportSinkTime = 0.5;
 // The swing prediction keeps its pull further than the stance anchors (in sigmas)
 constexpr double kInsRobust = 5.0;
+// ... and pulls the hip offset with a sigma this many times larger
+constexpr double kInsHipScale = 5.0;
 
 double sq(double x) { return x * x; }
 double lerp(double a, double b, double t) { return a + (b - a) * t; }
@@ -283,13 +289,14 @@ BodyOutput BodySolver::update(const BodyInput& in) {
 		}
 		if (!ls.planted && ls.stillTime >= 0.05) {
 			ls.planted = true;
+			// Trust the accelerometer: the foot stays where it stopped (on the bed, held
+			// up...), at the dead-reckoned height (the solution may lag behind it), unless
+			// it is within a few cm of the floor
 			ls.anchor = ls.ankle;
-			// A foot coming down and stopping while the user stands has landed on the
-			// floor (dead reckoning errors are a few cm per swing and would pile up).
-			// A held knee lift stops without coming down and stays in the air
-			double h = ls.anchor.y - ankleY;
-			bool landed = standing > 0.5 && ls.descent > kLandingSpeed && h < kLandingSnap;
-			if (landed || std::fabs(h) < 0.10) ls.anchor.y = ankleY;
+			if (ls.swingTime < kMaxSwing) ls.anchor.y = std::max(ankleY, ls.insPos.y);
+			if (ls.anchor.y - ankleY < kFloorSnap) ls.anchor.y = ankleY;
+			out.debug.touchdownSwing[i] = ls.swingTime;
+			out.debug.touchdownHeight[i] = ls.anchor.y - ankleY;
 			ls.stanceVel = ls.stanceDisp = {};
 		} else if (ls.planted && (a > 2.0 || li.angularSpeed > 4.0 || ls.stanceVel.norm() > kLiftOffSpeed)) {
 			// Lift-off: the swing starts with the motion already integrated
@@ -302,9 +309,6 @@ BodyOutput BodySolver::update(const BodyInput& in) {
 			ls.insVel += li.accelWorld * dt;
 			ls.insPos += ls.insVel * dt;
 			ls.swingTime += dt;
-			ls.descent = std::max(ls.descent * std::exp(-dt / 0.5), -ls.insVel.y);
-		} else {
-			ls.descent = 0;
 		}
 	}
 
@@ -369,7 +373,10 @@ BodyOutput BodySolver::update(const BodyInput& in) {
 		for (int i = 0; i < 2; i++) {
 			Vec3 base = hip0 + legVector(i, phi[i]);  // ankle without hip offset
 			if (m_legs[i].planted) addTarget(m_legs[i].anchor - base, anchorSigma, 3.0);
-			if (insSigma[i] > 0) addTarget(m_legs[i].insPos - base, insSigma[i], kInsRobust);
+			// A swinging leg reaches its dead-reckoned position with its knee: it only
+			// pulls the hip when the leg cannot get there (lifting a knee does not lift
+			// the hip)
+			if (insSigma[i] > 0) addTarget(m_legs[i].insPos - base, insSigma[i] * kInsHipScale, kInsRobust);
 		}
 		hipOffset = {num.x / den.x, num.y / den.y, num.z / den.z};
 		hipOffset.x = std::clamp(hipOffset.x, -hipLimitH, hipLimitH);
@@ -385,6 +392,26 @@ BodyOutput BodySolver::update(const BodyInput& in) {
 	}
 	m_hipOffset = hipOffset;
 	const Vec3 hip = hip0 + hipOffset;
+
+	// ---- support: standing, some foot carries the weight. When no planted foot is
+	// on the floor (both resting in the air, or one in the air and the other
+	// swinging), the lowest planted one is on the floor and its dead reckoning
+	// stopped short: sink it. A foot on a bed or held up keeps its height as long
+	// as the other one stands on the floor ----
+	{
+		int lowest = -1;
+		bool onFloor = false;
+		for (int i = 0; i < 2; i++) {
+			const LegState& ls = m_legs[i];
+			if (!ls.planted) continue;
+			if (ls.anchor.y - ankleY < kFloorSnap) onFloor = true;
+			if (lowest < 0 || ls.anchor.y < m_legs[lowest].anchor.y) lowest = i;
+		}
+		if (lowest >= 0 && !onFloor && standing > 0.5) {
+			Vec3& a = m_legs[lowest].anchor;
+			a.y += (ankleY - a.y) * std::min(1.0, standing * dt / kNoSupportSinkTime);
+		}
+	}
 
 	// ---- legs: positions, anchors, swing correction, foot orientation ----
 	for (int i = 0; i < 2; i++) {
@@ -406,9 +433,9 @@ BodyOutput BodySolver::update(const BodyInput& in) {
 				ls.anchor.x += (ankle.x - ls.anchor.x) * k;
 				ls.anchor.z += (ankle.z - ls.anchor.z) * k;
 			}
-			// Standing, a foot does not stay still in the air for long: sink it
-			if (ls.anchor.y > ankleY)
-				ls.anchor.y += (ankleY - ls.anchor.y) * std::min(1.0, standing * dt / kAirRestTime);
+			// Standing, a foot resting a few cm above the floor is on it
+			if (ls.anchor.y > ankleY && ls.anchor.y < ankleY + kFloorSink)
+				ls.anchor.y += (ankleY - ls.anchor.y) * std::min(1.0, standing * dt / kFloorSinkTime);
 			ls.insPos = ankle;
 			ls.insVel = {};
 		} else {

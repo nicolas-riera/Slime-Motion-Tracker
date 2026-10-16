@@ -73,7 +73,8 @@ int main(int argc, char** argv) {
 				 "pelvis_up_y,lshin_up_y,rshin_up_y,l_accel_y,r_accel_y,l_accel,r_accel,l_gyro,r_gyro,"
 				 "standing,hip0_y,l_ins_y,r_ins_y,l_ins_sigma,r_ins_sigma,l_anchor_y,r_anchor_y,floor,"
 				 "ankle_floor,eye_h,lc_x,lc_y,lc_z,rc_x,rc_y,rc_z,"
-				 "hmd_yaw,rec_w_yaw,rec_w_tilt,w_yaw,w_tilt,l_shin_yaw,r_shin_yaw,hip0_x,hip0_z\n");
+				 "hmd_yaw,rec_w_yaw,rec_w_tilt,w_yaw,w_tilt,l_shin_yaw,r_shin_yaw,hip0_x,hip0_z,"
+				 "l_td_swing,r_td_swing,l_td_h,r_td_h\n");
 
 	Config config;
 	bool haveConfig = false;
@@ -236,10 +237,13 @@ int main(int argc, char** argv) {
 			// Orientations as yaw and tilt of the up axis (deg)
 			auto tilt = [](const Quat& q) { return rad2deg(std::acos(std::clamp(q.rotate({0, 1, 0}).y, -1.0, 1.0))); };
 			Quat recWaist{w[4].get<double>(), w[5].get<double>(), w[6].get<double>(), w[7].get<double>()};
-			std::fprintf(csv, "%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.4f,%.4f\n", rad2deg(hmd.rotation.yawAngle()),
+			std::fprintf(csv, "%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.4f,%.4f,", rad2deg(hmd.rotation.yawAngle()),
 						 rad2deg(recWaist.yawAngle()), tilt(recWaist), rad2deg(o.waist.rotation.yawAngle()),
 						 tilt(o.waist.rotation), rad2deg(bin.legs[0].shin.yawAngle()),
 						 rad2deg(bin.legs[1].shin.yawAngle()), o.debug.hip0.x, o.debug.hip0.z);
+			const auto& dbg = o.debug;
+			std::fprintf(csv, "%.3f,%.3f,%.4f,%.4f\n", dbg.touchdownSwing[0], dbg.touchdownSwing[1],
+						 dbg.touchdownHeight[0], dbg.touchdownHeight[1]);
 		}
 	}
 	std::fclose(csv);

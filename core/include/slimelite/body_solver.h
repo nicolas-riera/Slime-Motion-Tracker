@@ -25,7 +25,11 @@
 //      - hip flexion limits relative to the pelvis;
 //      - stance: when the ankle IMU is still (zero velocity), the ankle stays where
 //        it landed. Robust cost, so an anchor that the body cannot reach any more
-//        (after lying down, a slip...) loses its pull instead of folding the leg;
+//        (after lying down, a slip...) loses its pull instead of folding the leg.
+//        The anchor height is the dead-reckoned one at touchdown: a foot put on a
+//        bed or held up stays there. It snaps to the floor only within a few cm
+//        of it, and when standing with no planted foot on the floor the lowest
+//        one sinks to it (dead reckoning that stopped short);
 //      - swing: the ankle follows the position dead-reckoned from its linear
 //        acceleration since it left the ground, with an uncertainty growing with
 //        time. This is the main term in the air: lifting a knee keeps the shin
@@ -36,6 +40,9 @@
 //        the floor;
 //      - temporal smoothness (robust as well).
 //    The hip offset is then solved with the legs fixed, and both are alternated.
+//    Stance anchors pull the hip; a swinging leg reaches its dead-reckoned
+//    position with its knee and pulls the hip only weakly (lifting a knee does
+//    not lift or shift the pelvis).
 //  * Outputs: waist pose, foot poses (flat on the floor when planted, following
 //    the shin otherwise).
 #pragma once
@@ -101,6 +108,9 @@ struct BodyOutput {
 		double standing = 0;  // 0..1, how much the head height says "standing"
 		std::array<Vec3, 2> anchors, ins;
 		std::array<double, 2> insSigma{};  // 0 when the swing prediction is off
+		// Touchdown this frame: swing duration (0: none), stance anchor height
+		// above the floor height
+		std::array<double, 2> touchdownSwing{}, touchdownHeight{};
 	} debug;
 };
 
@@ -124,7 +134,6 @@ private:
 		// Swing dead reckoning from the last stance
 		Vec3 insPos, insVel;
 		double swingTime = 0;
-		double descent = 0;  // recent downward speed in the swing (m/s, decaying)
 		double footBlend = 0;  // 0 flat on the floor, 1 follows the shin
 	};
 

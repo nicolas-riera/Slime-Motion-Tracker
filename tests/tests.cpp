@@ -268,6 +268,36 @@ static void testBodySolver() {
 	std::printf("sitting: knee %.1f deg, ankle y %.3f, hip y %.3f\n", out.kneeAngles[0],
 				out.feet[0].position.y, out.waist.position.y);
 
+	// Knee lift held still (or a foot put on a bed): the shin stays vertical, only
+	// the accelerometer sees the foot rise 30 cm (and move 40 cm forward with the
+	// knee, thigh at ~73 deg). Once still, it must stay up
+	{
+		BodySolver lift;
+		lift.configure(d, Settings{}, Mode::Three);
+		runPose(lift, d, eye, 0, 120);
+		BodyInput in;
+		in.dt = 1.0 / 90;
+		in.hmdValid = true;
+		in.hmd.position = {0, eye, 0};
+		in.hasWaist = true;
+		for (auto& leg : in.legs) leg.valid = true;
+		const Vec3 accel{0, 4.8, -6.4};  // displacement accel * half^2 = (0, 0.30, -0.40) m
+		const double half = 0.25;
+		for (int f = 0; f < 90 * 5; f++) {
+			double t = f * in.dt;
+			in.legs[1].accelWorld = t < half ? accel : t < 2 * half ? accel * -1.0 : Vec3{};
+			out = lift.update(in);
+			if (f == 90) {
+				CHECK(out.feet[1].position.y > d.ankleHeight + 0.2, "lifted foot at %.3f", out.feet[1].position.y);
+			}
+		}
+		CHECK(out.feet[1].position.y > d.ankleHeight + 0.2, "held foot sank to %.3f", out.feet[1].position.y);
+		CHECK(std::fabs(out.feet[0].position.y - d.ankleHeight) < 0.03, "standing foot at %.3f",
+			  out.feet[0].position.y);
+		std::printf("held knee lift: foot y %.3f after 5 s, knee %.1f deg\n", out.feet[1].position.y,
+					out.kneeAngles[1]);
+	}
+
 	// Ankles-only mode standing
 	BodySolver ankles;
 	ankles.configure(d, Settings{}, Mode::Ankles);
