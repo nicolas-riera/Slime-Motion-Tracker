@@ -267,7 +267,7 @@ def build(lags=None, dump=None, gt_files=None):
     Y, M = targets(fr, idx, gt)
     M &= ok[:, None]
     Mc = clean_mask(gt["t"], Y, M)
-    Mc &= kinematic_mask(fr, idx, Y, meta)
+    Mc &= kinematic_mask(X, Y, meta)
     cam = camera_dirs(fr, idx, gt)
     DR = dead_reckoning(fr)[idx]
     rec = {"l": np.stack([d["rec_lx"], d["rec_ly"] - d["floor"], d["rec_lz"]], axis=1)[idx],
@@ -307,22 +307,22 @@ def clean_mask(t, Y, M, half_window=0.35):
     return Mc
 
 
-def kinematic_mask(fr, idx, Y, meta, margin=0.10):
-    """Ground-truth ankles the body cannot reach: the knee (ankle + shin along the
-    IMU shin axis) above the highest possible hip joint (HMD height minus the
-    standing eye-to-hip distance, scaled by the pelvis tilt) by more than margin,
-    and both feet high while the head is at standing height."""
+def kinematic_mask(X, Y, meta, margin=0.25):
+    """Ground-truth ankles the body cannot reach: the knee (ankle + shin length
+    along the IMU shin axis) above the highest plausible hip joint (HMD height
+    minus the standing eye-to-hip distance, scaled by the pelvis tilt) by more
+    than margin. Uses the lag-0 features of X (HMD height, pelvis and shin up
+    axes). The margin is loose: a foot put on the bed (ankle ~0.55 m, vertical
+    shin) is real and must stay; the first extraction's hands-as-shins at
+    0.5-0.6 m are gone in v2."""
     h = meta["userHeight"]
     eye = meta.get("eyeHeight", 0.936 * h)
     eye_to_hip = eye - (0.039 + 0.246 + 0.245) * h  # same ratios as BodyDimensions
-    pel_up_y = fr.R["pelvis"][idx][:, 1, 1]
-    hip_max = fr.hmd[idx, 1] - eye_to_hip * np.maximum(pel_up_y, 0.3)
-    ok = np.ones((len(idx), 2), bool)
-    for k, leg in enumerate("lr"):
-        knee = Y[:, 3 * k + 1] + 0.246 * h * fr.R[leg][idx][:, 1, 1]
+    hip_max = X[:, 1] - eye_to_hip * np.maximum(X[:, 10], 0.3)
+    ok = np.ones((len(X), 2), bool)
+    for k, col in ((0, 16), (1, 22)):
+        knee = Y[:, 3 * k + 1] + 0.246 * h * X[:, col]
         ok[:, k] = knee < hip_max + margin
-    both = (Y[:, 1] > 0.2) & (Y[:, 4] > 0.2) & (fr.hmd[idx, 1] > eye - 0.2)
-    ok[both] = False
     return ok
 
 
@@ -363,6 +363,17 @@ def replay_at(replay_csv, session, fr, idx):
     return np.concatenate(out, axis=1)
 
 
+def reclean(name):
+    """Recomputes the cleaned mask of an existing dataset file (after a change of
+    the cleaning rules) without rebuilding the features."""
+    path = os.path.join(ML, f"ds_{name}.npz")
+    z = dict(np.load(path))
+    _, meta = load_dump(os.path.join(ML, "s232318.bin"))
+    z["Mc"] = clean_mask(z["t"], z["Y"], z["M"]) & kinematic_mask(z["X"], z["Y"], meta)
+    np.savez_compressed(path, **z)
+    print(f"{path}: {z['M'].sum(0)} valid, {z['Mc'].sum(0)} after cleaning")
+
+
 def main():
     import argparse
     ap = argparse.ArgumentParser(description="Builds the training set (features, targets, solver baselines)")
@@ -371,7 +382,10 @@ def main():
     ap.add_argument("--session", default=os.path.join(REC, "session_20261016_232318.jsonl"))
     ap.add_argument("--dump", default=os.path.join(ML, "s232318.bin"))
     ap.add_argument("--extra-lags", default="", help="comma separated lags (s) added to the default ones")
+    ap.add_argument("--reclean", action="store_true", help="only recompute the cleaned mask of ds_<name>")
     args = ap.parse_args()
+    if args.reclean:
+        return reclean(args.name)
     lags = default_lags() + [float(v) for v in args.extra_lags.split(",") if v]
     D = build(lags=lags, dump=args.dump)
     fr, idx = D["fr"], D["idx"]

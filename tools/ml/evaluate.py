@@ -20,11 +20,14 @@ from train import breakdown, fmt  # noqa: E402
 
 def predict_all(model, fr, chunk=40000):
     """World ankles (N, 6; y above the floor) and sigmas for every frame (NaN when invalid)."""
+    dr = ds.dead_reckoning(fr) if model.get("dr") else None
     P = np.full((fr.n, 6), np.nan)
     S = np.full((fr.n, 6), np.nan)
     for a in range(0, fr.n, chunk):
         idx = np.arange(a, min(a + chunk, fr.n))
         X, ok = ds.features(fr, idx, model["lags"])
+        if dr is not None:
+            X = np.concatenate([X, dr[idx]], axis=1)
         mean, sig = forward(model, X[ok])
         P[idx[ok]] = ds.to_world(fr, idx[ok], mean)
         S[idx[ok]] = sig
@@ -118,6 +121,11 @@ def main():
             r = e[m, 3 * k:3 * k + 3] / Sg[m, 3 * k:3 * k + 3]
             print(f"uncertainty calibration {'lr'[k]}: |error|/sigma median {np.median(r):.2f} (Laplace: 0.49), "
                   f"fraction within 2 sigma {np.mean(r < 2) * 100:.0f}% (Laplace: 94%)")
+            for name, sel in (("floor", Yd[m, 3 * k + 1] <= 0.15), ("lifted", Yd[m, 3 * k + 1] > 0.15)):
+                sg = Sg[m][sel, 3 * k:3 * k + 3]
+                print(f"  {name}: median sigma x/y/z {np.median(sg[:, 0]) * 100:.1f}/{np.median(sg[:, 1]) * 100:.1f}/"
+                      f"{np.median(sg[:, 2]) * 100:.1f} cm, within 2 sigma {np.mean(r[sel] < 2) * 100:.0f}%, "
+                      f"|err y| median {np.median(e[m][sel, 3 * k + 1]) * 100:.1f} cm")
 
 
 if __name__ == "__main__":

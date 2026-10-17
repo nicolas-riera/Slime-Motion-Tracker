@@ -39,7 +39,15 @@ bool FootModel::load(const std::string& path) {
 		m_sd = j.at("sd").get<std::vector<double>>();
 		m_ymu = j.at("ymu").get<std::vector<double>>();
 		m_hetero = j.value("hetero", false);
-		int n = static_cast<int>(m_lags.size()) * kFeaturesPerLag;
+		m_dr = j.value("dr", false);
+		if (m_dr) {
+			const auto& d = j.at("drParams");
+			m_drStillGyro = d.at("stillGyro").get<double>();
+			m_drStillAcc = d.at("stillAcc").get<double>();
+			m_drZuptAfter = d.at("zuptAfter").get<double>();
+			m_drLeak = d.at("leak").get<double>();
+		}
+		int n = static_cast<int>(m_lags.size()) * kFeaturesPerLag + (m_dr ? 4 : 0);
 		if (static_cast<int>(m_mu.size()) != n || static_cast<int>(m_sd.size()) != n || m_ymu.size() != 6) {
 			m_error = "inconsistent normalization sizes";
 			return false;
@@ -84,6 +92,9 @@ void FootModel::reset() {
 	m_count = 0;
 	m_accInit = false;
 	m_lastTime = 0;
+	m_drVel = {};
+	m_drHeight = {};
+	m_drStill = {};
 }
 
 const FootModel::Frame* FootModel::frameAt(double t) const {
@@ -106,15 +117,27 @@ FootEstimate FootModel::update(const BodyInput& in, double now) {
 		acc[i] = {std::clamp(a.x, -m_accClip, m_accClip), std::clamp(a.y, -m_accClip, m_accClip),
 				  std::clamp(a.z, -m_accClip, m_accClip)};
 	}
+	double dt = 0;
 	if (!m_accInit) {
 		m_accFiltered = acc;
 		m_accInit = true;
 	} else {
-		double dt = std::clamp(now - m_lastTime, 0.0, 0.1);
+		dt = std::clamp(now - m_lastTime, 0.0, 0.1);
 		double g = 1.0 - std::exp(-dt / m_accTau);
 		for (int i = 0; i < 2; i++) m_accFiltered[i] = m_accFiltered[i] + (acc[i] - m_accFiltered[i]) * g;
 	}
 	m_lastTime = now;
+	if (m_dr) {
+		for (int i = 0; i < 2; i++) {
+			const Vec3& a = m_accFiltered[i];
+			if (in.legs[i].angularSpeed < m_drStillGyro && a.norm() < m_drStillAcc) m_drStill[i] += dt;
+			else m_drStill[i] = 0;
+			if (m_drStill[i] >= m_drZuptAfter) m_drVel[i] = 0;
+			else m_drVel[i] += a.y * dt;
+			m_drHeight[i] += m_drVel[i] * dt - m_drHeight[i] * dt / m_drLeak;
+			m_drHeight[i] = std::clamp(m_drHeight[i], -1.0, 1.0);
+		}
+	}
 
 	Frame& f = m_ring[m_head];
 	f.t = now;
@@ -138,7 +161,7 @@ FootEstimate FootModel::update(const BodyInput& in, double now) {
 	double heading = std::atan2(-right.z, right.x);
 	double c = std::cos(heading), s = std::sin(heading);
 
-	size_t nIn = m_lags.size() * kFeaturesPerLag;
+	size_t nIn = m_lags.size() * kFeaturesPerLag + (m_dr ? 4 : 0);
 	m_features.resize(nIn);
 	double* x = m_features.data();
 	for (size_t li = 0; li < m_lags.size(); li++) {
@@ -156,6 +179,13 @@ FootEstimate FootModel::update(const BodyInput& in, double now) {
 		put(toHeading(p->accel[1], c, s));
 		*o++ = p->gyro[0];
 		*o++ = p->gyro[1];
+	}
+	if (m_dr) {
+		double* o = x + m_lags.size() * kFeaturesPerLag;
+		o[0] = m_drHeight[0];
+		o[1] = m_drHeight[1];
+		o[2] = std::min(m_drStill[0], 3.0);
+		o[3] = std::min(m_drStill[1], 3.0);
 	}
 
 	// MLP: standardized input, ReLU hidden layers, linear output

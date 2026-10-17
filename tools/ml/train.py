@@ -96,7 +96,7 @@ def rotate_xz(v, ix, iz, c, s):
 
 
 def train(X, Y, M, tr, va, hidden, epochs, lr, wd, dropout, noise, mirror, lags, seed=0, verbose=True, cam=None,
-          yawaug=0.0, indrop=0.0, hetero=False):
+          yawaug=0.0, indrop=0.0, hetero=False, keep_last=False):
     torch.manual_seed(seed)
     np.random.seed(seed)
     Xtr, Ytr, Mtr = X[tr], Y[tr], M[tr]
@@ -165,7 +165,7 @@ def train(X, Y, M, tr, va, hidden, epochs, lr, wd, dropout, noise, mirror, lags,
             ev.append(np.linalg.norm(pv[m, 3 * k:3 * k + 3] - Y[va][m, 3 * k:3 * k + 3], axis=1))
         ev = np.concatenate(ev)
         score = np.median(ev) + 0.3 * np.percentile(ev, 90)
-        if score < best:
+        if score < best or (keep_last and ep == epochs - 1):
             best = score
             best_state = {k: v.clone() for k, v in net.state_dict().items()}
             best_ep = ep
@@ -214,6 +214,8 @@ def main():
     ap.add_argument("--indrop", type=float, default=0.0, help="input dropout")
     ap.add_argument("--hetero", action="store_true", help="also predict a per-axis uncertainty")
     ap.add_argument("--dr", action="store_true", help="append the dead-reckoning features (experimental)")
+    ap.add_argument("--trainval", action="store_true", help="train on train+val, keep the last epoch")
+    ap.add_argument("--solver", action="store_true", help="append the replayed solver ankles (experiment)")
     args = ap.parse_args()
 
     z = np.load(args.data)
@@ -230,14 +232,20 @@ def main():
         X = X.reshape(len(X), -1, ds.FEATS_PER_LAG)[:, sel].reshape(len(X), -1)
     if args.dr:
         X = np.concatenate([X, z["DR"]], axis=1)
+    if args.solver:  # experiment only: replayed solver output as an input (not exportable)
+        X = np.concatenate([X, np.nan_to_num(z["replay"])], axis=1)
+        args.mirror = False
     rec, rep = z["rec"], z["replay"]
     sp = ds.split_of(t, t[0])
     tr, va, te = (sp == 0) & Mtrain.any(1), (sp == 1) & Mc.any(1), sp == 2
+    if args.trainval:  # final model: train on train + val, keep the last epoch (val is then not held out)
+        tr = (sp >= 0) & (sp <= 1) & Mtrain.any(1)
     print(f"samples train {tr.sum()} val {va.sum()} test {te.sum()}, features {X.shape[1]}")
     t1 = time.time()
     net, mu, sd, ymu = train(X, Y, Mtrain, tr, va, args.hidden, args.epochs, args.lr, args.wd, args.dropout,
                              args.noise, args.mirror, lags, args.seed, cam=z["cam"] if args.cambias else None,
-                             yawaug=args.yawaug, indrop=args.indrop, hetero=args.hetero)
+                             yawaug=args.yawaug, indrop=args.indrop, hetero=args.hetero,
+                             keep_last=args.trainval)
     print(f"trained in {time.time() - t1:.0f} s")
     P = predict(net, mu, sd, ymu, X)
     # Ground truth without its camera bias (as fitted): the fair reference for a

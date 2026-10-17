@@ -33,6 +33,9 @@ def export(ckpt_path, out_path, note=""):
         "format": "slimelite_foot_model", "version": 1, "note": note,
         "lags": [float(v) for v in ck["lags"]], "accClip": ds.ACC_CLIP, "accTau": ds.ACC_TAU,
         "hetero": bool(ck["args"].get("hetero", False)),
+        "dr": bool(ck["args"].get("dr", False)),
+        "drParams": {"stillGyro": ds.DR_STILL_GYRO, "stillAcc": ds.DR_STILL_ACC, "zuptAfter": ds.DR_ZUPT_AFTER,
+                     "leak": ds.DR_LEAK},
         "mu": g7(ck["mu"]), "sd": g7(ck["sd"]), "ymu": g7(ck["ymu"]), "layers": layers,
         "camBias": float(ck.get("cam_bias", 0.0)), "train": ck["args"],
     }
@@ -72,6 +75,8 @@ def main():
         fr = ds.Frames(d)
         idx = np.arange(300, fr.n, 97)
         X, ok = ds.features(fr, idx, model["lags"])
+        if model.get("dr"):
+            X = np.concatenate([X, ds.dead_reckoning(fr)[idx]], axis=1)
         idx, X = idx[ok], X[ok]
         mean, sig = forward(model, X)
         world = ds.to_world(fr, idx, mean)

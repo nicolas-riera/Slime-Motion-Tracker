@@ -9,7 +9,8 @@
 // causal low-pass) and angular speeds, all expressed in the heading frame of the
 // pelvis now (yaw of its left-right axis). The network outputs both ankles in
 // that frame (x/z relative to the HMD, y above the floor), optionally with a
-// per-axis Laplace scale (uncertainty).
+// per-axis Laplace scale (uncertainty). Optionally ("dr" models) 4 more inputs:
+// per leg, a vertical dead-reckoned height memory and the shin's still time.
 //
 // Usage: load() once, then update() every engine frame, valid or not (the
 // accelerometer low-pass and the history must see every frame). Inference
@@ -73,6 +74,11 @@ private:
 	std::vector<double> m_mu, m_sd, m_ymu;
 	std::vector<Layer> m_layers;
 	bool m_hetero = false;
+	// Optional vertical dead reckoning per leg (model "dr"): zero-velocity
+	// resets when the shin is still, leaky height memory
+	bool m_dr = false;
+	double m_drStillGyro = 0.3, m_drStillAcc = 0.6, m_drZuptAfter = 0.15, m_drLeak = 20;
+	std::array<double, 2> m_drVel{}, m_drHeight{}, m_drStill{};
 
 	std::vector<Frame> m_ring;  // circular history
 	size_t m_head = 0, m_count = 0;
