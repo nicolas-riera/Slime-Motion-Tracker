@@ -7,7 +7,9 @@
 //    axis (not assumed vertical, so lying down works), hip center = neck base -
 //    spine along the pelvis up axis (pelvis from the waist tracker, or estimated
 //    from the head and the shins in ankles-only mode). A small free hip offset
-//    absorbs the spine curvature.
+//    absorbs the spine curvature. Seated or lying, the hip rests on the seat: it
+//    sits behind the head chain (the trunk leans forward) and stays there while
+//    the head moves, so the hip-to-head direction shows the trunk lean.
 //  * Each knee is a hinge around the shin's left-right axis, so with the shin
 //    orientation known, a leg has a single unknown: the knee angle phi.
 //      thigh direction t = cos(phi) * shinDown + sin(phi) * shinForward
@@ -158,6 +160,8 @@ private:
 	Mode m_mode = Mode::Three;
 	std::array<LegState, 2> m_legs;
 	Vec3 m_hipOffset;
+	Vec3 m_seat;  // where the hip rests when seated or lying
+	bool m_seatValid = false;
 	bool m_initialized = false;
 	std::array<OneEuro, 3> m_filters;  // left foot, right foot, waist
 	std::array<Vec3, 2> m_smoothedFeet;

@@ -314,6 +314,24 @@ static void testBodySolver() {
 					out.kneeAngles[1]);
 	}
 
+	// Seated, leaning forward: the head moves 15 cm forward, the hip stays on the seat
+	{
+		BodySolver seat;
+		seat.configure(d, Settings{}, Mode::Three);
+		runPose(seat, d, eye, 0, 30);
+		BodyOutput sat = runPose(seat, d, eye - 0.45, 0, 400);
+		BodyInput in;
+		in.dt = 1.0 / 90;
+		in.hmdValid = true;
+		in.hmd.position = {0, eye - 0.47, -0.15};
+		in.hasWaist = true;
+		for (auto& leg : in.legs) leg.valid = true;
+		for (int f = 0; f < 90; f++) out = seat.update(in);
+		double moved = (out.waist.position - sat.waist.position).norm();
+		CHECK(moved < 0.05, "seated lean moved the hip by %.3f", moved);
+		std::printf("seated lean: hip moved %.3f m\n", moved);
+	}
+
 	// Ankles-only mode standing
 	BodySolver ankles;
 	ankles.configure(d, Settings{}, Mode::Ankles);

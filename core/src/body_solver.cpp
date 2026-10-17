@@ -62,6 +62,17 @@ constexpr double kUnderSigma = 0.08;
 // ... and near the floor (the knee bending to bring it below the hip must not
 // lift it into the air)
 constexpr double kUnderHeightSigma = 0.10;
+// Seated or lying, the hip rests on the seat (bed, floor): it is placed
+// kSitBack * height behind the head chain horizontally (the trunk leans forward
+// when seated: fitted on Kinect ground truth, the feet were 17 cm too far forward)
+// and then stays where it sits (seat anchor, sigma kSeatSigma m) while the head
+// moves, so leaning back or slouching shows in the hip-to-head direction. The seat
+// anchor follows the head chain slowly (kSeatLeak s) and stays within kSeatReach
+// (m) of it
+constexpr double kSitBack = 0.092;
+constexpr double kSeatSigma = 0.02;
+constexpr double kSeatLeak = 8.0;
+constexpr double kSeatReach = 0.30;
 // The swing prediction keeps its pull further than the stance anchors (in sigmas)
 constexpr double kInsRobust = 5.0;
 // ... and pulls the hip offset with a sigma this many times larger
@@ -153,6 +164,7 @@ void BodySolver::configure(const BodyDimensions& dims, const Settings& settings,
 void BodySolver::reset() {
 	m_legs = {};
 	m_hipOffset = {};
+	m_seatValid = false;
 	m_initialized = false;
 	m_filters = {};
 	m_smoothedFeet = {};
@@ -271,8 +283,16 @@ BodyOutput BodySolver::update(const BodyInput& in) {
 	}
 	const Vec3 torsoUp = pelvis.rotate(up);
 	const Vec3 neck = headPivot - torsoUp * d.neckDown;
-	const Vec3 hip0 = neck - torsoUp * d.spine;
+	Vec3 hip0 = neck - torsoUp * d.spine;
 	const double standing = smoothstep(0.55, 0.8, (hip0.y - in.floorY) / d.standingHipHeight());
+	const double seated = 1 - standing;  // seated, kneeling or lying: the hip is supported
+	{
+		// Seated, the trunk leans forward: the hip is behind the head chain. Horizontal,
+		// fading out as the pelvis tilts (lying down)
+		Vec3 pelvisBack = pelvis.rotate({0, 0, 1});
+		pelvisBack.y = 0;
+		hip0 += pelvisBack * (kSitBack * d.height * seated);
+	}
 
 	// ---- per-leg geometry, stance detection (zero velocity), swing dead reckoning ----
 	std::array<Vec3, 2> legOffset, down, forward;
@@ -342,7 +362,16 @@ BodyOutput BodySolver::update(const BodyInput& in) {
 	const double hipSigmaH = useWaistTracker ? 0.05 : 0.15;
 	const double hipSigmaV = useWaistTracker ? 0.06 : 0.10;
 	const double hipSigmaSmooth = std::max(0.002, 1.5 * dt);
-	const double hipLimitH = useWaistTracker ? 0.25 : 0.4;
+	const double hipLimitH = lerp(useWaistTracker ? 0.25 : 0.4, kSeatReach + 0.1, seated);
+	// Seat anchor (see kSeatSigma): follows the hip while standing
+	if (seated < 0.5 || !m_seatValid) {
+		m_seat = hip0 + m_hipOffset;
+		m_seatValid = true;
+	} else {
+		m_seat += (hip0 - m_seat) * std::min(1.0, dt / kSeatLeak);
+		Vec3 e = m_seat - hip0;
+		if (e.norm() > kSeatReach) m_seat = hip0 + e * (kSeatReach / e.norm());
+	}
 
 	auto legVector = [&](int i, double phi) {
 		Vec3 thighDir = down[i] * std::cos(phi) + forward[i] * std::sin(phi);
@@ -387,6 +416,7 @@ BodyOutput BodySolver::update(const BodyInput& in) {
 			num += target * w;
 			den += Vec3{w, w, w};
 		};
+		if (seated > 0.5) addTarget(m_seat - hip0, kSeatSigma / std::sqrt(2 * seated - 1 + 1e-3), 3.0);
 		for (int i = 0; i < 2; i++) {
 			Vec3 base = hip0 + legVector(i, phi[i]);  // ankle without hip offset
 			if (m_legs[i].planted) addTarget(m_legs[i].anchor - base, anchorSigma, 3.0);
