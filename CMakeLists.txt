@@ -40,6 +40,7 @@ add_library(slimelite_core STATIC
   core/src/mag_calibrator.cpp
   core/src/heading_filter.cpp
   core/src/body_solver.cpp
+  core/src/foot_model.cpp
   core/src/mounting_calibration.cpp
   core/src/protocol.cpp
   core/src/tracker_hub.cpp
@@ -61,6 +62,8 @@ target_link_libraries(slimelite_body_replay PRIVATE slimelite_core)
 # Learned foot model: dataset dump and C++/Python consistency check (tools/ml)
 add_executable(slimelite_ml_dump tools/ml/ml_dump.cpp)
 target_link_libraries(slimelite_ml_dump PRIVATE slimelite_core)
+add_executable(slimelite_foot_model_check tools/ml/foot_model_check.cpp)
+target_link_libraries(slimelite_foot_model_check PRIVATE slimelite_core)
 
 # Kinect v2 depth recorder (ground truth), only with the Kinect for Windows SDK 2.0
 if(WIN32 AND DEFINED ENV{KINECTSDK20_DIR})

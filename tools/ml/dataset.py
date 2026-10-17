@@ -199,8 +199,12 @@ def mirror_targets(Y, M):
     return Y2, M[:, ::-1].copy()
 
 
-GT_FILES = [os.path.join(REC, "gt", "kinect_20261016_235326_gt.csv"),
-            os.path.join(REC, "gt", "kinect_20261016_235326_gt_part2.csv")]
+# Re-extracted ground truth (controllers masked out, spikes invalidated); the
+# first extraction (_gt.csv + _gt_part2.csv) picked hands as shins at times
+GT_V2 = os.path.join(REC, "gt", "kinect_20261016_235326_gt_v2.csv")
+GT_V1 = [os.path.join(REC, "gt", "kinect_20261016_235326_gt.csv"),
+         os.path.join(REC, "gt", "kinect_20261016_235326_gt_part2.csv")]
+GT_FILES = [GT_V2] if os.path.exists(GT_V2) else GT_V1
 
 
 def split_of(t, t0, block=300.0):
