@@ -2,7 +2,8 @@
 
 For each depth frame (in SteamVR space, see calibrate.py), each shin's direction
 is known from its IMU. Only the points below the hip (along the pelvis axis,
-from the waist IMU and the engine's hip position) are used. Seen along that direction, the shin's points collapse into
+from the waist IMU and the engine's hip position) and away from the controllers
+(hands hanging below the hips look like shins) are used. Seen along that direction, the shin's points collapse into
 a small dense disc: the densest disc near the expected side of the pelvis (and
 near the previous ground truth) locates the shin axis. The surface the Kinect
 sees is the front of the leg, so the axis is pushed back by the leg radius. The
@@ -31,6 +32,7 @@ from preview import KinectToWorld, load_outputs  # noqa: E402
 LEG_RADIUS = 0.045  # m, shin surface to axis
 DISC = 0.06  # m, radius around the axis counted as this shin
 MIN_POINTS = 40
+HAND_RADIUS = 0.22  # m around each controller: hands and forearms hanging below the hips look like shins
 MIN_EXTENT = 0.15  # m of shin visible along the axis
 FLOOR_CONTACT = 0.09  # m, lowest visible point below this: touching the floor
 
@@ -100,6 +102,22 @@ class Segments:
         return qs[i]
 
 
+def load_controllers(session):
+    """Controller positions over time: {role: (times, positions)} (1 left, 2 right)."""
+    rows = {1: [], 2: []}
+    with open(session, encoding="utf-8") as fh:
+        for line in fh:
+            if '"k":"dev"' not in line or '"cls":2,' not in line:
+                continue
+            try:
+                d = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if d["ok"] and d["role"] in rows:
+                rows[d["role"]].append([d["t"], *d["p"]])
+    return {r: (np.array(v)[:, 0], np.array(v)[:, 1:]) for r, v in rows.items() if v}
+
+
 def find_shin(points, down, side_pref, prev, camera):
     """Locates one shin in the cloud; returns (ankle, n_points, extent) or None."""
     # Coordinates in the plane perpendicular to the shin
@@ -151,6 +169,35 @@ def find_shin(points, down, side_pref, prev, camera):
     return axis + bottom * down, n, extent
 
 
+def clean_spikes(path, window=3, tol=0.15):
+    """Invalidates single-frame jumps: a valid ankle farther than `tol` from the
+    median of its valid neighbors (+-window frames). Real lifts last longer and
+    survive. Rewrites the CSV, returns the number of invalidated leg samples."""
+    with open(path) as fh:
+        header = fh.readline()
+        lines = [ln.rstrip("\n").split(",") for ln in fh]
+    dropped = 0
+    for base in (1, 7):  # l_valid, r_valid columns
+        valid = np.array([ln[base] == "1" for ln in lines])
+        pos = np.array([[float(ln[base + k]) if valid[i] else np.nan for k in (1, 2, 3)]
+                        for i, ln in enumerate(lines)]).reshape(-1, 3)
+        bad = []
+        for i in np.flatnonzero(valid):
+            lo, hi = max(0, i - window), min(len(lines), i + window + 1)
+            neigh = np.delete(pos[lo:hi], i - lo, axis=0)
+            neigh = neigh[~np.isnan(neigh[:, 0])]
+            if len(neigh) >= 2 and np.linalg.norm(pos[i] - np.median(neigh, axis=0)) > tol:
+                bad.append(i)
+        for i in bad:
+            lines[i][base:base + 6] = ["0", "", "", "", "0", "0"]
+        dropped += len(bad)
+    with open(path, "w") as fh:
+        fh.write(header)
+        for ln in lines:
+            fh.write(",".join(ln) + "\n")
+    return dropped
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("depth")
@@ -170,6 +217,7 @@ def main():
     camera = k2w.points(np.zeros((1, 3)))[0]
     segs = Segments(args.session)
     outs, _ = load_outputs(args.session)
+    controllers = load_controllers(args.session)
     ankle_height = 0.039 * args.height  # same ratio as the body solver
 
     prev = [None, None]
@@ -195,6 +243,10 @@ def main():
             hip = o[1:4]
             pelvis_up = qrot(waist, np.array([0.0, 1.0, 0.0]))
             pts = pts[(pts - hip) @ pelvis_up < -0.08]
+            for ts, ps in controllers.values():
+                i = int(np.clip(np.searchsorted(ts, t), 0, len(ts) - 1))
+                if abs(ts[i] - t) < 0.1:
+                    pts = pts[np.linalg.norm(pts - ps[i], axis=1) > HAND_RADIUS]
             if len(pts) < 2 * MIN_POINTS:
                 continue
             right = qrot(waist, np.array([1.0, 0.0, 0.0]))
@@ -225,7 +277,8 @@ def main():
                 cols += ["1", f"{ankle[0]:.4f}", f"{ankle[1]:.4f}", f"{ankle[2]:.4f}", str(n), f"{extent:.3f}"]
             out.write(",".join(cols) + "\n")
             rows += 1
-    print(f"{rows} frames written")
+    dropped = clean_spikes(args.out)
+    print(f"{rows} frames written, {dropped} isolated spikes invalidated")
 
 
 if __name__ == "__main__":
