@@ -73,6 +73,9 @@ if(WIN32 AND DEFINED ENV{KINECTSDK20_DIR})
   target_link_libraries(slimelite_kinect_recorder PRIVATE ${KINECT_SDK}/Lib/x64/Kinect20.lib Cabinet Ole32)
 endif()
 
+add_executable(slimelite_heading_replay tools/heading_replay/heading_replay.cpp)
+target_link_libraries(slimelite_heading_replay PRIVATE slimelite_core)
+
 add_executable(slimelite_monitor tools/monitor/monitor.cpp)
 target_link_libraries(slimelite_monitor PRIVATE slimelite_core)
 
