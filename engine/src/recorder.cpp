@@ -1,8 +1,10 @@
 #include "recorder.h"
 
+#include <chrono>
 #include <cstdarg>
 #include <ctime>
 #include <filesystem>
+#include <vector>
 
 #include "slimelite/config.h"
 
@@ -12,7 +14,7 @@ Recorder::~Recorder() { close(); }
 
 bool Recorder::open(const std::string& path) {
 	std::lock_guard lock(m_mutex);
-	if (m_file) return true;
+	if (m_open) return true;
 	std::string p = path;
 	if (p.empty()) {
 		auto dir = Config::defaultPath().parent_path() / "recordings";
@@ -31,13 +33,50 @@ bool Recorder::open(const std::string& path) {
 	m_path = p;
 	std::error_code ec;
 	m_bytes = std::filesystem::exists(p, ec) ? std::filesystem::file_size(p, ec) : 0;
+	m_pending.clear();
+	m_stop = false;
+	m_open = true;
+	m_writer = std::thread(&Recorder::writerLoop, this);
 	return true;
 }
 
 void Recorder::close() {
-	std::lock_guard lock(m_mutex);
-	if (m_file) std::fclose(m_file);
+	{
+		std::lock_guard lock(m_mutex);
+		if (!m_open) return;
+		m_open = false;
+		m_stop = true;
+	}
+	m_wake.notify_all();
+	if (m_writer.joinable()) m_writer.join();
+	std::fclose(m_file);
 	m_file = nullptr;
+}
+
+void Recorder::writerLoop() {
+	std::string batch;
+	for (;;) {
+		bool stop;
+		{
+			std::unique_lock lock(m_mutex);
+			m_wake.wait_for(lock, std::chrono::seconds(1), [&] { return m_stop || m_pending.size() > (1u << 20); });
+			batch.swap(m_pending);
+			stop = m_stop;
+			if (m_dropped > 0) {
+				char note[96];
+				int n = std::snprintf(note, sizeof(note), R"({"k":"ev","what":"recording_dropped","detail":"%llu"})" "\n",
+									  static_cast<unsigned long long>(m_dropped));
+				batch.append(note, size_t(n));
+				m_dropped = 0;
+			}
+		}
+		if (!batch.empty()) {
+			std::fwrite(batch.data(), 1, batch.size(), m_file);
+			std::fflush(m_file);
+			batch.clear();
+		}
+		if (stop) return;
+	}
 }
 
 std::string Recorder::path() const {
@@ -51,14 +90,31 @@ uint64_t Recorder::bytes() const {
 }
 
 void Recorder::line(const char* fmt, ...) {
-	std::lock_guard lock(m_mutex);
-	if (!m_file) return;
+	if (!m_open) return;
+	char small[512];
+	std::vector<char> large;
+	char* text = small;
 	va_list args;
 	va_start(args, fmt);
-	int n = std::vfprintf(m_file, fmt, args);
+	int n = std::vsnprintf(small, sizeof(small), fmt, args);
 	va_end(args);
-	std::fputc('\n', m_file);
-	if (n > 0) m_bytes += uint64_t(n) + 1;
+	if (n < 0) return;
+	if (size_t(n) >= sizeof(small)) {
+		large.resize(size_t(n) + 1);
+		va_start(args, fmt);
+		std::vsnprintf(large.data(), large.size(), fmt, args);
+		va_end(args);
+		text = large.data();
+	}
+	std::lock_guard lock(m_mutex);
+	if (!m_open) return;
+	if (m_pending.size() > kMaxPending) {
+		m_dropped++;
+		return;
+	}
+	m_pending.append(text, size_t(n));
+	m_pending.push_back('\n');
+	m_bytes += uint64_t(n) + 1;
 }
 
 void Recorder::json(double t, const char* kind, const nlohmann::json& body) {
@@ -95,13 +151,6 @@ void Recorder::trackerEvent(const std::string& mac, const proto::Event& e, doubl
 		default:
 			break;
 	}
-}
-
-void Recorder::flushIfDue(double now) {
-	std::lock_guard lock(m_mutex);
-	if (!m_file || now - m_lastFlush < 1.0) return;
-	m_lastFlush = now;
-	std::fflush(m_file);
 }
 
 }  // namespace slimelite

@@ -157,7 +157,6 @@ void Engine::recordFrame(const SlFrameInput& in, const BodyOutput& out,
 							t.heading, magStateName(t.magState), t.bootCount);
 		}
 	}
-	m_recorder.flushIfDue(in.now);
 }
 
 json Engine::handover() const {
