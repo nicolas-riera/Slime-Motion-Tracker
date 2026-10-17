@@ -16,6 +16,9 @@ namespace slimelite {
 namespace {
 // rad/s between two rotation packets; no limb turns this fast (kicks peak ~20)
 constexpr double kGlitchAngularSpeed = 40.0;
+// Residual (field norm units) a new automatic fit needs to replace a valid
+// calibration (good ones: 0.045-0.055)
+constexpr double kMaxReplacingResidual = 0.065;
 }  // namespace
 
 const char* magStateName(MagState s) {
@@ -265,12 +268,16 @@ void TrackerHub::processEvent(const std::string& mac, const proto::Event& e, dou
 					// Automatic calibration: from scratch with enough orientations, then
 					// replaced when a new fit explains the recent samples clearly better
 					// than the current one (another room, the tracker's own field
-					// changed), both measured on the same samples
+					// changed), both measured on the same samples. A valid calibration is
+					// only replaced by a good fit: near a local disturbance (a bed frame)
+					// the recent samples favor any new fit, and poor fits (residual
+					// 0.07-0.11 vs ~0.05) replaced each other and the heading drifted
 					tr.lastOnlineSolve = t;
 					if (auto cal = tr.calibrator.solve()) {
 						const MagCalibration& cur = tr.heading.calibration();
 						double curResidual = cur.valid ? tr.calibrator.residualOf(cur).value_or(cur.residual) : 1e9;
-						if (cal->residual < 0.8 * curResidual) {
+						bool goodEnough = !cur.valid || cal->residual < kMaxReplacingResidual;
+						if (goodEnough && cal->residual < 0.8 * curResidual) {
 							tr.heading.updateCalibration(*cal, s.qWorld, e.mag);
 							found = tr.heading.calibration();
 						}
