@@ -36,6 +36,8 @@ private:
 	};
 
 	void handleCommand(const nlohmann::json& cmd);
+
+	void onFloor(double y, double now);
 	void updateCalibration(double now, const Pose& hmd, bool hmdValid,
 						   const std::vector<TrackerSnapshot>& trackers);
 	void finishCalibration(const Pose& hmd);
@@ -63,6 +65,8 @@ private:
 	// Floor height in raw tracking space, from the overlay or the calibration
 	bool m_floorFromOverlay = false;
 	double m_floorY = 0;
+	// Floor update waiting to settle (see onFloor)
+	double m_floorCandidate = 0, m_floorCandidateSince = -1, m_floorIgnoredLogged = 1e9;
 	bool m_floorKnown = false;
 
 	CalPhase m_calPhase = CalPhase::Idle;

@@ -288,16 +288,50 @@ void Engine::frame(const SlFrameInput& fin, SlFrameOutput& fout) {
 	}
 }
 
+void Engine::onFloor(double y, double now) {
+	// The overlay reports the floor of the SteamVR play space in raw tracking
+	// space. Play space tools (OVR Advanced Settings space drag, climbing...) move
+	// the play space, not the physical floor: keep the first value, then accept
+	// only small corrections (floor fix, room setup tweak) once they have settled
+	constexpr double kMaxCorrection = 0.10;  // m
+	constexpr double kSettleTime = 2.0;  // s
+	if (!m_floorFromOverlay || !m_floorKnown) {
+		m_floorY = y;
+		m_floorKnown = m_floorFromOverlay = true;
+		recordEvent("floor", std::to_string(y));
+		return;
+	}
+	double change = y - m_floorY;
+	if (std::fabs(change) < 0.002) {
+		m_floorCandidateSince = -1;
+		return;
+	}
+	if (std::fabs(change) > kMaxCorrection) {
+		m_floorCandidateSince = -1;
+		if (std::fabs(y - m_floorIgnoredLogged) > 0.05) {
+			m_floorIgnoredLogged = y;
+			recordEvent("floor_ignored", std::to_string(y));
+			log("play space moved by %.2f m (space drag?): keeping the floor at %.3f", change, m_floorY);
+		}
+		return;
+	}
+	if (m_floorCandidateSince < 0 || std::fabs(y - m_floorCandidate) > 0.005) {
+		m_floorCandidate = y;
+		m_floorCandidateSince = now;
+		return;
+	}
+	if (now - m_floorCandidateSince >= kSettleTime) {
+		m_floorY = y;
+		m_floorCandidateSince = -1;
+		recordEvent("floor", std::to_string(y));
+	}
+}
+
 void Engine::handleCommand(const json& cmd) {
 	std::string type = cmd.value("type", "");
 	if (type == "hello") return;
 	if (type == "floor") {
-		if (cmd.value("valid", false) && cmd.contains("y")) {
-			double y = cmd["y"].get<double>();
-			if (!m_floorKnown || std::fabs(y - m_floorY) > 0.002) recordEvent("floor", std::to_string(y));
-			m_floorY = y;
-			m_floorKnown = m_floorFromOverlay = true;
-		}
+		if (cmd.value("valid", false) && cmd.contains("y")) onFloor(cmd["y"].get<double>(), TrackerHub::now());
 		return;
 	}
 	if (type == "setMode") {
