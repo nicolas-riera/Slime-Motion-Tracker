@@ -60,7 +60,7 @@ poses (kneel, prone, feet raised) count as much as standing:
 
 | Stage | What | Output |
 |---|---|---|
-| A | Retrain the foot model (tools/ml) on all T blocks, AFK masked | models/foot_model.json |
+| A | Train the learned models of section 6 (tools/ml) on all T blocks, AFK masked | models/*.json |
 | B | Evolution strategy on the solver constants (tune.py, multi-session), three-tracker mode | best_three.json |
 | C | Same, ankles-only mode: body_replay `--no-waist`, the real waist tracker is the pelvis GT (works on every session, even without Kinect) | best_ankles.json |
 | D | Mag robustness: heading_replay with field-anomaly rejection (field norm / dip far from calibration -> lower mag weight); score = ankle/waist yaw error vs Kinect segment yaw, plus heading jumps | best_mag.json |
@@ -74,16 +74,27 @@ Parameters searched in B/C: the current 14 plus the bed/chest constants
 (kChestHead, kUpperSpine, kReclineStart/Full, kBedBelowHip, kBedSigma) and the
 new kneel/prone/feet-air constants once they exist.
 
-## 6. What tuning cannot fix (code first, then rerun the pipeline)
+## 6. Learned models for the hard cases (trained in stage A)
 
-Constants only move behaviour the solver already models. These need code, and
-the report's per-category numbers are how they get validated:
+Tuning constants is not enough for these, so the pipeline also trains small
+models from the data (same style as the foot model: features from HMD + tracker
+orientations, Kinect / waist-tracker targets, exported as JSON, fused in the
+solver as measurements with a learned uncertainty so a bad prediction is
+down-weighted instead of trusted):
 
-1. Feet in the air / feet raised (top priority)
-2. Kneeling: back leg lifting on the way down, straightening on the way up
-3. Chest emulation (spine between HMD and waist), pelvis too far sideways when lying
-4. Prone detection and handling
-5. Mag field-anomaly rejection (left ankle drifted on the bed with mag "ok")
+| Model | Predicts | Fixes |
+|---|---|---|
+| foot model v2 | foot position AND height relative to the pelvis, per leg, all poses (not only planted) | feet in the air, feet raised, kneel back leg lifting |
+| knee model | knee bend from shin/thigh-free features + recent history | straightening when standing up from a kneel |
+| pose classifier | standing / squat / kneel / seated / lying back / prone / side / feet raised | switches the solver priors (bed prior, prone priors, kneel priors) |
+| chest model | pelvis offset from the head (3D) given HMD + waist orientation | chest emulation, pelvis sideways when lying, prone |
+| mag trust model | probability the mag heading is wrong from field norm, dip, residual, gyro/mag disagreement | drift on the bed with mag "ok" |
 
-Order: run the pipeline once as a baseline (gives the category table), code the
-worst categories, rerun, integrate the winners with SteamVR closed.
+Each model gets T/V/Te splits, per-category scores and the A/B halves like the
+rest. The solver hooks that consume them (fusion terms, prior switching, mag
+weight) are code written once; after that, every new recording only needs the
+pipeline to be rerun to improve them.
+
+Order: write the solver hooks + model trainers, run the full pipeline
+(A trains the models, B/C/D tune around them), integrate the winners with
+SteamVR closed.
