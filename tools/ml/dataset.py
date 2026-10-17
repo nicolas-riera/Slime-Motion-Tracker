@@ -110,6 +110,42 @@ class Frames:
         return np.searchsorted(self.t, times, side="right") - 1
 
 
+DR_STILL_GYRO = 0.3  # rad/s
+DR_STILL_ACC = 0.6  # m/s^2
+DR_ZUPT_AFTER = 0.15  # s still before the velocity is zeroed
+DR_LEAK = 20.0  # s, height memory
+
+
+def dead_reckoning(fr):
+    """Per frame and leg, vertical dead reckoning with zero-velocity resets:
+    (height change memory py, still time saturated at 3 s) -> (n, 4):
+    py_l, py_r, still_l, still_r. Long memory a short window cannot have (a foot
+    raised onto a bed seconds ago)."""
+    out = np.zeros((fr.n, 4))
+    dts = np.clip(np.diff(fr.t, prepend=fr.t[0]), 0.0, 0.1)
+    for k, leg in enumerate("lr"):
+        a = fr.acc[leg]
+        ay = a[:, 1]
+        anorm = np.linalg.norm(a, axis=1)
+        g = fr.gyro[leg]
+        v = py = still = 0.0
+        for i in range(fr.n):
+            dt = dts[i]
+            if g[i] < DR_STILL_GYRO and anorm[i] < DR_STILL_ACC:
+                still += dt
+            else:
+                still = 0.0
+            if still >= DR_ZUPT_AFTER:
+                v = 0.0
+            else:
+                v += ay[i] * dt
+            py += v * dt - py * dt / DR_LEAK
+            py = min(max(py, -1.0), 1.0)
+            out[i, k] = py
+            out[i, 2 + k] = min(still, 3.0)
+    return out
+
+
 def to_heading(v, c, s):
     """World vectors (N, 3) into the heading frame given cos/sin of the heading:
     v_h = Ry(heading)^T v"""
@@ -218,7 +254,8 @@ def split_of(t, t0, block=300.0):
     return sp
 
 
-def build(lags=None, dump=None, gt_files=GT_FILES):
+def build(lags=None, dump=None, gt_files=None):
+    gt_files = gt_files or GT_FILES
     lags = lags or default_lags()
     d, meta = load_dump(dump) if dump else load_dump()
     fr = Frames(d)
@@ -232,9 +269,10 @@ def build(lags=None, dump=None, gt_files=GT_FILES):
     Mc = clean_mask(gt["t"], Y, M)
     Mc &= kinematic_mask(fr, idx, Y, meta)
     cam = camera_dirs(fr, idx, gt)
+    DR = dead_reckoning(fr)[idx]
     rec = {"l": np.stack([d["rec_lx"], d["rec_ly"] - d["floor"], d["rec_lz"]], axis=1)[idx],
            "r": np.stack([d["rec_rx"], d["rec_ry"] - d["floor"], d["rec_rz"]], axis=1)[idx]}
-    return dict(fr=fr, d=d, meta=meta, gt=gt, idx=idx, X=X, Y=Y, M=M, Mc=Mc, cam=cam, rec=rec, lags=lags)
+    return dict(fr=fr, d=d, meta=meta, gt=gt, idx=idx, X=X, Y=Y, M=M, Mc=Mc, cam=cam, rec=rec, lags=lags, DR=DR)
 
 
 # Kinect camera position in SteamVR space (recordings/gt/*_calib.npz via
@@ -320,6 +358,7 @@ def replay_at(replay_csv, session, fr, idx):
     out = []
     for leg in "lr":
         p = np.stack([np.interp(tt, t_rp, rp[f"{leg}{a}"]) for a in "xyz"], axis=1)
+        p[(tt < t_rp[0]) | (tt > t_rp[-1])] = np.nan
         out.append(to_heading(p - off, c, s))
     return np.concatenate(out, axis=1)
 
@@ -330,8 +369,11 @@ def main():
     ap.add_argument("--name", default="v1")
     ap.add_argument("--replay", default=os.path.join(ML, "replay_0149.csv"))
     ap.add_argument("--session", default=os.path.join(REC, "session_20261016_232318.jsonl"))
+    ap.add_argument("--dump", default=os.path.join(ML, "s232318.bin"))
+    ap.add_argument("--extra-lags", default="", help="comma separated lags (s) added to the default ones")
     args = ap.parse_args()
-    D = build()
+    lags = default_lags() + [float(v) for v in args.extra_lags.split(",") if v]
+    D = build(lags=lags, dump=args.dump)
     fr, idx = D["fr"], D["idx"]
     c, s = np.cos(fr.heading[idx]), np.sin(fr.heading[idx])
     off = fr.hmd[idx] * np.array([1, 0, 1])
@@ -339,7 +381,7 @@ def main():
     rep = replay_at(args.replay, args.session, fr, idx) if os.path.exists(args.replay) else rec * np.nan
     np.savez_compressed(os.path.join(ML, f"ds_{args.name}.npz"), X=D["X"].astype(np.float32), Y=D["Y"], M=D["M"],
                         t=D["gt"]["t"], idx=idx, lags=np.array(D["lags"]), rec=rec, replay=rep,
-                        Mc=D["Mc"], cam=D["cam"])
+                        Mc=D["Mc"], cam=D["cam"], DR=D["DR"])
     print(f"{len(idx)} samples, {D['M'].sum(0)} valid legs, {D['Mc'].sum(0)} after cleaning, t {D['gt']['t'][0]:.0f}-{D['gt']['t'][-1]:.0f}")
 
 

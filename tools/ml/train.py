@@ -23,7 +23,7 @@ def breakdown(P, Y, M, mask):
     """Error stats (cm) as in score.py, per leg: median / p90."""
     res = {}
     for k, leg in enumerate("lr"):
-        m = mask & M[:, k]
+        m = mask & M[:, k] & np.isfinite(P[:, 3 * k])
         e = P[m, 3 * k:3 * k + 3] - Y[m, 3 * k:3 * k + 3]
         n = np.linalg.norm(e, axis=1)
         lifted = Y[m, 3 * k + 1] > LIFTED
@@ -102,7 +102,10 @@ def train(X, Y, M, tr, va, hidden, epochs, lr, wd, dropout, noise, mirror, lags,
     Xtr, Ytr, Mtr = X[tr], Y[tr], M[tr]
     Ctr = cam[tr] if cam is not None else np.zeros_like(Ytr)
     if mirror:
-        Xm = ds.mirror_features(Xtr, lags)
+        nl = len(lags) * ds.FEATS_PER_LAG
+        Xm = ds.mirror_features(Xtr[:, :nl], lags)
+        if Xtr.shape[1] > nl:  # dead-reckoning features: swap the legs
+            Xm = np.concatenate([Xm, Xtr[:, nl:][:, [1, 0, 3, 2]]], axis=1)
         Ym, Mm = ds.mirror_targets(Ytr, Mtr)
         Cm, _ = ds.mirror_targets(Ctr, Mtr)
         Xtr, Ytr, Mtr = np.concatenate([Xtr, Xm]), np.concatenate([Ytr, Ym]), np.concatenate([Mtr, Mm])
@@ -210,6 +213,7 @@ def main():
     ap.add_argument("--yawaug", type=float, default=0.0, help="heading augmentation sigma (rad)")
     ap.add_argument("--indrop", type=float, default=0.0, help="input dropout")
     ap.add_argument("--hetero", action="store_true", help="also predict a per-axis uncertainty")
+    ap.add_argument("--dr", action="store_true", help="append the dead-reckoning features (experimental)")
     args = ap.parse_args()
 
     z = np.load(args.data)
@@ -224,6 +228,8 @@ def main():
         sel = [int(v) for v in args.lagidx.split(",")]
         lags = [lags[i] for i in sel]
         X = X.reshape(len(X), -1, ds.FEATS_PER_LAG)[:, sel].reshape(len(X), -1)
+    if args.dr:
+        X = np.concatenate([X, z["DR"]], axis=1)
     rec, rep = z["rec"], z["replay"]
     sp = ds.split_of(t, t[0])
     tr, va, te = (sp == 0) & Mtrain.any(1), (sp == 1) & Mc.any(1), sp == 2
@@ -243,7 +249,7 @@ def main():
         print(f"TEST [{name} GT] model (cm, median/p90)\n" + fmt(breakdown(P, ref, mask, te)))
         if not args.brief:
             print(f"TEST [{name} GT] solver live\n" + fmt(breakdown(rec, ref, mask, te)))
-            if np.isfinite(rep).all():
+            if np.isfinite(rep).any():
                 print(f"TEST [{name} GT] solver replay\n" + fmt(breakdown(rep, ref, mask, te)))
     print("SUMMARY", summary(P, Yd, Mc, te), "| val", summary(P, Yd, Mc, va), "| solver live",
           summary(rec, Yd, Mc, te))
