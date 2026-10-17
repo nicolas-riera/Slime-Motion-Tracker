@@ -88,7 +88,7 @@ powershell -ExecutionPolicy Bypass -File tools\install.ps1
 ```
 
 The trackers work as soon as SteamVR starts. The dashboard app (calibration, settings,
-tracker states) is not started with SteamVR: launch it with the **SlimeVR-lite** desktop
+tracker states) is not started with SteamVR: launch it with the **SlimeVR-lite** Start menu
 shortcut the installer creates, before or after SteamVR (desktop window + "SlimeVR-lite" tab
 in the SteamVR dashboard). The SlimeVR server must not run at the same time (both use UDP
 6969).
