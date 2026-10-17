@@ -58,6 +58,10 @@ target_link_libraries(slimelite_replay PRIVATE slimelite_core)
 add_executable(slimelite_body_replay tools/body_replay/body_replay.cpp)
 target_link_libraries(slimelite_body_replay PRIVATE slimelite_core)
 
+# Learned foot model: dataset dump and C++/Python consistency check (tools/ml)
+add_executable(slimelite_ml_dump tools/ml/ml_dump.cpp)
+target_link_libraries(slimelite_ml_dump PRIVATE slimelite_core)
+
 # Kinect v2 depth recorder (ground truth), only with the Kinect for Windows SDK 2.0
 if(WIN32 AND DEFINED ENV{KINECTSDK20_DIR})
   file(TO_CMAKE_PATH "$ENV{KINECTSDK20_DIR}" KINECT_SDK)
