@@ -240,7 +240,11 @@ def main():
     tr, va, te = (sp == 0) & Mtrain.any(1), (sp == 1) & Mc.any(1), sp == 2
     if args.trainval:  # final model: train on train + val, keep the last epoch (val is then not held out)
         tr = (sp >= 0) & (sp <= 1) & Mtrain.any(1)
-    print(f"samples train {tr.sum()} val {va.sum()} test {te.sum()}, features {X.shape[1]}")
+    n_tr = int(tr.sum())
+    if "W" in z:  # per-sample repeat count (pose-category balancing, tools/tune/pipeline.py)
+        tr = np.repeat(np.flatnonzero(tr), z["W"][tr])
+    print(f"samples train {n_tr} ({len(np.flatnonzero(tr)) if tr.dtype == bool else len(tr)} weighted) "
+          f"val {va.sum()} test {te.sum()}, features {X.shape[1]}")
     t1 = time.time()
     net, mu, sd, ymu = train(X, Y, Mtrain, tr, va, args.hidden, args.epochs, args.lr, args.wd, args.dropout,
                              args.noise, args.mirror, lags, args.seed, cam=z["cam"] if args.cambias else None,

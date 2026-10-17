@@ -7,6 +7,7 @@
 // Usage: slimelite_body_replay session.jsonl out.csv [--from S] [--to S] [--floor Y] [--model foot_model.json]
 //   --from/--to: seconds from the start of the recording
 //   --floor: floor height in raw tracking space (default: from the recording)
+//   SL_NO_WAIST=1: ignore the waist tracker (ankles-only mode on a three-tracker recording)
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -76,7 +77,7 @@ int main(int argc, char** argv) {
 				 "ankle_floor,eye_h,lc_x,lc_y,lc_z,rc_x,rc_y,rc_z,"
 				 "hmd_yaw,rec_w_yaw,rec_w_tilt,w_yaw,w_tilt,l_shin_yaw,r_shin_yaw,hip0_x,hip0_z,"
 				 "l_td_swing,r_td_swing,l_td_h,r_td_h,"
-				 "lkx,lky,lkz,rkx,rky,rkz,l_flex,r_flex,l_abd,r_abd,l_ins_x,l_ins_z,r_ins_x,r_ins_z\n");
+				 "lkx,lky,lkz,rkx,rky,rkz,l_flex,r_flex,l_abd,r_abd,l_ins_x,l_ins_z,r_ins_x,r_ins_z,pelvis_fwd_y\n");
 
 	Config config;
 	bool haveConfig = false;
@@ -90,6 +91,7 @@ int main(int argc, char** argv) {
 	// the eye height the next config reports
 	std::optional<double> standHmdY;
 	BodySolver solver;
+	const bool noWaist = std::getenv("SL_NO_WAIST") && std::atoi(std::getenv("SL_NO_WAIST"));
 	// Learned foot model (optional): --model path, or SL_FOOT_MODEL
 	FootModel footModel;
 	std::string modelPath = std::getenv("SL_FOOT_MODEL") ? std::getenv("SL_FOOT_MODEL") : "";
@@ -193,6 +195,7 @@ int main(int argc, char** argv) {
 				}
 				Quat seg = Quat::yaw(tc.yawAlign) * q * tc.mounting;
 				if (tc.role == Role::Waist) {
+					if (noWaist) continue;
 					bin.hasWaist = true;
 					bin.waist = seg;
 				} else if (tc.role == Role::LeftAnkle || tc.role == Role::RightAnkle) {
@@ -273,7 +276,8 @@ int main(int argc, char** argv) {
 			}
 			std::fprintf(csv, "%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.1f,%.1f,%.1f,%.1f,", o.knees[0].x, o.knees[0].y,
 						 o.knees[0].z, o.knees[1].x, o.knees[1].y, o.knees[1].z, flex[0], flex[1], abd[0], abd[1]);
-			std::fprintf(csv, "%.4f,%.4f,%.4f,%.4f\n", dbg.ins[0].x, dbg.ins[0].z, dbg.ins[1].x, dbg.ins[1].z);
+			std::fprintf(csv, "%.4f,%.4f,%.4f,%.4f,%.3f\n", dbg.ins[0].x, dbg.ins[0].z, dbg.ins[1].x, dbg.ins[1].z,
+						 bin.hasWaist ? bin.waist.rotate({0, 0, 1}).y : 0.0);
 		}
 	}
 	std::fclose(csv);

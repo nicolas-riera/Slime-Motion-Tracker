@@ -1,0 +1,6 @@
+[{"session": "D:/temp-training/session_20261016_232318.jsonl",
+  "gt": ["D:/temp-training/gt/kinect_20261016_235326_gt_v2.csv"],
+  "calib": "D:/temp-training/gt/kinect_20261016_235326_calib.npz"},
+ {"session": "D:/temp-training/session_20261017_134038.jsonl",
+  "gt": ["D:/temp-training/gt/kinect_20261017_134054_gt.csv"],
+  "calib": "D:/temp-training/gt/kinect_20261017_134054_calib.npz"}]
