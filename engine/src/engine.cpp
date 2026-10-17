@@ -90,7 +90,7 @@ Engine::Engine(const SlEngineHost& host, const char* handover)
 	applySettings();
 	if (!m_hub.start()) log("%s", m_hub.portError().c_str());
 	if (!m_overlay.start()) log("cannot bind the overlay port %d", OverlayLink::kPort);
-	if (!h.is_object()) launchOverlay();
+	// The overlay is not started with SteamVR: the user launches it (desktop shortcut)
 }
 
 Engine::~Engine() {
@@ -164,26 +164,6 @@ json Engine::handover() const {
 			{"bootAtCalibration", boots},
 			{"recordingPath", m_recorder.isOpen() ? m_recorder.path() : std::string()},
 			{"hub", m_hub.exportHandover()}};
-}
-
-void Engine::launchOverlay() {
-	std::u8string u8(m_moduleDirectory.begin(), m_moduleDirectory.end());
-	std::filesystem::path exe = std::filesystem::path(u8) / "slimevr_lite_overlay.exe";
-	if (!std::filesystem::exists(exe)) {
-		log("overlay not found: %s", exe.string().c_str());
-		return;
-	}
-	STARTUPINFOW si{};
-	si.cb = sizeof(si);
-	PROCESS_INFORMATION pi{};
-	std::wstring cmd = L"\"" + exe.wstring() + L"\"";
-	if (CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, FALSE, DETACHED_PROCESS, nullptr,
-					   exe.parent_path().c_str(), &si, &pi)) {
-		CloseHandle(pi.hThread);
-		CloseHandle(pi.hProcess);
-	} else {
-		log("cannot start the overlay (error %lu)", GetLastError());
-	}
 }
 
 void Engine::applySettings() {

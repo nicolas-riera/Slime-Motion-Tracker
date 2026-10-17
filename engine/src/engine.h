@@ -45,7 +45,6 @@ private:
 	void applySettings();
 	void markDirty() { m_dirty = true; }
 	bool trackerOrientation(const TrackerSnapshot& t, const TrackerConfig& tc, Quat& out) const;
-	void launchOverlay();
 	void recordFrame(const SlFrameInput& in, const BodyOutput& out,
 					 const std::vector<TrackerSnapshot>& trackers);
 	void recordEvent(const char* what, const std::string& detail = {});

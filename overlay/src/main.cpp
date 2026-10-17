@@ -362,7 +362,10 @@ HWND createMainWindow(HINSTANCE instance) {
     wc.lpfnWndProc = wndProc;
     wc.hInstance = instance;
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-    wc.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
+    // Icon resource 1 (overlay/resources/overlay.rc)
+    wc.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(1));
+    wc.hIconSm = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(1), IMAGE_ICON,
+                                               GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0));
     wc.lpszClassName = kWindowClass;
     if (!RegisterClassExW(&wc)) return nullptr;
 

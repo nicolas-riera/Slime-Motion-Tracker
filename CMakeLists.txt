@@ -117,6 +117,7 @@ add_executable(slimevr_lite_overlay WIN32
   overlay/src/main.cpp
   overlay/src/ui.cpp
   overlay/src/driver_link.cpp
+  overlay/resources/overlay.rc
   ${imgui_SOURCE_DIR}/imgui.cpp
   ${imgui_SOURCE_DIR}/imgui_draw.cpp
   ${imgui_SOURCE_DIR}/imgui_tables.cpp

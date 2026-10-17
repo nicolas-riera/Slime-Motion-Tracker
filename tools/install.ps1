@@ -7,6 +7,8 @@
   2. Copies build\slimevr_lite to %LOCALAPPDATA%\SlimeVR-lite\driver\slimevr_lite
      (SteamVR keeps the DLL locked while running, so SteamVR must be closed).
   3. Registers that folder with vrpathreg.
+  4. Creates a "SlimeVR-lite" desktop shortcut to the dashboard app (it is not
+     started with SteamVR).
 
   Run from the repository root:  powershell -ExecutionPolicy Bypass -File tools\install.ps1
   Uninstall:                      powershell -ExecutionPolicy Bypass -File tools\install.ps1 -Uninstall
@@ -37,9 +39,11 @@ if (Get-Process vrserver -ErrorAction SilentlyContinue) {
 }
 
 $vrpathreg = Find-VrPathReg
+$shortcut = Join-Path ([Environment]::GetFolderPath('Desktop')) 'SlimeVR-lite.lnk'
 
 if ($Uninstall) {
     & $vrpathreg removedriver $target | Out-Null
+    if (Test-Path $shortcut) { Remove-Item $shortcut }
     Write-Host "Driver unregistered. Files left in $target (delete them if you want)."
     return
 }
@@ -61,5 +65,15 @@ New-Item -ItemType Directory -Force $target | Out-Null
 Copy-Item -Recurse -Force (Join-Path $package '*') $target
 
 & $vrpathreg adddriver $target | Out-Null
-Write-Host "Installed to $target and registered with SteamVR."
+
+# Desktop shortcut to the dashboard app, with the icon embedded in the exe
+$exe = Join-Path $target 'bin\win64\slimevr_lite_overlay.exe'
+$link = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcut)
+$link.TargetPath = $exe
+$link.WorkingDirectory = Split-Path $exe
+$link.IconLocation = "$exe,0"
+$link.Description = 'SlimeVR-lite: trackers, calibration and settings'
+$link.Save()
+
+Write-Host "Installed to $target and registered with SteamVR. Desktop shortcut: $shortcut"
 Write-Host 'Make sure the SlimeVR server is not running (both use UDP port 6969), then start SteamVR.'
