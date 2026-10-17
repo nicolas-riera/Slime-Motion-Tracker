@@ -22,6 +22,8 @@
 #include <vector>
 
 #include "slimelite/body_solver.h"
+#include <cmath>
+
 #include "slimelite/linalg.h"
 
 namespace slimelite {
@@ -34,6 +36,14 @@ struct FootEstimate {
 	std::array<Vec3, 2> sigma;
 	double heading = 0;  // rad, heading frame yaw (Quat::yaw(heading))
 };
+
+// Horizontal standard deviation (m) to fuse an estimate with: the mean of the
+// predicted x and z sigmas, scaled down (they are ~1.5x conservative in the
+// core; 0.6 was best on the held-out Kinect blocks), floored
+inline double footMeasurementSigma(const Vec3& headingSigma, double floor = 0.03, double scale = 0.6) {
+	double s = std::sqrt(0.5 * (headingSigma.x * headingSigma.x + headingSigma.z * headingSigma.z)) * scale;
+	return s > floor ? s : floor;
+}
 
 class FootModel {
 public:

@@ -13,6 +13,7 @@
 #include "slimelite/body_solver.h"
 #include "slimelite/config.h"
 #include "slimelite/engine_api.h"
+#include "slimelite/foot_model.h"
 #include "slimelite/tracker_hub.h"
 
 namespace slimelite {
@@ -60,6 +61,9 @@ private:
 	std::string m_handoverRecording;  // file to keep appending to after a hot reload
 	double m_lastTrackerRecord = 0;
 	BodySolver m_solver;
+	// Learned foot model (models/foot_model.json next to the engine DLL), fused by
+	// the solver as a horizontal ankle measurement; skipped when it cannot load
+	FootModel m_footModel;
 
 	// Floor height in raw tracking space, from the overlay or the calibration
 	bool m_floorFromOverlay = false;

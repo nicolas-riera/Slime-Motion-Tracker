@@ -62,6 +62,11 @@ Engine::Engine(const SlEngineHost& host, const char* handover)
 	log("engine %s starting, config %s", kVersion, Config::defaultPath().string().c_str());
 
 	m_config.load(Config::defaultPath());
+	{
+		std::string path = (std::filesystem::path(m_moduleDirectory) / "models" / "foot_model.json").string();
+		if (m_footModel.load(path)) log("foot model loaded: %s", path.c_str());
+		else log("no foot model (%s): solver only", path.c_str());
+	}
 	for (const auto& [mac, tc] : m_config.trackers)
 		if (tc.mag.valid) m_hub.setStoredMagCalibration(mac, tc.mag);
 	m_hub.onMagCalibration([this](const std::string& mac, const MagCalibration& cal) {
@@ -238,6 +243,16 @@ void Engine::frame(const SlFrameInput& fin, SlFrameOutput& fout) {
 		}
 	}
 
+	// The foot model sees every frame (its history), valid or not
+	if (m_footModel.loaded()) {
+		FootEstimate fe = m_footModel.update(in, now);
+		for (int i = 0; i < 2 && fe.valid; i++) {
+			auto& leg = in.legs[i];
+			leg.hasFootMeasurement = true;
+			leg.footMeasurement = fe.ankle[i];
+			leg.footMeasurementSigma = footMeasurementSigma(fe.sigma[i]);
+		}
+	}
 	BodyOutput out = m_solver.update(in);
 	recordFrame(fin, out, trackers);
 	if (m_calPhase != m_recordedPhase) {

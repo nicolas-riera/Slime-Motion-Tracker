@@ -4,7 +4,7 @@
 // to the recorded outputs. Lets the solver be changed and compared on real
 // sessions without SteamVR (tools/plot_replay.py plots the CSV).
 //
-// Usage: slimelite_body_replay session.jsonl out.csv [--from S] [--to S] [--floor Y]
+// Usage: slimelite_body_replay session.jsonl out.csv [--from S] [--to S] [--floor Y] [--model foot_model.json]
 //   --from/--to: seconds from the start of the recording
 //   --floor: floor height in raw tracking space (default: from the recording)
 #include <chrono>
@@ -18,6 +18,7 @@
 
 #include "slimelite/body_solver.h"
 #include "slimelite/config.h"
+#include "slimelite/foot_model.h"
 #include "slimelite/protocol.h"
 
 using namespace slimelite;
@@ -89,6 +90,14 @@ int main(int argc, char** argv) {
 	// the eye height the next config reports
 	std::optional<double> standHmdY;
 	BodySolver solver;
+	// Learned foot model (optional): --model path, or SL_FOOT_MODEL
+	FootModel footModel;
+	std::string modelPath = std::getenv("SL_FOOT_MODEL") ? std::getenv("SL_FOOT_MODEL") : "";
+	for (int i = 3; i + 1 < argc; i += 2)
+		if (std::string(argv[i]) == "--model") modelPath = argv[i + 1];
+	if (!modelPath.empty() && !footModel.load(modelPath)) std::printf("cannot load the foot model %s\n", modelPath.c_str());
+	// Fusion sigma of the model (defaults of footMeasurementSigma), tunable offline
+	const double modelFloor = tunable("modelFloor", 0.03), modelScale = tunable("modelScale", 0.6);
 	double t0 = -1, lastFrame = -1;
 	int frames = 0;
 	double solveSeconds = 0;
@@ -198,6 +207,15 @@ int main(int argc, char** argv) {
 				}
 			}
 			auto solveStart = std::chrono::steady_clock::now();
+			if (footModel.loaded()) {
+				FootEstimate fe = footModel.update(bin, t);
+				for (int i = 0; i < 2 && fe.valid; i++) {
+					auto& leg = bin.legs[i];
+					leg.hasFootMeasurement = true;
+					leg.footMeasurement = fe.ankle[i];
+					leg.footMeasurementSigma = footMeasurementSigma(fe.sigma[i], modelFloor, modelScale);
+				}
+			}
 			BodyOutput o = solver.update(bin);
 			solveSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - solveStart).count();
 			if (std::getenv("REPLAY_DEBUG") && frames % 5000 == 0) {

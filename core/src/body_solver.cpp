@@ -2,8 +2,22 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
+#include <cstring>
 
 namespace slimelite {
+
+double tunable(const char* name, double value) {
+	// SL_TUNE="kName=value,kOther=value"
+	const char* env = std::getenv("SL_TUNE");
+	size_t len = std::strlen(name);
+	for (const char* p = env; p && *p;) {
+		if (std::strncmp(p, name, len) == 0 && p[len] == '=') return std::atof(p + len + 1);
+		p = std::strchr(p, ',');
+		if (p) p++;
+	}
+	return value;
+}
 
 namespace {
 
@@ -15,37 +29,37 @@ constexpr int kPhiSteps = 78;
 constexpr double kFlexMin = -35.0 * kPi / 180;
 constexpr double kFlexMax = 135.0 * kPi / 180;
 // Among the allowed poses, prefer straight legs (sigma of the knee angle prior)
-constexpr double kStraightSigma = 1.2;
+const double kStraightSigma = tunable("kStraightSigma", 1.2);
 // Bending a knee a little costs about as much as bending it a lot (saturating
 // prior): small head drops while standing are slouching, not knee bends. Without
 // it the knees absorbed the few cm between the calibrated and the actual head
 // height by bending 20-40 deg with vertical shins (the hip sitting back)
-constexpr double kBendCost = 3.0;
-constexpr double kBendSigma = 0.35;  // rad
+const double kBendCost = tunable("kBendCost", 3.0);
+const double kBendSigma = tunable("kBendSigma", 0.35);  // rad
 // A leg can push the hip up instead of bending: ankle penetration of the floor
 // up to kMaxHipLift (m) costs this sigma (m) in the leg search, and the hip solve
 // then lifts the hip by as much. Only when the head says standing (the gap is the
 // posture of the upper body); deeper penetrations are not allowed (sitting,
 // squatting: the knees bend)
-constexpr double kHipLiftSigma = 0.04;
+const double kHipLiftSigma = tunable("kHipLiftSigma", 0.04);
 constexpr double kMaxHipLift = 0.07;
 // Clearances above the floor: knee center when kneeling, hip joint when lying
 constexpr double kKneeClearance = 0.05;
 constexpr double kHipClearance = 0.08;
 // Stance anchors follow the solution with this time constant (s), and jump to it
 // when farther than kAnchorReset (m)
-constexpr double kAnchorLeak = 1.0;
-constexpr double kAnchorReset = 0.15;
+const double kAnchorLeak = tunable("kAnchorLeak", 1.0);
+const double kAnchorReset = tunable("kAnchorReset", 0.15);
 // Swing prediction is dropped after this long without a stance (s)
 constexpr double kMaxSwing = 1.5;
 // Lift-off detection from the accelerometer integrated during stance
-constexpr double kStanceVelLeak = 0.25;  // s
-constexpr double kStanceDispLeak = 0.3;  // s
-constexpr double kLiftOffSpeed = 0.2;  // m/s
+const double kStanceVelLeak = tunable("kStanceVelLeak", 0.25);  // s
+const double kStanceDispLeak = tunable("kStanceDispLeak", 0.3);  // s
+const double kLiftOffSpeed = tunable("kLiftOffSpeed", 0.2);  // m/s
 // A foot that stops within this distance of the floor (m) is on the floor. The
 // dead-reckoned height at touchdown is within 5 cm of the floor for ~90% of the
 // steps; a foot stopping higher rests on furniture or is held up, and stays there
-constexpr double kFloorSnap = 0.06;
+const double kFloorSnap = tunable("kFloorSnap", 0.06);
 // Standing, a planted foot still slightly above the floor (below kFloorSink, m)
 // sinks to it with this time constant (s): dead reckoning errors would pile up
 constexpr double kFloorSink = 0.10;
@@ -57,11 +71,11 @@ constexpr double kNoSupportSinkTime = 0.5;
 // swings: continuous bouncing, hops) stays roughly below its hip joint: without
 // it the straight-leg prior swung the feet far backward when the shins tilted
 // forward (m)
-constexpr double kUnderDeadZone = 0.05;
-constexpr double kUnderSigma = 0.08;
+const double kUnderDeadZone = tunable("kUnderDeadZone", 0.05);
+const double kUnderSigma = tunable("kUnderSigma", 0.08);
 // ... and near the floor (the knee bending to bring it below the hip must not
 // lift it into the air)
-constexpr double kUnderHeightSigma = 0.10;
+const double kUnderHeightSigma = tunable("kUnderHeightSigma", 0.10);
 // Seated or lying, the hip rests on the seat (bed, floor): it is placed
 // kSitBack * height behind the head chain horizontally (the trunk leans forward
 // when seated: fitted on Kinect ground truth, the feet were 17 cm too far forward)
@@ -69,14 +83,20 @@ constexpr double kUnderHeightSigma = 0.10;
 // moves, so leaning back or slouching shows in the hip-to-head direction. The seat
 // anchor follows the head chain slowly (kSeatLeak s) and stays within kSeatReach
 // (m) of it
-constexpr double kSitBack = 0.092;
-constexpr double kSeatSigma = 0.02;
-constexpr double kSeatLeak = 8.0;
+const double kSitBack = tunable("kSitBack", 0.092);
+const double kSeatSigma = tunable("kSeatSigma", 0.02);
+const double kSeatLeak = tunable("kSeatLeak", 8.0);
 constexpr double kSeatReach = 0.30;
+// The learned foot model's horizontal ankle estimate loses its pull beyond this
+// many sigmas (rare frames are off by 20+ cm)
+const double kModelRobust = tunable("kModelRobust", 3.0);
+// In stance the anchor dominates: the estimate (sigma scaled by this) only
+// corrects its drift slowly (a stronger pull made planted feet skate)
+const double kModelStanceScale = tunable("kModelStanceScale", 3.0);
 // The swing prediction keeps its pull further than the stance anchors (in sigmas)
-constexpr double kInsRobust = 5.0;
+const double kInsRobust = tunable("kInsRobust", 5.0);
 // ... and pulls the hip offset with a sigma this many times larger
-constexpr double kInsHipScale = 5.0;
+const double kInsHipScale = tunable("kInsHipScale", 5.0);
 
 double sq(double x) { return x * x; }
 double lerp(double a, double b, double t) { return a + (b - a) * t; }
@@ -150,6 +170,8 @@ struct BodySolver::LegProblem {
 	double anchorSigma = 0.02;
 	double insSigma = 0;  // 0: no swing prediction
 	Vec3 ins;
+	double modelSigma = 0;  // 0: no learned foot estimate
+	Vec3 model;
 	double support = 0;  // weight of "at least one foot on the floor"
 	double under = 0;  // weight of "the foot is below the hip" (no other position cue)
 	double otherHeight = 0;  // other ankle above its floor position
@@ -195,6 +217,10 @@ double BodySolver::legCost(const LegProblem& p, double phi) const {
 		double dist = std::sqrt(h.x * h.x + h.z * h.z);
 		c += p.under * sq(std::max(0.0, dist - kUnderDeadZone) / kUnderSigma);
 		c += p.under * sq(std::max(0.0, ankle.y - p.ankleY) / kUnderHeightSigma);
+	}
+	if (p.modelSigma > 0) {
+		double e2 = (sq(ankle.x - p.model.x) + sq(ankle.z - p.model.z)) / sq(p.modelSigma);
+		c += robust(e2, kModelRobust);
 	}
 	if (p.support > 0) {
 		double h = std::min(std::max(0.0, ankle.y - p.ankleY), p.otherHeight);
@@ -400,6 +426,10 @@ BodyOutput BodySolver::update(const BodyInput& in) {
 			p.insSigma = insSigma[i];
 			p.ins = ls.insPos;
 			p.support = standing * (ls.planted ? 1.0 : 0.1);
+			if (in.legs[i].hasFootMeasurement) {
+				p.modelSigma = in.legs[i].footMeasurementSigma * (ls.planted ? kModelStanceScale : 1.0);
+				p.model = in.legs[i].footMeasurement;
+			}
 			p.under = !ls.planted && insSigma[i] <= 0 ? standing : 0.0;
 			p.otherHeight = std::max(0.0, (hip0 + hipOffset + legVector(o, phi[o])).y - ankleY);
 			phi[i] = solveLeg(p);

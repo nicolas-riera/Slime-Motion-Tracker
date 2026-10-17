@@ -38,6 +38,10 @@
 //        vertical, only the accelerometer sees it. Lift-off is detected from the
 //        accelerometer too (velocity integrated during stance), and the motion
 //        already integrated seeds the swing;
+//      - learned foot model (optional): the ankle stays horizontally close to the
+//        position a learned model estimates from the recent motion of all the
+//        trackers (robust, so its rare outliers lose their pull); stance anchors
+//        follow it through the solution;
 //      - support: when the head says the user is standing, at least one foot is on
 //        the floor;
 //      - fallback: standing, a foot with neither a stance anchor nor a swing
@@ -61,6 +65,11 @@
 #include "slimelite/linalg.h"
 
 namespace slimelite {
+
+// Offline tuning (tools/tune): a solver constant overridden by the SL_TUNE
+// environment variable ("kName=value,..."), else its default. Read once at
+// startup; the engine runs without SL_TUNE.
+double tunable(const char* name, double value);
 
 struct Pose {
 	Vec3 position;
@@ -94,6 +103,11 @@ struct BodyInput {
 		Quat shin;  // shin segment orientation
 		Vec3 accelWorld;  // linear acceleration, world frame
 		double angularSpeed = 0;
+		// Optional horizontal ankle position from another estimator (the learned
+		// foot model), with its standard deviation (m); its height is not used
+		bool hasFootMeasurement = false;
+		Vec3 footMeasurement;
+		double footMeasurementSigma = 0;
 	};
 	std::array<Leg, 2> legs;  // 0 left, 1 right
 };
