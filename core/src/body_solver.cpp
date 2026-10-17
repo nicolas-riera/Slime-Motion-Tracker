@@ -84,6 +84,23 @@ const double kUnderHeightSigma = tunable("kUnderHeightSigma", 0.10);
 // anchor follows the head chain slowly (kSeatLeak s) and stays within kSeatReach
 // (m) of it
 const double kSitBack = tunable("kSitBack", 0.092);
+// Seated or lying, there is no chest tracker and the spine curves (slumped, leaning
+// back against the bed head): its upper part follows the head's up axis by this
+// fraction, its lower part the pelvis (a straight spine along a reclined pelvis put
+// the hip in the belly)
+// Off: on the bed replays it lowered the hip ~10 cm and the planted feet followed
+// it to the floor; kept to try it again on user feedback
+const double kChestHead = tunable("kChestHead", 0.0);
+const double kUpperSpine = tunable("kUpperSpine", 0.5);
+// Reclined (pelvis up axis height from kReclineStart to kReclineFull: leaning back
+// on a bed, lying): the chest emulation applies, and the planted feet rest on the
+// same surface as the hip, kBedBelowHip under the hip joint, instead of the floor
+// (a vertical shin is either a knee up with the foot on the bed or a leg hanging
+// from it: lying back, it is the first)
+constexpr double kReclineStart = 0.85;
+constexpr double kReclineFull = 0.6;
+const double kBedBelowHip = tunable("kBedBelowHip", 0.08);
+const double kBedSigma = tunable("kBedSigma", 0.06);
 const double kSeatSigma = tunable("kSeatSigma", 0.02);
 const double kSeatLeak = tunable("kSeatLeak", 8.0);
 constexpr double kSeatReach = 0.30;
@@ -170,6 +187,8 @@ struct BodySolver::LegProblem {
 	double anchorSigma = 0.02;
 	double insSigma = 0;  // 0: no swing prediction
 	Vec3 ins;
+	double bedWeight = 0;  // reclined: weight of "the ankle is at the bed's height"
+	double bedY = 0;
 	double modelSigma = 0;  // 0: no learned foot estimate
 	Vec3 model;
 	double support = 0;  // weight of "at least one foot on the floor"
@@ -218,6 +237,7 @@ double BodySolver::legCost(const LegProblem& p, double phi) const {
 		c += p.under * sq(std::max(0.0, dist - kUnderDeadZone) / kUnderSigma);
 		c += p.under * sq(std::max(0.0, ankle.y - p.ankleY) / kUnderHeightSigma);
 	}
+	if (p.bedWeight > 0) c += p.bedWeight * sq((ankle.y - p.bedY) / kBedSigma);
 	if (p.modelSigma > 0) {
 		double e2 = (sq(ankle.x - p.model.x) + sq(ankle.z - p.model.z)) / sq(p.modelSigma);
 		c += robust(e2, kModelRobust);
@@ -308,10 +328,17 @@ BodyOutput BodySolver::update(const BodyInput& in) {
 		pelvis = Quat::fromTwoVectors(up, torsoUp) * Quat::yaw(pelvisYaw);
 	}
 	const Vec3 torsoUp = pelvis.rotate(up);
-	const Vec3 neck = headPivot - torsoUp * d.neckDown;
+	Vec3 neck = headPivot - torsoUp * d.neckDown;
 	Vec3 hip0 = neck - torsoUp * d.spine;
 	const double standing = smoothstep(0.55, 0.8, (hip0.y - in.floorY) / d.standingHipHeight());
 	const double seated = 1 - standing;  // seated, kneeling or lying: the hip is supported
+	const double reclined = seated * smoothstep(kReclineStart, kReclineFull, torsoUp.y);
+	if (reclined > 0) {
+		const double w = kChestHead * reclined;
+		const Vec3 chestUp = (torsoUp * (1 - w) + hq.rotate(up) * w).normalized();
+		neck = headPivot - chestUp * d.neckDown;
+		hip0 = neck - chestUp * (d.spine * kUpperSpine) - torsoUp * (d.spine * (1 - kUpperSpine));
+	}
 	{
 		// Seated, the trunk leans forward: the hip is behind the head chain. Horizontal,
 		// fading out as the pelvis tilts (lying down)
@@ -426,11 +453,15 @@ BodyOutput BodySolver::update(const BodyInput& in) {
 			p.insSigma = insSigma[i];
 			p.ins = ls.insPos;
 			p.support = standing * (ls.planted ? 1.0 : 0.1);
-			if (in.legs[i].hasFootMeasurement) {
-				p.modelSigma = in.legs[i].footMeasurementSigma * (ls.planted ? kModelStanceScale : 1.0);
+			// Not reclined: the model never saw the user lying back, and there it bent
+			// the knees of the legs stretched on the bed
+			if (in.legs[i].hasFootMeasurement && reclined < 0.95) {
+				p.modelSigma = in.legs[i].footMeasurementSigma * (ls.planted ? kModelStanceScale : 1.0) / (1 - reclined);
 				p.model = in.legs[i].footMeasurement;
 			}
 			p.under = !ls.planted && insSigma[i] <= 0 ? standing : 0.0;
+			p.bedWeight = ls.planted ? reclined : 0.0;
+			p.bedY = std::max(ankleY, (hip0 + hipOffset).y - kBedBelowHip);
 			p.otherHeight = std::max(0.0, (hip0 + hipOffset + legVector(o, phi[o])).y - ankleY);
 			phi[i] = solveLeg(p);
 		}
@@ -503,7 +534,11 @@ BodyOutput BodySolver::update(const BodyInput& in) {
 			// The anchor follows the solution slowly, and jumps when it was wrong
 			// (the foot slid, the body moved away)
 			if ((ankle - ls.anchor).norm() > kAnchorReset) {
+				// Seated, a planted foot keeps its height: the knee solution flipped (foot
+				// flat on the bed vs leg hanging from it), not the foot
+				const double y = ls.anchor.y;
 				ls.anchor = ankle;
+				if (seated > 0.5) ls.anchor.y = y;
 			} else {
 				// Horizontally only: vertically, the floor decides (below)
 				double k = std::min(1.0, dt / kAnchorLeak);
