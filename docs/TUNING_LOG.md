@@ -93,3 +93,14 @@ knee jitter +5% overall (knees now follow the squats). Not deployed: pelvic
 tilt attenuation in the spine axis (waist jitter -15% but Kinect ankles +2-3 cm
 worse). Still open: during short swings with dead reckoning the right foot goes
 back up to 30 cm (p10) in bounces: dead reckoning around impacts.
+
+## 2026-10-17 02:50 - seated/lying: hip on the seat (8122535)
+
+User: seated and lying, the torso stays straight. Kinect over 20 min seated: feet
+17 cm too far forward (the hip was right below the head). Changed: seated, the
+hip sits 0.092 h behind the head chain, then a seat anchor holds it while the
+head moves (leaks to the head chain in 8 s, within 30 cm).
+Kinect ankle median L/R: seated 19.7/20.8 -> 9.1/10.3 cm; other parts 15.9/14.8
+-> 15.3/14.6 and 16.2/12.5 -> 15.0/11.1 cm. Plausibility equal.
+Kalman foot filter: implemented (not deployed): neutral on Kinect, but skate
++25% and swing_follow +30% on replays; to be tuned.
