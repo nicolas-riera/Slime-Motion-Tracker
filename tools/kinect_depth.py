@@ -62,12 +62,13 @@ class DepthRecording:
                 if len(head) < 20:
                     return
                 t, rt, n = struct.unpack("<ddI", head)
-                data = f.read(n)
-                if len(data) < n:
-                    return
-                if t < start:
+                if t < start:  # skip without reading (parallel extraction of time chunks)
+                    f.seek(n, 1)
                     continue
                 if t > end:
+                    return
+                data = f.read(n)
+                if len(data) < n:
                     return
                 depth = np.frombuffer(self._dec.decompress(data, size), dtype=np.uint16)
                 depth = depth.reshape(self.height, self.width)

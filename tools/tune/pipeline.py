@@ -21,6 +21,7 @@ Each stage writes its result in out_dir and is skipped when rerun.
 """
 import argparse
 import datetime
+import glob
 import json
 import math
 import os
@@ -106,7 +107,7 @@ class Session:
         m = re.search(r"(\d{8}_\d{6})", os.path.basename(self.path))
         self.start = datetime.datetime.strptime(m.group(1), "%Y%m%d_%H%M%S")
         self.camera = preview.KinectToWorld(spec["calib"]).points(np.zeros((1, 3)))[0]
-        self.gt_files = spec["gt"] if isinstance(spec["gt"], list) else [spec["gt"]]
+        self.gt_files = spec["gt"] if isinstance(spec["gt"], list) else sorted(glob.glob(spec["gt"]))
         g = ds.load_gt(self.gt_files)
         self.t = g["t"]
         self.g, self.clean = {}, {}
