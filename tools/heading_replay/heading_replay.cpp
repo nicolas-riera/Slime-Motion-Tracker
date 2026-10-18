@@ -3,7 +3,7 @@
 // anti-mag on real sessions. The calibrations come from the recorded config lines.
 //
 // Usage: slimelite_heading_replay session.jsonl out.csv [--sensitivity S]
-// CSV: t (relative), mac, role, heading_deg (replayed), state, rec_heading_deg
+// CSV: t (relative), mac, role, heading_deg (replayed), state, rec_heading_deg, rate_deg_min, sigma_deg
 #include <cstdio>
 #include <fstream>
 #include <map>
@@ -25,6 +25,7 @@ struct Track {
 	Quat qWorld, prevRotation;
 	bool hasRotation = false;
 	double prevRotTime = 0, angularSpeed = 0, lastMag = 0, recHeading = 0;
+	double temperature = std::nan("");
 	int lastOutput = -1;
 };
 
@@ -54,7 +55,7 @@ int main(int argc, char** argv) {
 		std::printf("cannot open the files\n");
 		return 1;
 	}
-	std::fprintf(out, "t,mac,role,heading_deg,state,rec_heading_deg\n");
+	std::fprintf(out, "t,mac,role,heading_deg,state,rec_heading_deg,rate_deg_min,sigma_deg\n");
 
 	Config config;
 	std::map<std::string, Track> tracks;
@@ -75,6 +76,8 @@ int main(int argc, char** argv) {
 				if (changed) tr.filter.setCalibration(tc.mag);
 				tr.cal = tc.mag;
 			}
+		} else if (k == "tmp") {
+			tracks[j["mac"].get<std::string>()].temperature = j.value("c", 0.0);
 		} else if (k == "trk") {
 			tracks[j["mac"].get<std::string>()].recHeading = rad2deg(j.value("hdg", 0.0));
 		} else if (k == "rot" && j.value("s", 0) == 0) {
@@ -102,14 +105,15 @@ int main(int argc, char** argv) {
 			std::array<int16_t, 3> raw{int16_t(m[0].get<int>()), int16_t(m[1].get<int>()), int16_t(m[2].get<int>())};
 			double dt = tr.lastMag > 0 ? std::clamp(t - tr.lastMag, 0.0, 0.2) : 0.02;
 			tr.lastMag = t;
-			tr.filter.update(tr.qWorld, raw, tr.angularSpeed, dt, settings);
+			tr.filter.update(tr.qWorld, raw, tr.angularSpeed, dt, settings, tr.temperature);
 			int second = int((t - t0) * 2);  // 2 Hz output
 			if (second != tr.lastOutput) {
 				tr.lastOutput = second;
 				auto it = config.trackers.find(mac);
 				const char* role = it != config.trackers.end() ? roleName(it->second.role) : "none";
-				std::fprintf(out, "%.2f,%s,%s,%.2f,%s,%.2f\n", t - t0, mac.c_str(), role,
-							 rad2deg(tr.filter.heading()), stateName(tr.filter.state()), tr.recHeading);
+				std::fprintf(out, "%.2f,%s,%s,%.2f,%s,%.2f,%.3f,%.2f\n", t - t0, mac.c_str(), role,
+							 rad2deg(tr.filter.heading()), stateName(tr.filter.state()), tr.recHeading,
+							 rad2deg(tr.filter.rate()) * 60, rad2deg(tr.filter.headingSigma()));
 			}
 		}
 	}

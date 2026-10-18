@@ -148,6 +148,9 @@ void Recorder::trackerEvent(const std::string& mac, const proto::Event& e, doubl
 			line(R"({"t":%.6f,"k":"bat","mac":"%s","v":%.3f,"p":%.3f})", t, m, e.batteryVoltage,
 				 e.batteryLevel);
 			break;
+		case K::Temperature:
+			line(R"({"t":%.6f,"k":"tmp","mac":"%s","c":%.2f})", t, m, e.temperature);
+			break;
 		default:
 			break;
 	}

@@ -10,6 +10,7 @@
 //   acc  linear acceleration, tracker frame, m/s^2: a
 //   mag  raw magnetometer counts: m
 //   bat  battery: v (volts), p (0..1)
+//   tmp  IMU temperature: c (deg C)
 //   dev  SteamVR device pose (raw tracking space): i, cls, role, ser, p, q, v, w
 //   trk  tracker state from the engine at 10 Hz: mac, hdg (rad), hh, ms (mag state)
 //   out  engine outputs per frame: waist/lf/rf = [valid, x, y, z, qw, qx, qy, qz],

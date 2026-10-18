@@ -171,7 +171,8 @@ nlohmann::json TrackerHub::exportHandover() const {
 					   {"port", ntohs(t->addr.sin_port)},
 					   {"bootCount", t->snap.bootCount},
 					   {"hasHeading", t->heading.hasHeading()},
-					   {"heading", t->heading.heading()}});
+					   {"heading", t->heading.heading()},
+					   {"headingRate", t->heading.rate()}});
 	}
 	return {{"trackers", arr}, {"packetNumber", m_packetNumber}};
 }
@@ -191,7 +192,7 @@ void TrackerHub::importHandover(const nlohmann::json& j, double t) {
 		tr.snap.connected = true;
 		tr.snap.bootCount = tj.value("bootCount", 0);
 		tr.lastPacketTime = t;
-		if (tj.value("hasHeading", false)) tr.heading.restore(tj.value("heading", 0.0));
+		if (tj.value("hasHeading", false)) tr.heading.restore(tj.value("heading", 0.0), tj.value("headingRate", 0.0));
 	}
 }
 
@@ -284,7 +285,8 @@ void TrackerHub::processEvent(const std::string& mac, const proto::Event& e, dou
 					}
 				}
 
-				if (m_magEnabled) tr.heading.update(s.qWorld, e.mag, s.angularSpeed, dt, m_headingSettings);
+				if (m_magEnabled) tr.heading.update(s.qWorld, e.mag, s.angularSpeed, dt, m_headingSettings,
+												 s.temperature != 0 ? double(s.temperature) : std::nan(""));
 				s.magNorm = tr.heading.lastNorm();
 				s.magDip = rad2deg(tr.heading.lastDip());
 				break;
