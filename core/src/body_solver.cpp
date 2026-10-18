@@ -64,6 +64,13 @@ const double kFloorSnap = tunable("kFloorSnap", 0.06);
 // sinks to it with this time constant (s): dead reckoning errors would pile up
 constexpr double kFloorSink = 0.10;
 constexpr double kFloorSinkTime = 2.0;
+// Seated upright (chair, couch), the feet are on the floor unless clearly higher:
+// short shuffles leave the dead-reckoned touchdown height 10-20 cm up and the feet
+// floated. Planted feet below kSeatFloorSnap (m) above the floor snap to it at
+// touchdown and sink to it with kSeatSinkTime (s); higher ones (a coffee table, the
+// couch itself) keep their height
+const double kSeatFloorSnap = tunable("kSeatFloorSnap", 0.20);
+const double kSeatSinkTime = tunable("kSeatSinkTime", 1.0);
 // Standing with no planted foot on the floor, the lowest one sinks to it with this
 // time constant (s)
 constexpr double kNoSupportSinkTime = 0.5;
@@ -101,6 +108,8 @@ constexpr double kReclineStart = 0.85;
 constexpr double kReclineFull = 0.6;
 const double kBedBelowHip = tunable("kBedBelowHip", 0.08);
 const double kBedSigma = tunable("kBedSigma", 0.06);
+// Pelvis up axis height below which the torso lies flat
+const double kLyingFlat = tunable("kLyingFlat", 0.3);
 const double kSeatSigma = tunable("kSeatSigma", 0.02);
 const double kSeatLeak = tunable("kSeatLeak", 8.0);
 constexpr double kSeatReach = 0.30;
@@ -347,6 +356,19 @@ BodyOutput BodySolver::update(const BodyInput& in) {
 		hip0 += pelvisBack * (kSitBack * d.height * seated);
 	}
 
+	// Per leg, how much a planted foot rests on the bed (at the hip's height) rather
+	// than on the floor. Reclined with a vertical shin, the leg hangs from the seat
+	// (slouching on a couch, sitting back on a bed edge: the foot is on the floor)
+	// unless the torso is lying flat (then a vertical shin is a knee up, the foot on
+	// the bed)
+	std::array<double, 2> bedness{}, floorPref{};
+	for (int i = 0; i < 2; i++) {
+		double shinUpY = -in.legs[i].shin.rotate({0, -1, 0}).y;
+		double hanging = smoothstep(0.6, 0.85, shinUpY) * smoothstep(kLyingFlat, kLyingFlat + 0.25, torsoUp.y);
+		bedness[i] = reclined * (1 - hanging);
+		floorPref[i] = seated * (1 - bedness[i]);
+	}
+
 	// ---- per-leg geometry, stance detection (zero velocity), swing dead reckoning ----
 	std::array<Vec3, 2> legOffset, down, forward;
 	for (int i = 0; i < 2; i++) {
@@ -383,7 +405,7 @@ BodyOutput BodySolver::update(const BodyInput& in) {
 			// it is within a few cm of the floor
 			ls.anchor = ls.ankle;
 			if (ls.swingTime < kMaxSwing) ls.anchor.y = std::max(ankleY, ls.insPos.y);
-			if (ls.anchor.y - ankleY < kFloorSnap) ls.anchor.y = ankleY;
+			if (ls.anchor.y - ankleY < lerp(kFloorSnap, kSeatFloorSnap, floorPref[i])) ls.anchor.y = ankleY;
 			out.debug.touchdownSwing[i] = ls.swingTime;
 			out.debug.touchdownHeight[i] = ls.anchor.y - ankleY;
 			ls.stanceVel = ls.stanceDisp = {};
@@ -460,7 +482,7 @@ BodyOutput BodySolver::update(const BodyInput& in) {
 				p.model = in.legs[i].footMeasurement;
 			}
 			p.under = !ls.planted && insSigma[i] <= 0 ? standing : 0.0;
-			p.bedWeight = ls.planted ? reclined : 0.0;
+			p.bedWeight = ls.planted ? bedness[i] : 0.0;
 			p.bedY = std::max(ankleY, (hip0 + hipOffset).y - kBedBelowHip);
 			p.otherHeight = std::max(0.0, (hip0 + hipOffset + legVector(o, phi[o])).y - ankleY);
 			phi[i] = solveLeg(p);
@@ -548,6 +570,9 @@ BodyOutput BodySolver::update(const BodyInput& in) {
 			// Standing, a foot resting a few cm above the floor is on it
 			if (ls.anchor.y > ankleY && ls.anchor.y < ankleY + kFloorSink)
 				ls.anchor.y += (ankleY - ls.anchor.y) * std::min(1.0, standing * dt / kFloorSinkTime);
+			// Seated upright, a foot resting below furniture height is on the floor
+			if (ls.anchor.y > ankleY && ls.anchor.y < ankleY + kSeatFloorSnap)
+				ls.anchor.y += (ankleY - ls.anchor.y) * std::min(1.0, floorPref[i] * dt / kSeatSinkTime);
 			ls.insPos = ankle;
 			ls.insVel = {};
 		} else {
