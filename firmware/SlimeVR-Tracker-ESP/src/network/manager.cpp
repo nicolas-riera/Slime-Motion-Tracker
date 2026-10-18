@@ -23,24 +23,65 @@
 #include "manager.h"
 
 #include "GlobalVars.h"
+#include "espnowudp.h"
 
 namespace SlimeVR::Network {
 
-void Manager::setup() { wifiNetwork.setUp(); }
+// SlimeVR-lite: the USB dongle (ESP-NOW) is preferred: the WiFi network is then
+// never joined, which saves power. Without a dongle, normal WiFi. A tracker that
+// loses its server (or its dongle) for kResearchMs looks for the dongle again.
+namespace {
+constexpr uint32_t kResearchMs = 15000;
+}
+
+void Manager::setup() { startDongleSearch(); }
+
+void Manager::startDongleSearch() {
+	m_Transport = Transport::SearchingDongle;
+	m_IsConnected = false;
+	EspNow::begin();
+}
 
 void Manager::update() {
-	wifiNetwork.upkeep();
+	if (m_Transport == Transport::SearchingDongle) {
+		if (EspNow::searchStep()) {
+			m_Transport = Transport::EspNow;
+			m_LostSince = 0;
+		} else if (EspNow::searchExhausted()) {
+			EspNow::end();
+			wifiNetwork.setUp();
+			m_Transport = Transport::WiFi;
+			m_LostSince = 0;
+		}
+		return;
+	}
 
 	auto wasConnected = m_IsConnected;
+	if (m_Transport == Transport::EspNow) {
+		m_IsConnected = true;
+	} else {
+		wifiNetwork.upkeep();
+		m_IsConnected = wifiNetwork.isConnected();
+	}
 
-	m_IsConnected = wifiNetwork.isConnected();
+	// Server (or dongle) lost for a while: look for the dongle again
+	bool serving = m_IsConnected && networkConnection.isConnected();
+	if (serving) {
+		m_LostSince = 0;
+	} else if (m_LostSince == 0) {
+		m_LostSince = millis();
+	} else if (millis() - m_LostSince > kResearchMs) {
+		if (m_Transport == Transport::WiFi) WiFi.disconnect();
+		startDongleSearch();
+		return;
+	}
 
 	if (!m_IsConnected) {
 		return;
 	}
 
 	if (!wasConnected) {
-		// WiFi was reconnected, rediscover the server and reconnect
+		// (Re)connected, rediscover the server and reconnect
 		networkConnection.reset();
 	}
 

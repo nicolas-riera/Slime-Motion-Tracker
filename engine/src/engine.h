@@ -12,6 +12,7 @@
 #include "recorder.h"
 #include "slimelite/body_solver.h"
 #include "slimelite/config.h"
+#include "slimelite/dongle_bridge.h"
 #include "slimelite/engine_api.h"
 #include "slimelite/foot_model.h"
 #include "slimelite/tracker_hub.h"
@@ -56,6 +57,7 @@ private:
 	std::string m_moduleDirectory;
 	Config m_config;
 	TrackerHub m_hub;
+	DongleBridge m_dongle;  // after m_hub: stops first
 	OverlayLink m_overlay;
 	Recorder m_recorder;
 	std::string m_handoverRecording;  // file to keep appending to after a hot reload

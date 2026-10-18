@@ -4,6 +4,7 @@
 #include <random>
 
 #include "slimelite/body_solver.h"
+#include "slimelite/dongle_bridge.h"
 #include "slimelite/mag.h"
 #include "slimelite/mounting_calibration.h"
 #include "slimelite/protocol.h"
@@ -89,6 +90,37 @@ static SyntheticMag makeMag() {
 	double dip = deg2rad(60);
 	s.earth = {std::cos(dip) * std::sin(0.3), -std::sin(dip), std::cos(dip) * std::cos(0.3)};
 	return s;
+}
+
+static void testDongleFrames() {
+	using namespace slimelite::dongle;
+	Frame a;
+	a.type = kData;
+	const uint8_t mac[6] = {0x2C, 0xF4, 0x32, 0x7B, 0xFF, 0xD1};
+	std::memcpy(a.mac, mac, 6);
+	a.payload = {0, 0, 0, 3, 'H', 'e', 'y', 0xA5, 0x5A};
+	Frame b;
+	b.type = kInfo;
+	b.payload = {'S', 'L', 'D', 'O', 'N', 'G', 'L', 'E', 1, 6};
+	std::vector<uint8_t> stream = {0x13, 0xA5, 0x00};  // boot noise
+	auto ea = encode(a), eb = encode(b);
+	stream.insert(stream.end(), ea.begin(), ea.end());
+	std::vector<uint8_t> bad = eb;
+	bad.back() ^= 0xFF;  // corrupted checksum: dropped
+	stream.insert(stream.end(), bad.begin(), bad.end());
+	stream.insert(stream.end(), eb.begin(), eb.end());
+	Decoder d;
+	std::vector<Frame> got;
+	for (size_t i = 0; i < stream.size(); i += 5) {  // arbitrary chunking
+		auto f = d.feed(stream.data() + i, std::min<size_t>(5, stream.size() - i));
+		got.insert(got.end(), f.begin(), f.end());
+	}
+	CHECK(got.size() == 2, "dongle frames decoded: %zu", got.size());
+	if (got.size() == 2) {
+		CHECK(got[0].payload == a.payload && std::memcmp(got[0].mac, mac, 6) == 0, "dongle data frame content");
+		CHECK(got[1].type == kInfo && got[1].payload == b.payload, "dongle info frame content");
+	}
+	CHECK(macString(mac) == "2C:F4:32:7B:FF:D1", "mac string");
 }
 
 static void testMagCalibration() {
@@ -344,6 +376,7 @@ int main() {
 	testProtocol();
 	testMagCalibration();
 	testHeadingFilter();
+	testDongleFrames();
 	testMounting();
 	testBodySolver();
 	if (g_failures) {

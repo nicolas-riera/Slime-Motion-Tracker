@@ -8,6 +8,7 @@ firmware/backup/*.bin
 
 # PlatformIO
 firmware/SlimeVR-Tracker-ESP/.pio/
+firmware/slimelite-dongle/.pio/
 firmware/SlimeVR-Tracker-ESP/cache/
 
 # CMake / MSVC

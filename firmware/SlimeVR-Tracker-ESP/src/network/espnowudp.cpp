@@ -1,0 +1,171 @@
+#include "espnowudp.h"
+
+#include <ESP8266WiFi.h>
+#include <espnow.h>
+
+extern "C" {
+#include <user_interface.h>
+}
+
+namespace SlimeVR::Network {
+
+namespace {
+
+uint8_t g_broadcast[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+uint8_t g_dongle[6] = {};
+volatile bool g_paired = false;
+volatile uint32_t g_lastRx = 0;
+bool g_active = false;
+uint8_t g_channel = 1;
+uint32_t g_lastHop = 0;
+int g_hops = 0;
+
+// Receive ring (the callback runs in the system task, the reader in loop())
+constexpr int kSlots = 4;
+struct Slot {
+	uint8_t len;
+	uint8_t data[EspNow::kMaxPayload];
+};
+Slot g_slots[kSlots];
+volatile uint8_t g_head = 0, g_tail = 0;
+
+void onReceive(uint8_t* mac, uint8_t* data, uint8_t len) {
+	if (len < EspNow::kHeader || data[0] != 'S' || data[1] != 'L' || data[2] != EspNow::kVersion) return;
+	if (!g_paired || memcmp(mac, g_dongle, 6) != 0) {
+		// The dongle answered: lock on it (and stay on this channel)
+		if (g_paired && esp_now_is_peer_exist(g_dongle)) esp_now_del_peer(g_dongle);
+		memcpy(g_dongle, mac, 6);
+		esp_now_add_peer(g_dongle, ESP_NOW_ROLE_COMBO, g_channel, nullptr, 0);
+		g_paired = true;
+	}
+	g_lastRx = millis();
+	if (data[3] != EspNow::Data) return;
+	uint8_t next = (g_head + 1) % kSlots;
+	if (next == g_tail) return;  // full: drop
+	Slot& s = g_slots[g_head];
+	s.len = len - EspNow::kHeader;
+	memcpy(s.data, data + EspNow::kHeader, s.len);
+	g_head = next;
+}
+
+void sendFrame(const uint8_t* mac, uint8_t kind, const uint8_t* payload, size_t len) {
+	uint8_t buf[EspNow::kHeader + EspNow::kMaxPayload] = {'S', 'L', EspNow::kVersion, kind};
+	if (len > EspNow::kMaxPayload) return;
+	memcpy(buf + EspNow::kHeader, payload, len);
+	esp_now_send(const_cast<uint8_t*>(mac), buf, EspNow::kHeader + len);
+}
+
+}  // namespace
+
+namespace EspNow {
+
+void begin() {
+	if (g_active) {
+		// Searching again from ESP-NOW mode: keep the radio, forget the dongle
+		g_paired = false;
+		g_hops = 0;
+		return;
+	}
+	g_active = true;
+	g_paired = false;
+	g_hops = 0;
+	WiFi.persistent(false);
+	WiFi.mode(WIFI_STA);
+	WiFi.disconnect();
+	// The radio must stay on to receive the server's packets
+	wifi_set_sleep_type(NONE_SLEEP_T);
+	wifi_set_channel(g_channel);
+	esp_now_init();
+	esp_now_set_self_role(ESP_NOW_ROLE_COMBO);
+	esp_now_register_recv_cb(onReceive);
+	esp_now_add_peer(g_broadcast, ESP_NOW_ROLE_COMBO, 0, nullptr, 0);
+	g_lastHop = 0;
+}
+
+bool searchStep() {
+	if (g_paired) return true;
+	uint32_t now = millis();
+	if (now - g_lastHop < 150) return false;
+	if (g_lastHop != 0) {
+		g_channel = g_channel % 13 + 1;
+		g_hops++;
+	}
+	g_lastHop = now;
+	wifi_set_channel(g_channel);
+	sendFrame(g_broadcast, Search, nullptr, 0);
+	return false;
+}
+
+bool searchExhausted() { return !g_paired && g_hops >= 26; }
+
+void end() {
+	if (!g_active) return;
+	esp_now_unregister_recv_cb();
+	esp_now_deinit();
+	g_active = false;
+	g_paired = false;
+}
+
+bool active() { return g_active; }
+bool paired() { return g_paired; }
+uint8_t channel() { return g_channel; }
+uint32_t lastReceiveMillis() { return g_lastRx; }
+
+}  // namespace EspNow
+
+uint8_t HybridUdp::begin(uint16_t port) {
+	if (EspNow::active()) return 1;
+	return m_udp.begin(port);
+}
+
+int HybridUdp::beginPacket(IPAddress ip, uint16_t port) {
+	m_tx = EspNow::active();
+	if (!m_tx) return m_udp.beginPacket(ip, port);
+	m_txLen = 0;
+	return 1;
+}
+
+size_t HybridUdp::write(const uint8_t* buffer, size_t size) {
+	if (!m_tx) return m_udp.write(buffer, size);
+	if (m_txLen + size > EspNow::kMaxPayload) return 0;
+	memcpy(m_txBuf + m_txLen, buffer, size);
+	m_txLen += size;
+	return size;
+}
+
+int HybridUdp::endPacket() {
+	if (!m_tx) return m_udp.endPacket();
+	// Discovery broadcasts and server packets alike go to the dongle
+	if (!g_paired) return 0;
+	sendFrame(g_dongle, EspNow::Data, m_txBuf, m_txLen);
+	return 1;
+}
+
+int HybridUdp::parsePacket() {
+	if (!EspNow::active()) {
+		m_rxEspNow = false;
+		return m_udp.parsePacket();
+	}
+	m_rxEspNow = true;
+	if (g_tail == g_head) return 0;
+	Slot& s = g_slots[g_tail];
+	m_rxLen = s.len;
+	memcpy(m_rx, s.data, s.len);
+	m_rxPos = 0;
+	g_tail = (g_tail + 1) % kSlots;
+	return int(m_rxLen);
+}
+
+int HybridUdp::read(unsigned char* buffer, size_t len) {
+	if (!m_rxEspNow) return m_udp.read(buffer, len);
+	size_t n = std::min(len, m_rxLen - m_rxPos);
+	memcpy(buffer, m_rx + m_rxPos, n);
+	m_rxPos += n;
+	return int(n);
+}
+
+IPAddress HybridUdp::remoteIP() { return m_rxEspNow ? IPAddress(10, 0, 0, 1) : m_udp.remoteIP(); }
+uint16_t HybridUdp::remotePort() { return m_rxEspNow ? 6969 : m_udp.remotePort(); }
+int HybridUdp::getWriteError() { return m_tx ? 0 : m_udp.getWriteError(); }
+
+}  // namespace SlimeVR::Network

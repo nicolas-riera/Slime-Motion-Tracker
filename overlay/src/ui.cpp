@@ -354,6 +354,15 @@ void drawMagCell(DriverLink& link, const TrackerInfo& t) {
 }
 
 void drawTrackers(DriverLink& link, const DriverState& s, bool connected) {
+    // USB dongle (ESP-NOW trackers)
+    if (s.dongle.connected) {
+        ImGui::TextColored(kGreen, "USB dongle on %s", s.dongle.port.c_str());
+        ImGui::SameLine();
+        ImGui::Text("- channel %d, %d tracker%s", s.dongle.channel, s.dongle.trackers, s.dongle.trackers == 1 ? "" : "s");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s, firmware v%d", s.dongle.mac.c_str(), s.dongle.version);
+    } else if (connected) {
+        ImGui::TextColored(kGrey, "USB dongle: not detected (trackers use WiFi)");
+    }
     if (s.trackers.empty()) {
         ImGui::TextColored(kGrey, connected ? "No tracker found yet. Turn the trackers on and check they "
                                               "are on the same network as this PC."
@@ -401,7 +410,7 @@ void drawTrackers(DriverLink& link, const DriverState& s, bool connected) {
             // Link status
             ImGui::TableNextColumn();
             if (t.connected)
-                ImGui::TextColored(kGreen, "Connected");
+                ImGui::TextColored(kGreen, t.transport == "espnow" ? "Connected (ESP-NOW)" : "Connected (WiFi)");
             else
                 ImGui::TextColored(kRed, "Disconnected");
             ImGui::Text("%.0f Hz / mag %.0f Hz", t.rotationHz, t.magHz);
@@ -410,7 +419,7 @@ void drawTrackers(DriverLink& link, const DriverState& s, bool connected) {
                                    t.battery * 100.0f, t.batteryVoltage);
             else
                 ImGui::TextColored(kGrey, "Battery --");
-            if (t.rssi != 0)
+            if (t.rssi < 0)  // ESP-NOW trackers report none
                 ImGui::Text("%d dBm", t.rssi);
             else
                 ImGui::TextColored(kGrey, "-- dBm");
