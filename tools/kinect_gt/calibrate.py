@@ -6,6 +6,12 @@ user's silhouette, tracked in depth, follows the HMD. Solved by least squares
 over the whole recording, with an unknown constant offset between the HMD and
 the top-of-head centroid (in the HMD frame) and a grid search on the time offset.
 
+The top of the silhouette is not always the head (lying on a bed, an object
+taller than the user): those spans are consistent with a wrong transform and
+can win a global fit. So 10 min windows are fitted separately first, the
+consensus of the good windows gives the transform, and the final fit only uses
+the samples that agree with it (within 15 cm).
+
 Usage: python tools/kinect_gt/calibrate.py rec.depth scene.npz session.jsonl calib.npz
 """
 import argparse
@@ -121,6 +127,41 @@ def solve(head, hmd, dt):
     return best.x, err
 
 
+def transform_error(x, head, hmd, dt):
+    yaw, tx, tz, ox, oy, oz = x
+    p, rot = interp_hmd(hmd, head[:, 0] + dt)
+    a, c = head[:, 1], head[:, 3]
+    cy, sy = np.cos(yaw), np.sin(yaw)
+    target = p + rot.apply([ox, oy, oz])
+    return np.hypot(cy * a + sy * c + tx - target[:, 0], -sy * a + cy * c + tz - target[:, 2])
+
+
+def consensus_inliers(head, hmd, window=600, good=0.03, keep=0.15):
+    """Samples that agree with the transform most 10 min windows agree on."""
+    fits = []
+    for a in np.arange(head[0, 0], head[-1, 0], window):
+        m = (head[:, 0] >= a) & (head[:, 0] < a + window)
+        if m.sum() < 300:
+            continue
+        x, err = solve(head[m], hmd, 0.0)
+        if np.median(err) < good:
+            fits.append(x)
+    if len(fits) < 2:
+        print("consensus: not enough good windows, using every sample")
+        return head
+    fits = np.array(fits)
+    # The window whose transform explains the most samples of the other good windows
+    best, best_count = None, -1
+    for x in fits:
+        count = (transform_error(x, head, hmd, 0.0) < keep).sum()
+        if count > best_count:
+            best, best_count = x, count
+    inliers = transform_error(best, head, hmd, 0.0) < keep
+    print(f"consensus: {len(fits)} good windows, {inliers.mean() * 100:.0f}% of the samples agree "
+          f"(yaw {np.degrees(best[0]):.1f} deg, t ({best[1]:.2f}, {best[2]:.2f}))")
+    return head[inliers]
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("depth")
@@ -128,16 +169,23 @@ def main():
     ap.add_argument("session")
     ap.add_argument("out")
     ap.add_argument("--step", type=int, default=3)
+    ap.add_argument("--head-cache", help="cache of the head track (.npy), computed if missing")
     args = ap.parse_args()
 
     rec = DepthRecording(args.depth)
     scene = np.load(args.scene)
     frame = FloorFrame(scene["floor_n"], float(scene["floor_d"]))
-    head = head_track(rec, scene, frame, args.step)
+    if args.head_cache and os.path.exists(args.head_cache):
+        head = np.load(args.head_cache)[:, :4]
+    else:
+        head = head_track(rec, scene, frame, args.step)
+        if args.head_cache:
+            np.save(args.head_cache, head)
     hmd = load_hmd(args.session)
     overlap = (head[:, 0] > hmd[0, 0]) & (head[:, 0] < hmd[-1, 0])
     head = head[overlap]
     print(f"{len(head)} head samples, {len(hmd)} HMD poses")
+    head = consensus_inliers(head, hmd)
 
     results = []
     for dt in np.arange(-0.30, 0.31, 0.03):

@@ -8,22 +8,35 @@
 //   --from/--to: seconds from the start of the recording
 //   --floor: floor height in raw tracking space (default: from the recording)
 //   SL_NO_WAIST=1: ignore the waist tracker (ankles-only mode on a three-tracker recording)
+//   SL_MAG_REPLAY=1: rerun the mag heading filter (current code, SL_TUNE mag constants)
+//     instead of the recorded headings. The replayed heading is aligned to the
+//     recorded one at each body calibration, which the mountings were measured with.
+//
+// Parsing the JSON lines dominates the run time (a 5 h session is 3.4 GB), so the
+// parsed events are cached in a binary file next to the session (session.jsonl.evc,
+// or in SL_EVENT_CACHE_DIR), rebuilt when the session file changes.
+#include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "slimelite/body_solver.h"
 #include "slimelite/config.h"
 #include "slimelite/foot_model.h"
+#include "slimelite/mag.h"
 #include "slimelite/protocol.h"
 
 using namespace slimelite;
 using nlohmann::json;
+namespace fs = std::filesystem;
 
 namespace {
 
@@ -35,10 +48,193 @@ struct TrackerState {
 	Vec3 accelLocal;
 	bool hasHeading = false;
 	double heading = 0;
+	// SL_MAG_REPLAY
+	HeadingFilter filter;
+	double magResidual = -1, lastMag = 0, temperature = std::nan("");
+	double recHeading = 0, offset = 0;
+	bool recHas = false, aligned = false;
+	// Alignment: circular mean of (recorded - replayed) over kAlignTime after each
+	// trigger, then frozen (one instant would bake a transient disagreement in)
+	double alignSin = 0, alignCos = 0, alignStart = -1;
+	int boot = -1;
+	std::array<int16_t, 3> lastRaw{};
 };
 
-Vec3 vec(const json& a, size_t offset = 0) {
-	return {a.at(offset).get<double>(), a.at(offset + 1).get<double>(), a.at(offset + 2).get<double>()};
+// ---- parsed events and their binary cache ----
+
+enum class Kind : uint8_t { MacDef, Cfg, Ev, Rot, Acc, Trk, Dev, Out, Mag, Tmp };
+
+struct Event {
+	double t = 0;
+	Kind kind = Kind::Cfg;
+	uint8_t mac = 0;
+	uint8_t nf = 0;
+	float f[18] = {};
+	std::string str;  // MacDef: mac, Cfg: config JSON, Ev: what '\0' detail
+};
+
+constexpr uint32_t kCacheMagic = 0x31435645;  // "EVC1"
+
+class EventWriter {
+public:
+	explicit EventWriter(const std::string& path) : m_file(std::fopen(path.c_str(), "wb")) {}
+	~EventWriter() {
+		if (m_file) std::fclose(m_file);
+	}
+	bool ok() const { return m_file != nullptr; }
+	void header(uint64_t size, int64_t mtime) {
+		std::fwrite(&kCacheMagic, 4, 1, m_file);
+		std::fwrite(&size, 8, 1, m_file);
+		std::fwrite(&mtime, 8, 1, m_file);
+	}
+	void write(const Event& e) {
+		std::fwrite(&e.t, 8, 1, m_file);
+		uint8_t h[3] = {uint8_t(e.kind), e.mac, e.nf};
+		std::fwrite(h, 1, 3, m_file);
+		if (e.nf) std::fwrite(e.f, 4, e.nf, m_file);
+		if (e.kind == Kind::MacDef || e.kind == Kind::Cfg || e.kind == Kind::Ev) {
+			uint32_t n = uint32_t(e.str.size());
+			std::fwrite(&n, 4, 1, m_file);
+			std::fwrite(e.str.data(), 1, n, m_file);
+		}
+	}
+
+private:
+	FILE* m_file;
+};
+
+class EventReader {
+public:
+	explicit EventReader(const std::string& path) : m_file(std::fopen(path.c_str(), "rb")) {
+		if (m_file) std::setvbuf(m_file, nullptr, _IOFBF, 1 << 20);
+	}
+	~EventReader() {
+		if (m_file) std::fclose(m_file);
+	}
+	bool header(uint64_t& size, int64_t& mtime) {
+		uint32_t magic = 0;
+		return m_file && std::fread(&magic, 4, 1, m_file) == 1 && magic == kCacheMagic &&
+			   std::fread(&size, 8, 1, m_file) == 1 && std::fread(&mtime, 8, 1, m_file) == 1;
+	}
+	bool next(Event& e) {
+		uint8_t h[3];
+		if (std::fread(&e.t, 8, 1, m_file) != 1 || std::fread(h, 1, 3, m_file) != 3) return false;
+		e.kind = Kind(h[0]);
+		e.mac = h[1];
+		e.nf = h[2];
+		if (e.nf > 18 || (e.nf && std::fread(e.f, 4, e.nf, m_file) != e.nf)) return false;
+		if (e.kind == Kind::MacDef || e.kind == Kind::Cfg || e.kind == Kind::Ev) {
+			uint32_t n = 0;
+			if (std::fread(&n, 4, 1, m_file) != 1) return false;
+			e.str.resize(n);
+			if (n && std::fread(e.str.data(), 1, n, m_file) != n) return false;
+		}
+		return true;
+	}
+
+private:
+	FILE* m_file;
+};
+
+// Parses the JSON lines into the cache file. The replay then always reads the cache
+bool buildCache(const std::string& session, const std::string& cache, uint64_t size, int64_t mtime) {
+	std::ifstream in(session);
+	if (!in) return false;
+	// Parallel replays may build the same cache: each writes its own file
+	std::string tmp = cache + "." + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".tmp";
+	{
+		EventWriter w(tmp);
+		if (!w.ok()) return false;
+		w.header(size, mtime);
+		std::map<std::string, uint8_t> macs;
+		auto macIndex = [&](const std::string& mac, double t) {
+			auto it = macs.find(mac);
+			if (it != macs.end()) return it->second;
+			uint8_t idx = uint8_t(macs.size());
+			macs[mac] = idx;
+			Event d;
+			d.t = t;
+			d.kind = Kind::MacDef;
+			d.mac = idx;
+			d.str = mac;
+			w.write(d);
+			return idx;
+		};
+		std::string line;
+		while (std::getline(in, line)) {
+			if (line.find("\"k\":\"bat\"") != std::string::npos || line.find("\"k\":\"acc\"") == std::string::npos &&
+				line.find("\"k\":\"dev\"") != std::string::npos && line.find("\"cls\":1,") == std::string::npos &&
+				line.find("\"cls\":2,") == std::string::npos)
+				continue;
+			json j = json::parse(line, nullptr, false);
+			if (j.is_discarded() || !j.contains("k")) continue;
+			Event e;
+			e.t = j.value("t", 0.0);
+			const std::string k = j["k"].get<std::string>();
+			auto put = [&](const json& a, size_t n, size_t offset = 0) {
+				for (size_t i = 0; i < n; i++) e.f[e.nf++] = a.at(offset + i).get<float>();
+			};
+			if (k == "cfg") {
+				e.kind = Kind::Cfg;
+				e.str = j["config"].dump();
+			} else if (k == "ev") {
+				e.kind = Kind::Ev;
+				e.str = j.value("what", "") + std::string(1, '\0') + j.value("detail", "");
+			} else if (k == "rot" || k == "acc" || k == "mag") {
+				if (j.value("s", 0) != 0) continue;
+				e.kind = k == "rot" ? Kind::Rot : k == "acc" ? Kind::Acc : Kind::Mag;
+				e.mac = macIndex(j["mac"].get<std::string>(), e.t);
+				if (k == "rot") put(j["q"], 4);
+				else if (k == "acc") put(j["a"], 3);
+				else put(j["m"], 3);
+			} else if (k == "trk") {
+				e.kind = Kind::Trk;
+				e.mac = macIndex(j["mac"].get<std::string>(), e.t);
+				e.f[0] = float(j.value("hh", 0));
+				e.f[1] = float(j.value("hdg", 0.0));
+				e.f[2] = float(j.value("boot", 0));
+				e.nf = 3;
+			} else if (k == "tmp") {
+				e.kind = Kind::Tmp;
+				e.mac = macIndex(j["mac"].get<std::string>(), e.t);
+				e.f[0] = float(j.value("c", 0.0));
+				e.nf = 1;
+			} else if (k == "dev") {
+				int cls = j.value("cls", 0), role = j.value("role", 0);
+				if (cls != 1 && !(cls == 2 && (role == 1 || role == 2))) continue;
+				e.kind = Kind::Dev;
+				e.f[0] = float(cls);
+				e.f[1] = float(role);
+				e.f[2] = float(j.value("ok", 0));
+				e.nf = 3;
+				put(j["p"], 3);
+				put(j["q"], 4);
+			} else if (k == "out") {
+				e.kind = Kind::Out;
+				const json &wj = j["waist"], &lf = j["lf"], &rf = j["rf"];
+				put(wj, 8);
+				put(lf, 4);
+				put(rf, 4);
+				e.f[e.nf++] = j["kn"][0].get<float>();
+				e.f[e.nf++] = j["kn"][1].get<float>();
+				// Planted flags: lf[0]/rf[0] (valid) are only used for the floor estimate
+				e.f[8] = lf[0].get<float>() * (j["pl"][0].get<int>() ? 1.0f : -1.0f);
+				e.f[12] = rf[0].get<float>() * (j["pl"][1].get<int>() ? 1.0f : -1.0f);
+			} else {
+				continue;
+			}
+			w.write(e);
+		}
+	}
+	std::error_code ec;
+	fs::rename(tmp, cache, ec);
+	return !ec;
+}
+
+std::string cachePath(const std::string& session) {
+	if (const char* dir = std::getenv("SL_EVENT_CACHE_DIR"))
+		return (fs::path(dir) / fs::path(session).filename()).string() + ".evc";
+	return session + ".evc";
 }
 
 }  // namespace
@@ -58,11 +254,26 @@ int main(int argc, char** argv) {
 		else if (k == "--floor") floorArg = v;
 	}
 
-	std::ifstream in(argv[1]);
-	if (!in) {
+	const std::string session = argv[1];
+	std::error_code ec;
+	uint64_t size = fs::file_size(session, ec);
+	if (ec) {
 		std::printf("cannot open %s\n", argv[1]);
 		return 1;
 	}
+	int64_t mtime = int64_t(fs::last_write_time(session, ec).time_since_epoch().count());
+	const std::string cache = cachePath(session);
+	{
+		EventReader r(cache);
+		uint64_t cs = 0;
+		int64_t cm = 0;
+		bool fresh = r.header(cs, cm) && cs == size && cm == mtime;
+		if (!fresh && !buildCache(session, cache, size, mtime)) {
+			std::printf("cannot build the event cache %s\n", cache.c_str());
+			return 1;
+		}
+	}
+
 	FILE* csv = std::fopen(argv[2], "w");
 	if (!csv) {
 		std::printf("cannot write %s\n", argv[2]);
@@ -81,6 +292,7 @@ int main(int argc, char** argv) {
 
 	Config config;
 	bool haveConfig = false;
+	std::vector<std::string> macNames;
 	std::map<std::string, TrackerState> trackers;
 	Pose hmd;
 	bool hmdValid = false;
@@ -90,8 +302,51 @@ int main(int argc, char** argv) {
 	// Old recordings have no floor line: floor = HMD height at the stand capture -
 	// the eye height the next config reports
 	std::optional<double> standHmdY;
+	// Recordings started mid-session (before the engine wrote the floor at the start)
+	// have neither: estimate it from the recorded planted feet
+	std::optional<double> plantedAnkleY;
+	if (!floorArg) {
+		EventReader pre(cache);
+		uint64_t cs;
+		int64_t cm;
+		pre.header(cs, cm);
+		Event e;
+		bool hasFloor = false;
+		std::vector<double> ys;
+		while (pre.next(e)) {
+			if (e.kind == Kind::Ev) {
+				std::string what = e.str.c_str(), detail = e.str.substr(std::min(e.str.size(), what.size() + 1));
+				if (what == "floor" || detail.rfind("ski:", 0) == 0 || detail.rfind("done: Reset", 0) == 0) {
+					hasFloor = true;
+					break;
+				}
+			} else if (e.kind == Kind::Out && ys.size() < 200000) {
+				if (e.f[8] > 0) ys.push_back(e.f[10]);
+				if (e.f[12] > 0) ys.push_back(e.f[14]);
+			}
+		}
+		if (!hasFloor && ys.size() > 100) {
+			// Low percentile: feet also rest on the couch or the bed
+			size_t k = ys.size() / 10;
+			std::nth_element(ys.begin(), ys.begin() + k, ys.end());
+			plantedAnkleY = ys[k];
+		}
+	}
 	BodySolver solver;
 	const bool noWaist = std::getenv("SL_NO_WAIST") && std::atoi(std::getenv("SL_NO_WAIST"));
+	const bool magReplay = std::getenv("SL_MAG_REPLAY") && std::atoi(std::getenv("SL_MAG_REPLAY"));
+	HeadingFilterSettings magSettings;
+	magSettings.magSigma = deg2rad(tunable("magSigmaDeg", rad2deg(magSettings.magSigma)));
+	magSettings.magCorrTime = tunable("magCorrTime", magSettings.magCorrTime);
+	magSettings.headingWalk = deg2rad(tunable("magHeadingWalkDeg", rad2deg(magSettings.headingWalk)));
+	magSettings.rateWalk = deg2rad(tunable("magRateWalkDeg", rad2deg(magSettings.rateWalk)));
+	magSettings.normSoft = tunable("magNormSoft", magSettings.normSoft);
+	magSettings.dipSoft = deg2rad(tunable("magDipSoftDeg", rad2deg(magSettings.dipSoft)));
+	magSettings.stillGrowth = tunable("magStillGrowth", magSettings.stillGrowth);
+	magSettings.sensitivity = tunable("magSensitivity", magSettings.sensitivity);
+	auto realign = [&] {
+		for (auto& [mac, ts] : trackers) ts.aligned = false;
+	};
 	// Learned foot model (optional): --model path, or SL_FOOT_MODEL
 	FootModel footModel;
 	std::string modelPath = std::getenv("SL_FOOT_MODEL") ? std::getenv("SL_FOOT_MODEL") : "";
@@ -110,46 +365,65 @@ int main(int argc, char** argv) {
 		solver.configure(dims, config.settings, config.mode);
 	};
 
-	std::string line;
-	while (std::getline(in, line)) {
-		// Skip the kinds the replay does not use without parsing them (speed)
-		if (line.find("\"k\":\"mag\"") != std::string::npos || line.find("\"k\":\"bat\"") != std::string::npos)
-			continue;
-		json j = json::parse(line, nullptr, false);
-		if (j.is_discarded() || !j.contains("k")) continue;
-		double t = j.value("t", 0.0);
+	EventReader reader(cache);
+	{
+		uint64_t cs;
+		int64_t cm;
+		reader.header(cs, cm);
+	}
+	Event ev;
+	while (reader.next(ev)) {
+		const double t = ev.t;
 		if (t0 < 0) t0 = t;
-		const std::string k = j["k"].get<std::string>();
+		const float* f = ev.f;
 
-		if (k == "cfg") {
-			config.fromJson(j["config"]);
+		if (ev.kind == Kind::MacDef) {
+			if (macNames.size() <= ev.mac) macNames.resize(ev.mac + 1);
+			macNames[ev.mac] = ev.str;
+		} else if (ev.kind == Kind::Cfg) {
+			config.fromJson(json::parse(ev.str));
 			haveConfig = true;
 			configureSolver();
+			if (plantedAnkleY && !floorKnown) {
+				floorY = *plantedAnkleY - dims.ankleHeight;
+				floorKnown = true;
+				std::printf("no floor in the recording: %.3f from the recorded planted feet\n", floorY);
+			}
 			if (!floorArg && standHmdY && config.measuredEyeHeight) {
 				floorY = *standHmdY - *config.measuredEyeHeight;
 				floorKnown = true;
 				standHmdY.reset();
 			}
-		} else if (k == "ev") {
-			std::string what = j.value("what", ""), detail = j.value("detail", "");
+			if (magReplay)
+				for (const auto& [mac, tc] : config.trackers) {
+					TrackerState& ts = trackers[mac];
+					if (!tc.mag.valid || ts.magResidual == tc.mag.residual) continue;
+					// Same continuity rule as the tracker hub for a replaced calibration
+					if (ts.magResidual < 0 || ts.lastMag == 0) ts.filter.setCalibration(tc.mag);
+					else ts.filter.updateCalibration(tc.mag, ts.qWorld, ts.lastRaw);
+					ts.magResidual = tc.mag.residual;
+				}
+		} else if (ev.kind == Kind::Ev) {
+			std::string what = ev.str.c_str(), detail = ev.str.substr(std::min(ev.str.size(), what.size() + 1));
 			if (what == "floor" && !floorArg) {
 				floorY = std::atof(detail.c_str());
 				floorKnown = true;
 			} else if (what == "calibration") {
 				if (detail.rfind("ski:", 0) == 0 || detail.rfind("done: Reset", 0) == 0) standHmdY = hmd.position.y;
-				if (detail.rfind("done:", 0) == 0) solver.reset();
+				if (detail.rfind("done:", 0) == 0) {
+					solver.reset();
+					realign();
+				}
 			}
-		} else if (k == "rot") {
-			if (j.value("s", 0) != 0) continue;
-			auto q = j["q"];
-			Quat qw = proto::firmwareToWorld(
-				Quat{q[0].get<double>(), q[1].get<double>(), q[2].get<double>(), q[3].get<double>()});
-			TrackerState& ts = trackers[j["mac"].get<std::string>()];
+		} else if (ev.kind == Kind::Rot) {
+			Quat qw = proto::firmwareToWorld(Quat{f[0], f[1], f[2], f[3]});
+			TrackerState& ts = trackers[macNames[ev.mac]];
 			// Same angular speed estimate as the tracker hub
 			if (ts.prevTime > 0) {
 				double dt = t - ts.prevTime;
 				if (dt > 1e-4 && dt < 0.5) {
-					double w = (ts.prevRotation.conj() * qw).angle() / dt;
+					double ang = (ts.prevRotation.conj() * qw).angle(), w = ang / dt;
+					if (magReplay && w > 40.0 && ang > deg2rad(20)) ts.filter.gyroGlitch();
 					ts.angularSpeed += (w - ts.angularSpeed) * std::min(1.0, dt / 0.05);
 				}
 			}
@@ -157,22 +431,65 @@ int main(int argc, char** argv) {
 			ts.prevTime = t;
 			ts.qWorld = qw;
 			ts.hasRotation = true;
-		} else if (k == "acc") {
-			if (j.value("s", 0) != 0) continue;
-			trackers[j["mac"].get<std::string>()].accelLocal = vec(j["a"]);
-		} else if (k == "trk") {
-			TrackerState& ts = trackers[j["mac"].get<std::string>()];
-			ts.hasHeading = j.value("hh", 0) != 0;
-			ts.heading = j.value("hdg", 0.0);
-		} else if (k == "dev") {
-			int cls = j.value("cls", 0), role = j.value("role", 0);
-			if (cls == 2 && (role == 1 || role == 2)) controllers[role - 1] = vec(j["p"]);
+		} else if (ev.kind == Kind::Acc) {
+			trackers[macNames[ev.mac]].accelLocal = {f[0], f[1], f[2]};
+		} else if (ev.kind == Kind::Trk) {
+			TrackerState& ts = trackers[macNames[ev.mac]];
+			if (magReplay) {
+				// Same rule as the tracker hub: a reconnect restarts the device fusion
+				int boot = int(f[2]);
+				// The offset to the recorded heading stays: both filters re-acquire the
+				// absolute mag heading, and realigning on a transient disagreement would
+				// leave a permanent error
+				if (ts.boot >= 0 && boot != ts.boot) ts.filter.reset();
+				ts.boot = boot;
+				// The live filter lost its heading (reset): mirror it, and realign once both
+				// re-acquired the absolute mag heading (their calibrations' heading offsets
+				// may differ)
+				bool has = f[0] != 0;
+				if (ts.recHas && !has) ts.filter.reset();
+				if (!ts.recHas && has) ts.aligned = false;
+				ts.recHas = has;
+				ts.recHeading = f[1];
+				if (ts.recHas && ts.filter.hasHeading()) {
+					if (!ts.aligned) {
+						ts.aligned = true;
+						ts.alignStart = t;
+						ts.alignSin = ts.alignCos = 0;
+					}
+					if (t - ts.alignStart < 120.0) {
+						double d = wrapAngle(ts.recHeading - ts.filter.heading());
+						ts.alignSin += std::sin(d);
+						ts.alignCos += std::cos(d);
+						ts.offset = std::atan2(ts.alignSin, ts.alignCos);
+					}
+				}
+				ts.hasHeading = ts.aligned && ts.filter.hasHeading();
+				ts.heading = wrapAngle(ts.filter.heading() + ts.offset);
+			} else {
+				ts.hasHeading = f[0] != 0;
+				ts.heading = f[1];
+			}
+		} else if (ev.kind == Kind::Tmp) {
+			trackers[macNames[ev.mac]].temperature = f[0];
+		} else if (ev.kind == Kind::Mag) {
+			if (!magReplay) continue;
+			TrackerState& ts = trackers[macNames[ev.mac]];
+			if (!ts.hasRotation) continue;
+			std::array<int16_t, 3> raw{int16_t(f[0]), int16_t(f[1]), int16_t(f[2])};
+			double dt = ts.lastMag > 0 ? std::clamp(t - ts.lastMag, 0.0, 0.2) : 0.02;
+			ts.lastMag = t;
+			ts.lastRaw = raw;
+			ts.filter.update(ts.qWorld, raw, ts.angularSpeed, dt, magSettings, ts.temperature);
+			if (ts.aligned) ts.heading = wrapAngle(ts.filter.heading() + ts.offset);
+		} else if (ev.kind == Kind::Dev) {
+			int cls = int(f[0]), role = int(f[1]);
+			if (cls == 2 && (role == 1 || role == 2)) controllers[role - 1] = {f[3], f[4], f[5]};
 			if (cls != 1) continue;
-			hmdValid = j.value("ok", 0) != 0;
-			auto q = j["q"];
-			hmd.position = vec(j["p"]);
-			hmd.rotation = Quat{q[0].get<double>(), q[1].get<double>(), q[2].get<double>(), q[3].get<double>()};
-		} else if (k == "out") {
+			hmdValid = f[2] != 0;
+			hmd.position = {f[3], f[4], f[5]};
+			hmd.rotation = Quat{f[6], f[7], f[8], f[9]};
+		} else if (ev.kind == Kind::Out) {
 			double dt = lastFrame > 0 ? t - lastFrame : 1.0 / 90;
 			lastFrame = t;
 			if (!haveConfig) continue;
@@ -221,14 +538,6 @@ int main(int argc, char** argv) {
 			}
 			BodyOutput o = solver.update(bin);
 			solveSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - solveStart).count();
-			if (std::getenv("REPLAY_DEBUG") && frames % 5000 == 0) {
-				std::printf("t=%.1f cfg trackers %zu, states %zu, legs %d %d hmd %d floor %d\n", t - t0,
-							config.trackers.size(), trackers.size(), bin.legs[0].valid, bin.legs[1].valid,
-							bin.hmdValid, floorKnown);
-				for (const auto& [mac, tc] : config.trackers)
-					std::printf("  %s role %d mounting %d rot %d\n", mac.c_str(), int(tc.role), tc.mountingValid,
-								trackers.count(mac) ? trackers[mac].hasRotation : -1);
-			}
 
 			double rel = t - t0;
 			if (rel < from || rel > to) continue;
@@ -236,12 +545,11 @@ int main(int argc, char** argv) {
 			Vec3 hf = hmd.rotation.rotate({0, 0, -1});
 			std::fprintf(csv, "%.4f,%.4f,%.4f,%.4f,%.1f,", rel, hmd.position.x, hmd.position.y, hmd.position.z,
 						 rad2deg(std::asin(std::clamp(hf.y, -1.0, 1.0))));
-			const json &w = j["waist"], &lf = j["lf"], &rf = j["rf"];
-			std::fprintf(csv, "%d,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.1f,%.1f,%d,%d,",
-						 w[0].get<int>(), w[1].get<double>(), w[2].get<double>(), w[3].get<double>(),
-						 lf[1].get<double>(), lf[2].get<double>(), lf[3].get<double>(), rf[1].get<double>(),
-						 rf[2].get<double>(), rf[3].get<double>(), j["kn"][0].get<double>(),
-						 j["kn"][1].get<double>(), j["pl"][0].get<int>(), j["pl"][1].get<int>());
+			// Recorded outputs: waist [valid, x, y, z, qw, qx, qy, qz], feet [+-valid, x, y, z]
+			// with the sign of the foot's valid flag carrying "planted", knee angles
+			std::fprintf(csv, "%d,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.1f,%.1f,%d,%d,", int(f[0]), f[1],
+						 f[2], f[3], f[9], f[10], f[11], f[13], f[14], f[15], f[16], f[17], f[8] > 0 ? 1 : 0,
+						 f[12] > 0 ? 1 : 0);
 			std::fprintf(csv, "%d,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.1f,%.1f,%d,%d,", o.valid ? 1 : 0,
 						 o.waist.position.x, o.waist.position.y, o.waist.position.z, o.feet[0].position.x,
 						 o.feet[0].position.y, o.feet[0].position.z, o.feet[1].position.x, o.feet[1].position.y,
@@ -258,7 +566,7 @@ int main(int argc, char** argv) {
 						 controllers[1].z);
 			// Orientations as yaw and tilt of the up axis (deg)
 			auto tilt = [](const Quat& q) { return rad2deg(std::acos(std::clamp(q.rotate({0, 1, 0}).y, -1.0, 1.0))); };
-			Quat recWaist{w[4].get<double>(), w[5].get<double>(), w[6].get<double>(), w[7].get<double>()};
+			Quat recWaist{f[4], f[5], f[6], f[7]};
 			std::fprintf(csv, "%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.4f,%.4f,", rad2deg(hmd.rotation.yawAngle()),
 						 rad2deg(recWaist.yawAngle()), tilt(recWaist), rad2deg(o.waist.rotation.yawAngle()),
 						 tilt(o.waist.rotation), rad2deg(bin.legs[0].shin.yawAngle()),

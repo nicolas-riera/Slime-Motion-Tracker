@@ -69,8 +69,26 @@ PARAMS.update({
     "kHipLiftSigma": (0.04, 0.02, 0.1, "log"),
     "kUnderHeightSigma": (0.1, 0.05, 0.2, "log"),
     "kFloorSnap": (0.06, 0.03, 0.12, "log"),
+    "kSeatFloorSnap": (0.20, 0.06, 0.35, "log"),
+    "kSeatSinkTime": (1.0, 0.2, 5.0, "log"),
 })
+# Mag heading filter constants (body_replay SL_MAG_REPLAY=1), searched with --mag
+MAG_PARAMS = {
+    "magSigmaDeg": (8.0, 3.0, 20.0, "log"),
+    "magCorrTime": (2.0, 0.5, 10.0, "log"),
+    "magHeadingWalkDeg": (0.0645, 0.02, 0.3, "log"),
+    "magRateWalkDeg": (0.00215, 0.0003, 0.01, "log"),
+    "magNormSoft": (0.04, 0.015, 0.12, "log"),
+    "magDipSoftDeg": (2.5, 1.0, 8.0, "log"),
+    "magStillGrowth": (5.0, 1.0, 30.0, "log"),
+}
+MAG = os.environ.get("SL_PIPE_MAG") == "1"
+if MAG:
+    PARAMS.update(MAG_PARAMS)
 NAMES = list(PARAMS)
+# Standing and walking are good already (user): a candidate that degrades them by
+# more than STAND_TOL is penalized
+STAND_TOL = 0.02
 
 
 def _fwd(v, lo, hi, sc):
@@ -157,6 +175,7 @@ def replay_job(job):
     env = dict(os.environ)
     env["SL_TUNE"] = ",".join(f"{k}={v:.6g}" for k, v in params.items())
     env["SL_NO_WAIST"] = "1" if no_waist else "0"
+    env["SL_MAG_REPLAY"] = "1" if MAG else "0"
     fd, csv = tempfile.mkstemp(suffix=".csv", dir=out_dir)
     os.close(fd)
     try:
@@ -322,6 +341,11 @@ class Scorer:
         return (total, cats) if detail else total
 
 
+def stand_penalty(cats, default_cats):
+    return float(sum(20 * max(0.0, cats[c] / default_cats[c] - 1 - STAND_TOL)
+                     for c in ("standing", "walking") if c in cats and c in default_cats))
+
+
 def penalty(results, bases):
     return float(np.mean([tune.penalty(r["guard"], b["guard"]) for r, b in zip(results, bases)]))
 
@@ -451,7 +475,7 @@ def evolve(pool, S, prep, out, name, model, no_waist, gens, pop, seed):
                 sc, rec = 1e9, {"error": True}
             else:
                 acc, cats = scorer.score(res, detail=True)
-                pen = penalty(res, base)
+                pen = penalty(res, base) + stand_penalty(cats, best["default_cats"])
                 sc = acc + pen
                 rec = {"accuracy": acc, "penalty": pen, "A": scorer.score(res, "A"), "B": scorer.score(res, "B"),
                        "cats": cats}
@@ -534,6 +558,9 @@ def main():
     ap.add_argument("--gens-ankles", type=int, default=16)
     ap.add_argument("--population", type=int, default=16)
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--eval", action="store_true",
+                    help="only score the current build with the defaults (three and ankles-only), per category")
+    ap.add_argument("--model", default=ENGINE_MODEL, help="foot model for --eval")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     with open(args.sessions) as fh:
@@ -545,6 +572,9 @@ def main():
         check_gt(S, prep, prep_res)
         if not any(s.gt_ok for s in S):
             raise SystemExit("no usable Kinect ground truth")
+    if args.eval:
+        evaluate(S, prep, specs, args)
+        return
     # the workers must see the GT verdicts: restart the pool after stage A
     model = stage_a(S, prep, args.out)
     log(f"A done: {model}")
@@ -554,6 +584,20 @@ def main():
                        args.seed + 1)
         report(pool, S, prep, prep_res, args.out, model, best3, besta)
     log(f"pipeline done in {(time.time() - t_start) / 3600:.1f} h")
+
+
+def evaluate(S, prep, specs, args):
+    cam_bias = json.load(open(args.model)).get("camBias", 0.0)
+    with ProcessPoolExecutor(args.workers, initializer=init_worker_ok, initargs=(specs, [s.gt_ok for s in S])) as pool:
+        for name, no_waist in (("three", False), ("ankles", True)):
+            sc = Scorer(S, prep, cam_bias, no_waist)
+            res = run_all(pool, len(S), to_params(DEFAULT), args.model, no_waist, args.out)
+            if any("error" in r for r in res):
+                log(f"{name}: replay failed {[r.get('error') for r in res]}")
+                continue
+            tot, cats = sc.score(res, detail=True)
+            log(f"{name}: total {tot:.2f} (A {sc.score(res, 'A'):.2f}, B {sc.score(res, 'B'):.2f}) "
+                + " ".join(f"{k} {v:.1f}" for k, v in cats.items()))
 
 
 def init_worker_ok(specs, ok):
