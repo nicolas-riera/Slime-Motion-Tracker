@@ -5,4 +5,5 @@ the version in use; a new version is copied here before it replaces it.
 
 | File | Date | Training data | Notes |
 |---|---|---|---|
-| foot_model_v1_2026-10-17.json | 2026-10-17 | session_20261016_232318 + Kinect GT v2 | first foot model (commit 6532ff6) |
+| (v1, v2) | 2026-10-16/17 | Kinect GT v1, then 90 Hz features | experimental, never saved: lost |
+| foot_model_v3_2026-10-17.json | 2026-10-17 | session_20261016_232318 + Kinect GT v2 | first saved model (commit 6532ff6) |
