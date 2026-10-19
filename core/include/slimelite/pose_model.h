@@ -53,9 +53,21 @@ struct PoseEstimate {
 // The weight of the model ramps with the head height over the standing eye
 // height; the model ankles never go below minAnkleHeight above the floor.
 struct PoseFusionSettings {
-	double ratioLow = 0.60, ratioHigh = 0.75;
-	double minAnkleHeight = 0.08;  // m
+	double ratioLow = 0.80, ratioHigh = 1.05;
+	double minAnkleHeight = 0.10;  // m
 	double minWarmup = 1.0;  // s of network history before it is trusted
+
+	// Tuned on the Kinect sessions (tools/pose_model/fuse_tune.py): with the waist
+	// tracker the solver is better as soon as the head drops a little; ankles only
+	// it knows less and the model takes over from half the eye height
+	static PoseFusionSettings forWaist(bool hasWaist) {
+		PoseFusionSettings s;
+		if (!hasWaist) {
+			s.ratioLow = 0.50;
+			s.ratioHigh = 0.60;
+		}
+		return s;
+	}
 };
 
 // Blends the estimate into out.feet positions; returns the model weight (0..1)

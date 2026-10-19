@@ -606,7 +606,11 @@ int main(int argc, char** argv) {
 				pin.waist = bin.waist;
 				pin.waistAccel = waistAccel;
 				poseModel.setHeight(dims.height);
-				fusePose(poseModel.update(pin, t), hmd, floorY, dims.eyeHeight, o, fusion);
+				PoseFusionSettings fs = PoseFusionSettings::forWaist(bin.hasWaist);
+				if (std::getenv("SL_POSE_RATIO_LOW")) fs.ratioLow = fusion.ratioLow;
+				if (std::getenv("SL_POSE_RATIO_HIGH")) fs.ratioHigh = fusion.ratioHigh;
+				if (std::getenv("SL_POSE_MIN_ANKLE")) fs.minAnkleHeight = fusion.minAnkleHeight;
+				fusePose(poseModel.update(pin, t), hmd, floorY, dims.eyeHeight, o, fs);
 			}
 			solveSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - solveStart).count();
 

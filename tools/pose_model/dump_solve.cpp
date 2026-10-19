@@ -133,7 +133,7 @@ int main(int argc, char** argv) {
 				pose.calibrateWrists(pin.hmd, pin.hands);
 				calibrated = true;
 			}
-			w = fusePose(pose.update(pin, t), in.hmd, in.floorY, dims.eyeHeight, o);
+			w = fusePose(pose.update(pin, t), in.hmd, in.floorY, dims.eyeHeight, o, PoseFusionSettings::forWaist(in.hasWaist));
 		}
 		double row[18] = {t, o.valid ? 1.0 : 0.0, o.waist.position.x, o.waist.position.y, o.waist.position.z,
 						  o.feet[0].position.x, o.feet[0].position.y, o.feet[0].position.z,

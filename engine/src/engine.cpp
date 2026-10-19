@@ -290,7 +290,7 @@ void Engine::frame(const SlFrameInput& fin, SlFrameOutput& fout) {
 		pin.waist = in.waist;
 		pin.waistAccel = waistAccel;
 		m_pose.submit(pin, now, m_config.userHeight);
-		fusePose(m_pose.latest(), hmd, m_floorY, m_eyeHeight, out);
+		fusePose(m_pose.latest(), hmd, m_floorY, m_eyeHeight, out, PoseFusionSettings::forWaist(in.hasWaist));
 	}
 	recordFrame(fin, out, trackers);
 	if (m_calPhase != m_recordedPhase) {
