@@ -1,4 +1,4 @@
-// Loads slimelite_engine.dll and reloads it when the file changes.
+// Loads smt_engine.dll and reloads it when the file changes.
 // The DLL is copied to %TEMP% before loading so the build can overwrite it.
 #pragma once
 
@@ -6,9 +6,9 @@
 #include <functional>
 #include <string>
 
-#include "slimelite/engine_api.h"
+#include "smt/engine_api.h"
 
-namespace slimelite {
+namespace smt {
 
 class EngineLoader {
 public:
@@ -20,19 +20,19 @@ public:
 	bool loaded() const { return m_engine != nullptr; }
 	// Checks the file (at most twice a second) and hot-reloads it when it changed
 	void poll(double now);
-	void frame(const SlFrameInput& in, SlFrameOutput& out);
+	void frame(const SmtFrameInput& in, SmtFrameOutput& out);
 	// False when the engine does not export it (older engine)
-	bool batteries(SlBattery out[SL_DEVICE_COUNT]);
+	bool batteries(SmtBattery out[SMT_DEVICE_COUNT]);
 	void unload();
 
 private:
 	struct Module {
 		void* dll = nullptr;
 		std::filesystem::path copy;
-		SlEngineCreateFn create = nullptr;
-		SlEngineFrameFn frame = nullptr;
-		SlEngineDestroyFn destroy = nullptr;
-		SlEngineBatteriesFn batteries = nullptr;  // optional
+		SmtEngineCreateFn create = nullptr;
+		SmtEngineFrameFn frame = nullptr;
+		SmtEngineDestroyFn destroy = nullptr;
+		SmtEngineBatteriesFn batteries = nullptr;  // optional
 	};
 	bool loadModule(Module& m);
 	void freeModule(Module& m);
@@ -41,7 +41,7 @@ private:
 	std::filesystem::path m_path;
 	std::string m_moduleDirectory;
 	Logger m_log;
-	SlEngineHost m_host{};
+	SmtEngineHost m_host{};
 	Module m_module;
 	void* m_engine = nullptr;
 	std::filesystem::file_time_type m_loadedTime{};
@@ -49,4 +49,4 @@ private:
 	int m_generation = 0;
 };
 
-}  // namespace slimelite
+}  // namespace smt

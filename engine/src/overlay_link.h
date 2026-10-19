@@ -5,7 +5,7 @@
 #include <nlohmann/json.hpp>
 #include <vector>
 
-namespace slimelite {
+namespace smt {
 
 class OverlayLink {
 public:
@@ -26,4 +26,4 @@ private:
 	uint8_t m_peer[16] = {};  // sockaddr_in
 };
 
-}  // namespace slimelite
+}  // namespace smt

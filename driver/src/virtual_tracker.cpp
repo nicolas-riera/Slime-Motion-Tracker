@@ -1,6 +1,6 @@
 #include "virtual_tracker.h"
 
-namespace slimelite {
+namespace smt {
 
 namespace {
 
@@ -24,14 +24,14 @@ vr::EVRInitError VirtualTracker::Activate(uint32_t unObjectId) {
 	m_id = unObjectId;
 	auto props = vr::VRProperties();
 	auto c = props->TrackedDeviceToPropertyContainer(m_id);
-	props->SetStringProperty(c, vr::Prop_TrackingSystemName_String, "slimevr_lite");
-	props->SetStringProperty(c, vr::Prop_ManufacturerName_String, "SlimeVR-lite");
-	props->SetStringProperty(c, vr::Prop_ModelNumber_String, "SlimeVR-lite virtual tracker");
+	props->SetStringProperty(c, vr::Prop_TrackingSystemName_String, "slime_motion_tracker");
+	props->SetStringProperty(c, vr::Prop_ManufacturerName_String, "Slime Motion Tracker");
+	props->SetStringProperty(c, vr::Prop_ModelNumber_String, "Slime Motion Tracker virtual tracker");
 	props->SetStringProperty(c, vr::Prop_SerialNumber_String, m_serial.c_str());
 	props->SetStringProperty(c, vr::Prop_RenderModelName_String, "{htc}vr_tracker_vive_1_0");
-	props->SetStringProperty(c, vr::Prop_ControllerType_String, "slimevr_lite_tracker");
+	props->SetStringProperty(c, vr::Prop_ControllerType_String, "slime_motion_tracker_tracker");
 	props->SetStringProperty(c, vr::Prop_InputProfilePath_String,
-							 "{slimevr_lite}/input/slimevr_lite_tracker_profile.json");
+							 "{slime_motion_tracker}/input/slime_motion_tracker_tracker_profile.json");
 	props->SetInt32Property(c, vr::Prop_ControllerRoleHint_Int32, vr::TrackedControllerRole_OptOut);
 	props->SetBoolProperty(c, vr::Prop_DeviceIsWireless_Bool, true);
 	props->SetBoolProperty(c, vr::Prop_WillDriftInYaw_Bool, false);
@@ -42,7 +42,7 @@ vr::EVRInitError VirtualTracker::Activate(uint32_t unObjectId) {
 
 void VirtualTracker::Deactivate() { m_id = vr::k_unTrackedDeviceIndexInvalid; }
 
-void VirtualTracker::updateBattery(const SlBattery& battery) {
+void VirtualTracker::updateBattery(const SmtBattery& battery) {
 	if (!isActive()) return;
 	auto props = vr::VRProperties();
 	auto c = props->TrackedDeviceToPropertyContainer(m_id);
@@ -52,7 +52,7 @@ void VirtualTracker::updateBattery(const SlBattery& battery) {
 	props->SetBoolProperty(c, vr::Prop_DeviceIsCharging_Bool, battery.charging != 0);
 }
 
-void VirtualTracker::updatePose(const SlPose& pose, bool sendVelocity) {
+void VirtualTracker::updatePose(const SmtPose& pose, bool sendVelocity) {
 	if (!isActive()) return;
 	vr::DriverPose_t p = emptyPose();
 	if (pose.valid) {
@@ -72,4 +72,4 @@ void VirtualTracker::updatePose(const SlPose& pose, bool sendVelocity) {
 	vr::VRServerDriverHost()->TrackedDevicePoseUpdated(m_id, m_pose, sizeof(m_pose));
 }
 
-}  // namespace slimelite
+}  // namespace smt

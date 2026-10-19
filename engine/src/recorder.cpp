@@ -6,9 +6,9 @@
 #include <filesystem>
 #include <vector>
 
-#include "slimelite/config.h"
+#include "smt/config.h"
 
-namespace slimelite {
+namespace smt {
 
 Recorder::~Recorder() { close(); }
 
@@ -156,4 +156,4 @@ void Recorder::trackerEvent(const std::string& mac, const proto::Event& e, doubl
 	}
 }
 
-}  // namespace slimelite
+}  // namespace smt

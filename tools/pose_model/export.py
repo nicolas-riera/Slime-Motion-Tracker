@@ -43,7 +43,7 @@ def main():
     v = m["v_template"]
     J = m["J_regressor"][:22] @ v
     rest = np.array([J[j] - (J[PARENTS[j]] if PARENTS[j] >= 0 else J[j]) for j in range(22)])
-    header = {"format": "slimelite_pose_model", "version": 1, "name": args.name,
+    header = {"format": "smt_pose_model", "version": 1, "name": args.name,
               "arch": {"hidden": 256, "heads": 8, "layers": 3, "blocks": 2, "ffn": 2048},
               "hz": 60, "parents": PARENTS, "rest_offsets": rest.round(6).tolist(),
               "model_height": float(v[:, 1].max() - v[:, 1].min()), "tensors": []}

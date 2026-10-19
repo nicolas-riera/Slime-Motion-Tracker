@@ -1,7 +1,7 @@
 """Minimal SlimeVR UDP server: talks to trackers, prints live data, records JSONL.
 
 Reference implementation of the protocol subset the SteamVR driver speaks.
-Do not run it while the SlimeVR server or the SlimeVR-lite driver is running
+Do not run it while the SlimeVR server or the Slime Motion Tracker driver is running
 (they all bind UDP 6969).
 
 Usage:
@@ -28,7 +28,7 @@ PKT_SIGNAL = 19
 PKT_TEMPERATURE = 20
 PKT_FEATURE_FLAGS = 22
 PKT_BUNDLE = 100
-PKT_RAW_MAG = 210  # SlimeVR-lite extension
+PKT_RAW_MAG = 210  # Slime Motion Tracker extension
 
 # Server -> tracker
 SRV_HEARTBEAT = 1

@@ -2,7 +2,7 @@
 // with the current code, next to the headings the engine recorded live, to tune the
 // anti-mag on real sessions. The calibrations come from the recorded config lines.
 //
-// Usage: slimelite_heading_replay session.jsonl out.csv [--sensitivity S]
+// Usage: smt_heading_replay session.jsonl out.csv [--sensitivity S]
 // CSV: t (relative), mac, role, heading_deg (replayed), state, rec_heading_deg, rate_deg_min, sigma_deg,
 //      norm (field / calibration norm), dip_dev_deg (dip - calibration dip), speed (rad/s),
 //      dev_yaw_deg (device yaw, uncorrected), hmd_yaw_deg
@@ -13,11 +13,11 @@
 #include <nlohmann/json.hpp>
 #include <string>
 
-#include "slimelite/config.h"
-#include "slimelite/mag.h"
-#include "slimelite/protocol.h"
+#include "smt/config.h"
+#include "smt/mag.h"
+#include "smt/protocol.h"
 
-using namespace slimelite;
+using namespace smt;
 using nlohmann::json;
 
 namespace {

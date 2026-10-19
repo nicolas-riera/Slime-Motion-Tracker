@@ -1,4 +1,4 @@
-#include "slimelite/pose_model.h"
+#include "smt/pose_model.h"
 
 #include <algorithm>
 #include <cmath>
@@ -11,7 +11,7 @@
 #include <immintrin.h>
 #endif
 
-namespace slimelite {
+namespace smt {
 
 namespace {
 
@@ -174,7 +174,9 @@ bool PoseModel::load(const std::string& path) {
 		f.read(hs.data(), hlen);
 		std::vector<char> blob((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
 		nlohmann::json j = nlohmann::json::parse(hs);
-		if (j.value("format", "") != "slimelite_pose_model" || j.value("version", 0) != 1) {
+		// "slimelite_pose_model": models exported before the rename
+		const std::string format = j.value("format", "");
+		if ((format != "smt_pose_model" && format != "slimelite_pose_model") || j.value("version", 0) != 1) {
 			m_error = "unsupported pose model format";
 			return false;
 		}
@@ -535,4 +537,4 @@ double fusePose(const PoseEstimate& e, const Pose& hmd, double floorY, double ey
 	return w;
 }
 
-}  // namespace slimelite
+}  // namespace smt

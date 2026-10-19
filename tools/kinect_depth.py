@@ -1,4 +1,4 @@
-"""Reads the Kinect depth recordings written by slimelite_kinect_recorder.
+"""Reads the Kinect depth recordings written by smt_kinect_recorder.
 
 As a library:
     rec = DepthRecording("kinect_20261016_235103.depth")

@@ -1,17 +1,17 @@
 // Live diagnostics without SteamVR: runs the tracker hub and prints each tracker
 // once per second. Uses and updates the mag calibrations of the driver config.
 //
-// Usage: slimelite_monitor [--magcal MAC] [--seconds N]
+// Usage: smt_monitor [--magcal MAC] [--seconds N]
 #include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <string>
 #include <thread>
 
-#include "slimelite/config.h"
-#include "slimelite/tracker_hub.h"
+#include "smt/config.h"
+#include "smt/tracker_hub.h"
 
-using namespace slimelite;
+using namespace smt;
 
 int main(int argc, char** argv) {
 	std::string magcal;

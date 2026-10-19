@@ -1,4 +1,4 @@
-"""Plots a slimelite_body_replay CSV: recorded engine outputs against the replayed
+"""Plots a smt_body_replay CSV: recorded engine outputs against the replayed
 solver, with the inputs that matter (segment tilts, accelerations, swing state).
 
 Usage: python tools/plot_replay.py replay.csv out.png [--from S] [--to S]

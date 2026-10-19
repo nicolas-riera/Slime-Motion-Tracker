@@ -9,9 +9,9 @@
 #include <string>
 #include <thread>
 
-#include "slimelite/pose_model.h"
+#include "smt/pose_model.h"
 
-namespace slimelite {
+namespace smt {
 
 class PoseWorker {
 public:
@@ -42,4 +42,4 @@ private:
 	PoseEstimate m_latest;
 };
 
-}  // namespace slimelite
+}  // namespace smt

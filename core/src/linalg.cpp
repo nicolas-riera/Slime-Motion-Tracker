@@ -1,9 +1,9 @@
-#include "slimelite/linalg.h"
+#include "smt/linalg.h"
 
 #include <algorithm>
 #include <numeric>
 
-namespace slimelite {
+namespace smt {
 
 Mat3 Mat3::inverse() const {
 	double d = det();
@@ -129,4 +129,4 @@ void symmetricEigen(int n, std::vector<double> a, std::vector<double>& values,
 	}
 }
 
-}  // namespace slimelite
+}  // namespace smt

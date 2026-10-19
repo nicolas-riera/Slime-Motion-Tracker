@@ -6,7 +6,7 @@
 #include <array>
 #include <cmath>
 
-namespace slimelite {
+namespace smt {
 
 namespace {
 
@@ -270,4 +270,4 @@ void DriverLink::sendFloor(bool valid, float y) {
     send({{"type", "floor"}, {"valid", valid}, {"y", round4(y)}});
 }
 
-}  // namespace slimelite
+}  // namespace smt

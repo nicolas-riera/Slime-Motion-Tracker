@@ -1,7 +1,7 @@
 # Driver <-> overlay protocol
 
-The SteamVR driver (`driver_slimevr_lite.dll`) owns all state and logic. The dashboard
-overlay (`slimevr_lite_overlay.exe`) is a thin UI: it displays the state the driver
+The SteamVR driver (`driver_slime_motion_tracker.dll`) owns all state and logic. The dashboard
+overlay (`SlimeMotionTracker.exe`) is a thin UI: it displays the state the driver
 publishes and sends commands. The driver starts the overlay process when SteamVR starts.
 
 - Transport: UDP on localhost. The driver listens on `127.0.0.1:6971`.

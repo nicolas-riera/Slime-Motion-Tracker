@@ -1,6 +1,6 @@
 """Exports a trained foot model (train.py --out model.pt) to the JSON file read by
 core/src/foot_model.cpp, and optionally writes reference outputs computed in
-Python from that JSON for slimelite_foot_model_check.
+Python from that JSON for smt_foot_model_check.
 
 Usage: python tools/ml/export.py model.pt engine/models/foot_model.json [--ref ref.bin] [--dump s.bin]
 """
@@ -30,7 +30,7 @@ def export(ckpt_path, out_path, note=""):
         b = state[k.replace(".weight", ".bias")].numpy().astype(float)
         layers.append({"W": [g7(row) for row in W], "b": g7(b)})
     model = {
-        "format": "slimelite_foot_model", "version": 1, "note": note,
+        "format": "smt_foot_model", "version": 1, "note": note,
         "lags": [float(v) for v in ck["lags"]], "accClip": ds.ACC_CLIP, "accTau": ds.ACC_TAU,
         "hetero": bool(ck["args"].get("hetero", False)),
         "dr": bool(ck["args"].get("dr", False)),

@@ -17,9 +17,9 @@
 
 #include <string>
 
-#include "slimelite/linalg.h"
+#include "smt/linalg.h"
 
-namespace slimelite {
+namespace smt {
 
 struct MountingResult {
 	bool ok = false;
@@ -38,4 +38,4 @@ MountingResult solveMounting(const Quat& qStand, const Quat& qSki, double bodyYa
 // from a standing capture.
 MountingResult solveQuickReset(const Quat& qStand, const Quat& mounting, double bodyYaw);
 
-}  // namespace slimelite
+}  // namespace smt

@@ -21,10 +21,10 @@
 #include <string>
 #include <vector>
 
-#include "slimelite/body_solver.h"
-#include "slimelite/linalg.h"
+#include "smt/body_solver.h"
+#include "smt/linalg.h"
 
-namespace slimelite {
+namespace smt {
 
 struct PoseModelInput {
 	double floorY = 0;
@@ -150,4 +150,4 @@ private:
 	std::vector<float> m_x, m_tokens, m_buf, m_buf2, m_pose;
 };
 
-}  // namespace slimelite
+}  // namespace smt

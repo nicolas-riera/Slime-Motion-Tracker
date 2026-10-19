@@ -15,7 +15,7 @@
 
 #include <nlohmann/json.hpp>
 
-namespace slimelite {
+namespace smt {
 
 inline constexpr uint16_t kDriverPort = 6971;
 
@@ -152,4 +152,4 @@ private:
     DriverState state_;
 };
 
-}  // namespace slimelite
+}  // namespace smt

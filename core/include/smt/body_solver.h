@@ -61,14 +61,14 @@
 #include <optional>
 #include <vector>
 
-#include "slimelite/config.h"
-#include "slimelite/linalg.h"
+#include "smt/config.h"
+#include "smt/linalg.h"
 
-namespace slimelite {
+namespace smt {
 
-// Offline tuning (tools/tune): a solver constant overridden by the SL_TUNE
+// Offline tuning (tools/tune): a solver constant overridden by the SMT_TUNE
 // environment variable ("kName=value,..."), else its default. Read once at
-// startup; the engine runs without SL_TUNE.
+// startup; the engine runs without SMT_TUNE.
 double tunable(const char* name, double value);
 
 struct Pose {
@@ -203,4 +203,4 @@ private:
 	Vec3 m_smoothedWaist;
 };
 
-}  // namespace slimelite
+}  // namespace smt

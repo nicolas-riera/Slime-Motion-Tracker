@@ -4,7 +4,7 @@
         labels at the ground-truth times, sanity check of each session's GT
   A     foot model retrained on all sessions (AFK excluded, rare poses oversampled)
   B     evolution strategy on the solver constants, three-tracker mode
-  C     same, ankles-only mode (SL_NO_WAIST=1); the live waist output is the pelvis GT
+  C     same, ankles-only mode (SMT_NO_WAIST=1); the live waist output is the pelvis GT
   E     report.md: per-category scores, A/B halves, worst spans with local times
 
 Score (lower is better, cm): per pose category, then the mean over categories
@@ -72,7 +72,7 @@ PARAMS.update({
     "kSeatFloorSnap": (0.20, 0.06, 0.35, "log"),
     "kSeatSinkTime": (1.0, 0.2, 5.0, "log"),
 })
-# Mag heading filter constants (body_replay SL_MAG_REPLAY=1), searched with --mag
+# Mag heading filter constants (body_replay SMT_MAG_REPLAY=1), searched with --mag
 MAG_PARAMS = {
     "magSigmaDeg": (8.0, 3.0, 20.0, "log"),
     "magCorrTime": (2.0, 0.5, 10.0, "log"),
@@ -82,7 +82,7 @@ MAG_PARAMS = {
     "magDipSoftDeg": (2.5, 1.0, 8.0, "log"),
     "magStillGrowth": (5.0, 1.0, 30.0, "log"),
 }
-MAG = os.environ.get("SL_PIPE_MAG") == "1"
+MAG = os.environ.get("SMT_PIPE_MAG") == "1"
 if MAG:
     PARAMS.update(MAG_PARAMS)
 NAMES = list(PARAMS)
@@ -146,7 +146,7 @@ class Session:
         self.half = (block // 5) % 2
         self.t_from = max(0.0, self.t[0] - self.t0 - 5)
         self.t_to = self.t[-1] - self.t0 + 5
-        self.t_to = min(self.t_to, self.t_from + float(os.environ.get("SL_PIPE_SPAN", 1e12)))  # smoke tests
+        self.t_to = min(self.t_to, self.t_from + float(os.environ.get("SMT_PIPE_SPAN", 1e12)))  # smoke tests
         self.gt_ok = True
 
     def gt_debiased(self, leg, cam_bias):
@@ -173,13 +173,13 @@ def replay_job(job):
     i, params, model, no_waist, want_ctx, out_dir = job
     s = _SESS[i]
     env = dict(os.environ)
-    env["SL_TUNE"] = ",".join(f"{k}={v:.6g}" for k, v in params.items())
-    env["SL_NO_WAIST"] = "1" if no_waist else "0"
-    env["SL_MAG_REPLAY"] = "1" if MAG else "0"
+    env["SMT_TUNE"] = ",".join(f"{k}={v:.6g}" for k, v in params.items())
+    env["SMT_NO_WAIST"] = "1" if no_waist else "0"
+    env["SMT_MAG_REPLAY"] = "1" if MAG else "0"
     fd, csv = tempfile.mkstemp(suffix=".csv", dir=out_dir)
     os.close(fd)
     try:
-        cmd = [os.path.join(BIN, "slimelite_body_replay.exe"), s.path, csv, "--from", str(s.t_from),
+        cmd = [os.path.join(BIN, "smt_body_replay.exe"), s.path, csv, "--from", str(s.t_from),
                "--to", str(s.t_to), "--model", model]
         subprocess.run(cmd, env=env, check=True, stdout=subprocess.DEVNULL)
         rp = load_csv(csv)
@@ -409,7 +409,7 @@ def stage_a(S, prep, out):
         dump = os.path.join(out, f"s{i}.bin")
         if not os.path.exists(dump):
             log(f"A: ml_dump {os.path.basename(s.path)}")
-            subprocess.run([os.path.join(BIN, "slimelite_ml_dump.exe"), s.path, dump], check=True,
+            subprocess.run([os.path.join(BIN, "smt_ml_dump.exe"), s.path, dump], check=True,
                            stdout=subprocess.DEVNULL)
         log(f"A: dataset {os.path.basename(s.path)}")
         ds.CAMERA = s.camera

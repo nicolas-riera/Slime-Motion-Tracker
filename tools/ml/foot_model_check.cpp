@@ -1,8 +1,8 @@
 // Checks the C++ foot model (core/src/foot_model.cpp) against the Python
 // reference (tools/ml/export.py --ref): runs FootModel over every frame of a
-// slimelite_ml_dump file and compares its outputs at the reference frames.
+// smt_ml_dump file and compares its outputs at the reference frames.
 //
-// Usage: slimelite_foot_model_check dump.bin model.json ref.bin [--bench]
+// Usage: smt_foot_model_check dump.bin model.json ref.bin [--bench]
 //   ref.bin: float64 rows [frame index, 6 world ankle coordinates, 6 sigmas]
 #include <chrono>
 #include <cmath>
@@ -13,9 +13,9 @@
 #include <string>
 #include <vector>
 
-#include "slimelite/foot_model.h"
+#include "smt/foot_model.h"
 
-using namespace slimelite;
+using namespace smt;
 
 int main(int argc, char** argv) {
 	if (argc < 4) {

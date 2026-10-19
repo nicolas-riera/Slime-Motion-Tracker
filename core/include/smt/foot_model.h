@@ -21,12 +21,12 @@
 #include <string>
 #include <vector>
 
-#include "slimelite/body_solver.h"
+#include "smt/body_solver.h"
 #include <cmath>
 
-#include "slimelite/linalg.h"
+#include "smt/linalg.h"
 
-namespace slimelite {
+namespace smt {
 
 struct FootEstimate {
 	bool valid = false;
@@ -98,4 +98,4 @@ private:
 	std::vector<double> m_features, m_a, m_b;
 };
 
-}  // namespace slimelite
+}  // namespace smt

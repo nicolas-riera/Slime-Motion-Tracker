@@ -1,6 +1,6 @@
 {
   "jsonid": "input_profile",
-  "controller_type": "slimevr_lite_tracker",
+  "controller_type": "slime_motion_tracker_tracker",
   "device_class": "TrackedDeviceClass_GenericTracker",
   "input_bindingui_mode": "controller_handed",
   "should_show_binding_errors": false,

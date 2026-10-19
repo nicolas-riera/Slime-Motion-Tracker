@@ -5,7 +5,7 @@
 #include <cmath>
 #include <vector>
 
-namespace slimelite {
+namespace smt {
 
 constexpr double kPi = 3.14159265358979323846;
 inline double deg2rad(double d) { return d * kPi / 180.0; }
@@ -138,4 +138,4 @@ Quat yawOnly(const Quat& q);
 void symmetricEigen(int n, std::vector<double> a, std::vector<double>& values,
 					std::vector<double>& vectors);
 
-}  // namespace slimelite
+}  // namespace smt

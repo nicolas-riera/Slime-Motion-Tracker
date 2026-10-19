@@ -3,7 +3,7 @@
 
 #include "driver_link.h"
 
-namespace slimelite::ui {
+namespace smt::ui {
 
 // Size of the UI surface in pixels (offscreen texture, desktop client area, VR overlay).
 inline constexpr int kWidth = 1024;
@@ -19,4 +19,4 @@ struct FrameInfo {
 // Builds the whole UI for this frame (between ImGui::NewFrame() and ImGui::Render()).
 void draw(DriverLink& link, const FrameInfo& info);
 
-}  // namespace slimelite::ui
+}  // namespace smt::ui

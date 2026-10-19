@@ -2,17 +2,17 @@
 // mag calibration on the whole recording, then the heading filter in real time
 // order, printing one line per second.
 //
-// Usage: slimelite_replay recording.jsonl [--sensitivity 0.5] [--fit-from T --fit-to T]
+// Usage: smt_replay recording.jsonl [--sensitivity 0.5] [--fit-from T --fit-to T]
 #include <cstdio>
 #include <fstream>
 #include <map>
 #include <nlohmann/json.hpp>
 #include <string>
 
-#include "slimelite/mag.h"
-#include "slimelite/protocol.h"
+#include "smt/mag.h"
+#include "smt/protocol.h"
 
-using namespace slimelite;
+using namespace smt;
 using nlohmann::json;
 
 int main(int argc, char** argv) {

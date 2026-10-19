@@ -6,7 +6,7 @@
 
 #include <nlohmann/json.hpp>
 
-namespace slimelite::ui {
+namespace smt::ui {
 
 namespace {
 
@@ -145,4 +145,4 @@ BatteryEstimator::Estimate BatteryEstimator::estimate(const std::string& mac) co
     return e;
 }
 
-}  // namespace slimelite::ui
+}  // namespace smt::ui

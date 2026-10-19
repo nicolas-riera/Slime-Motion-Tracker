@@ -99,7 +99,7 @@ public:
 	// PACKET_FLEX_DATA 26
 	void sendFlexData(uint8_t sensorId, float flexLevel);
 
-	// PACKET_RAW_MAGNETOMETER 210 (SlimeVR-lite extension)
+	// PACKET_RAW_MAGNETOMETER 210 (Slime Motion Tracker extension)
 	void sendRawMagnetometer(uint8_t sensorId, const int16_t raw[3]);
 
 #if ENABLE_INSPECTION
@@ -222,7 +222,7 @@ private:
 	bool m_Connected = false;
 	SlimeVR::Logging::Logger m_Logger = SlimeVR::Logging::Logger("UDPConnection");
 
-	HybridUdp m_UDP;  // SlimeVR-lite: WiFi or ESP-NOW (espnowudp.h)
+	HybridUdp m_UDP;  // Slime Motion Tracker: WiFi or ESP-NOW (espnowudp.h)
 	unsigned char m_Packet[128];  // buffer for incoming packets
 	uint64_t m_PacketNumber = 0;
 

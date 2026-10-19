@@ -1,15 +1,15 @@
-#include "slimelite/body_solver.h"
+#include "smt/body_solver.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
 
-namespace slimelite {
+namespace smt {
 
 double tunable(const char* name, double value) {
-	// SL_TUNE="kName=value,kOther=value"
-	const char* env = std::getenv("SL_TUNE");
+	// SMT_TUNE="kName=value,kOther=value"
+	const char* env = std::getenv("SMT_TUNE");
 	size_t len = std::strlen(name);
 	for (const char* p = env; p && *p;) {
 		if (std::strncmp(p, name, len) == 0 && p[len] == '=') return std::atof(p + len + 1);
@@ -798,4 +798,4 @@ BodyOutput BodySolver::update(const BodyInput& in) {
 	return out;
 }
 
-}  // namespace slimelite
+}  // namespace smt

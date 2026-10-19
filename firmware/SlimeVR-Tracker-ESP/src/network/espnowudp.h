@@ -1,5 +1,5 @@
 /*
-	SlimeVR-lite: ESP-NOW transport to the USB dongle (firmware/slimelite-dongle).
+	Slime Motion Tracker: ESP-NOW transport to the USB dongle (firmware/smt-dongle).
 
 	At boot the tracker looks for the dongle (EspNow::search, ~4 s over the 13
 	channels). Found: the WiFi network is never joined (no association, no

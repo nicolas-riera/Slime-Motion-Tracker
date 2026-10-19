@@ -8,9 +8,9 @@
 #include <cstring>
 #include <filesystem>
 
-#include "slimelite/mounting_calibration.h"
+#include "smt/mounting_calibration.h"
 
-namespace slimelite {
+namespace smt {
 
 using nlohmann::json;
 
@@ -31,7 +31,7 @@ Pose poseFromMatrix(const double m[3][4]) {
 	return p;
 }
 
-void toSlPose(bool valid, const Pose& p, const Vec3& v, SlPose& out) {
+void toSlPose(bool valid, const Pose& p, const Vec3& v, SmtPose& out) {
 	out.valid = valid ? 1 : 0;
 	out.position[0] = p.position.x;
 	out.position[1] = p.position.y;
@@ -56,7 +56,7 @@ void Engine::log(const char* fmt, ...) {
 	if (m_host.log) m_host.log(buf);
 }
 
-Engine::Engine(const SlEngineHost& host, const char* handover)
+Engine::Engine(const SmtEngineHost& host, const char* handover)
 	: m_host(host), m_moduleDirectory(host.moduleDirectory ? host.moduleDirectory : "") {
 	m_host.moduleDirectory = nullptr;  // not owned, use our copy
 	log("engine %s starting, config %s", kVersion, Config::defaultPath().string().c_str());
@@ -134,13 +134,14 @@ void Engine::recordEvent(const char* what, const std::string& detail) {
 	m_recorder.json(TrackerHub::now(), "ev", {{"what", what}, {"detail", detail}});
 }
 
-void Engine::recordFrame(const SlFrameInput& in, const BodyOutput& out,
+void Engine::recordFrame(const SmtFrameInput& in, const BodyOutput& out,
 						 const std::vector<TrackerSnapshot>& trackers) {
 	if (!m_recorder.isOpen()) return;
-	for (int i = 0; i < in.deviceCount && i < SL_MAX_DEVICES; i++) {
-		const SlDevicePose& d = in.devices[i];
+	for (int i = 0; i < in.deviceCount && i < SMT_MAX_DEVICES; i++) {
+		const SmtDevicePose& d = in.devices[i];
 		if (!d.connected) continue;
-		if (std::strncmp(d.serial, "SLV-", 4) == 0) continue;  // our own outputs, see "out"
+		// Our own outputs, see "out" ("SLV-" before the rename)
+		if (std::strncmp(d.serial, "SMT-", 4) == 0 || std::strncmp(d.serial, "SLV-", 4) == 0) continue;
 		Pose p = poseFromMatrix(d.pose);
 		m_recorder.line(
 			R"({"t":%.6f,"k":"dev","i":%d,"cls":%d,"role":%d,"ser":"%s","ok":%d,"p":[%.5f,%.5f,%.5f],"q":[%.6f,%.6f,%.6f,%.6f],"v":[%.4f,%.4f,%.4f],"w":[%.4f,%.4f,%.4f]})",
@@ -207,7 +208,7 @@ bool Engine::trackerOrientation(const TrackerSnapshot& t, const TrackerConfig& t
 	return true;
 }
 
-void Engine::frame(const SlFrameInput& fin, SlFrameOutput& fout) {
+void Engine::frame(const SmtFrameInput& fin, SmtFrameOutput& fout) {
 	double now = fin.now;
 	double dt = m_lastFrame > 0 ? now - m_lastFrame : 1.0 / 90;
 	m_lastFrame = now;
@@ -227,8 +228,8 @@ void Engine::frame(const SlFrameInput& fin, SlFrameOutput& fout) {
 	Pose hmd = poseFromMatrix(fin.hmd);
 	auto trackers = m_hub.snapshot();
 	m_handValid = {};
-	for (int i = 0; i < fin.deviceCount && i < SL_MAX_DEVICES; i++) {
-		const SlDevicePose& d = fin.devices[i];
+	for (int i = 0; i < fin.deviceCount && i < SMT_MAX_DEVICES; i++) {
+		const SmtDevicePose& d = fin.devices[i];
 		// vr::TrackedDeviceClass_Controller, TrackedControllerRole_LeftHand / RightHand
 		if (!d.connected || !d.valid || d.deviceClass != 2 || (d.controllerRole != 1 && d.controllerRole != 2)) continue;
 		m_handValid[d.controllerRole - 1] = true;
@@ -306,9 +307,9 @@ void Engine::frame(const SlFrameInput& fin, SlFrameOutput& fout) {
 		}
 	}
 	bool waistOk = out.valid && (m_config.mode == Mode::Ankles || in.hasWaist);
-	toSlPose(waistOk, out.waist, out.waistVelocity, fout.devices[SL_DEVICE_WAIST]);
-	toSlPose(out.valid, out.feet[0], out.footVelocity[0], fout.devices[SL_DEVICE_LEFT_FOOT]);
-	toSlPose(out.valid, out.feet[1], out.footVelocity[1], fout.devices[SL_DEVICE_RIGHT_FOOT]);
+	toSlPose(waistOk, out.waist, out.waistVelocity, fout.devices[SMT_DEVICE_WAIST]);
+	toSlPose(out.valid, out.feet[0], out.footVelocity[0], fout.devices[SMT_DEVICE_LEFT_FOOT]);
+	toSlPose(out.valid, out.feet[1], out.footVelocity[1], fout.devices[SMT_DEVICE_RIGHT_FOOT]);
 	fout.sendVelocity = m_config.settings.velocityPrediction ? 1 : 0;
 
 	if (now - m_lastState > 0.1) {
@@ -506,21 +507,21 @@ void Engine::updateCalibration(double now, const Pose& hmd, bool hmdValid,
 	}
 }
 
-void Engine::batteries(SlBattery out[SL_DEVICE_COUNT]) const {
-	for (int i = 0; i < SL_DEVICE_COUNT; i++) out[i] = SlBattery{};
+void Engine::batteries(SmtBattery out[SMT_DEVICE_COUNT]) const {
+	for (int i = 0; i < SMT_DEVICE_COUNT; i++) out[i] = SmtBattery{};
 	for (const auto& t : m_hub.snapshot()) {
 		auto it = m_config.trackers.find(t.mac);
 		if (it == m_config.trackers.end() || !t.connected || t.batteryLevel < 0) continue;
 		int slot = -1;
 		switch (it->second.role) {
-			case Role::Waist: slot = SL_DEVICE_WAIST; break;
-			case Role::LeftAnkle: slot = SL_DEVICE_LEFT_FOOT; break;
-			case Role::RightAnkle: slot = SL_DEVICE_RIGHT_FOOT; break;
+			case Role::Waist: slot = SMT_DEVICE_WAIST; break;
+			case Role::LeftAnkle: slot = SMT_DEVICE_LEFT_FOOT; break;
+			case Role::RightAnkle: slot = SMT_DEVICE_RIGHT_FOOT; break;
 			default: break;
 		}
 		if (slot < 0) continue;
 		// The trackers do not report charging
-		out[slot] = SlBattery{1, std::clamp(t.batteryLevel, 0.0f, 1.0f), 0};
+		out[slot] = SmtBattery{1, std::clamp(t.batteryLevel, 0.0f, 1.0f), 0};
 	}
 }
 
@@ -629,15 +630,15 @@ void Engine::publishState(const std::vector<TrackerSnapshot>& trackers, const Bo
 	m_overlay.send(state);
 }
 
-}  // namespace slimelite
+}  // namespace smt
 
 // ---- C ABI ----
 
-extern "C" __declspec(dllexport) int sl_engine_api_version() { return SL_ENGINE_API_VERSION; }
+extern "C" __declspec(dllexport) int sl_engine_api_version() { return SMT_ENGINE_API_VERSION; }
 
-extern "C" __declspec(dllexport) void* sl_engine_create(const SlEngineHost* host, const char* handover) {
+extern "C" __declspec(dllexport) void* sl_engine_create(const SmtEngineHost* host, const char* handover) {
 	try {
-		return new slimelite::Engine(*host, handover);
+		return new smt::Engine(*host, handover);
 	} catch (const std::exception& e) {
 		if (host && host->log) host->log((std::string("engine failed to start: ") + e.what()).c_str());
 		return nullptr;
@@ -647,17 +648,17 @@ extern "C" __declspec(dllexport) void* sl_engine_create(const SlEngineHost* host
 	}
 }
 
-extern "C" __declspec(dllexport) void sl_engine_batteries(void* engine, SlBattery* out) {
-	static_cast<const slimelite::Engine*>(engine)->batteries(out);
+extern "C" __declspec(dllexport) void sl_engine_batteries(void* engine, SmtBattery* out) {
+	static_cast<const smt::Engine*>(engine)->batteries(out);
 }
 
-extern "C" __declspec(dllexport) void sl_engine_frame(void* engine, const SlFrameInput* in, SlFrameOutput* out) {
+extern "C" __declspec(dllexport) void sl_engine_frame(void* engine, const SmtFrameInput* in, SmtFrameOutput* out) {
 	std::memset(out, 0, sizeof(*out));
-	static_cast<slimelite::Engine*>(engine)->frame(*in, *out);
+	static_cast<smt::Engine*>(engine)->frame(*in, *out);
 }
 
 extern "C" __declspec(dllexport) size_t sl_engine_destroy(void* engine, char* handover, size_t capacity) {
-	auto* e = static_cast<slimelite::Engine*>(engine);
+	auto* e = static_cast<smt::Engine*>(engine);
 	std::string s = e->handover().dump();
 	delete e;
 	if (handover && capacity) {

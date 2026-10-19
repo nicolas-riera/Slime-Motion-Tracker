@@ -228,7 +228,7 @@ void Connection::sendSensorAcceleration(uint8_t sensorId, Vector3 vector) {
 	));
 }
 
-// PACKET_RAW_MAGNETOMETER 210 (SlimeVR-lite extension)
+// PACKET_RAW_MAGNETOMETER 210 (Slime Motion Tracker extension)
 void Connection::sendRawMagnetometer(uint8_t sensorId, const int16_t raw[3]) {
 	MUST(m_Connected);
 	MUST(sendPacket(

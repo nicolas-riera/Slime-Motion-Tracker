@@ -2,7 +2,7 @@
 // tools/pose_model/features.py) and writes both ankles per step, for comparison
 // with the Python inference (run_hmdposer.py), and the time per step.
 //
-// Usage: slimelite_pose_model_check model.bin inputs.bin stand_time out.csv [max_steps]
+// Usage: smt_pose_model_check model.bin inputs.bin stand_time out.csv [max_steps]
 #include <chrono>
 #include <cstdio>
 #include <fstream>
@@ -11,9 +11,9 @@
 #include <string>
 #include <vector>
 
-#include "slimelite/pose_model.h"
+#include "smt/pose_model.h"
 
-using namespace slimelite;
+using namespace smt;
 
 int main(int argc, char** argv) {
 	if (argc < 5) {

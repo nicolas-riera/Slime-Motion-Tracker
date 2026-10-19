@@ -1,4 +1,4 @@
-#include "slimelite/dongle_bridge.h"
+#include "smt/dongle_bridge.h"
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -13,7 +13,7 @@
 #include <cstring>
 #include <cstdio>
 
-namespace slimelite {
+namespace smt {
 
 namespace dongle {
 
@@ -299,4 +299,4 @@ void DongleBridge::loop() {
 	}
 }
 
-}  // namespace slimelite
+}  // namespace smt

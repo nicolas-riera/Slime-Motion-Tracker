@@ -1,4 +1,4 @@
-# SlimeVR-lite
+# Slime Motion Tracker
 
 Full-body tracking in SteamVR with only **3 SlimeVR trackers** (both ankles + waist), or
 **2** (ankles only, like the Pico Motion Trackers), without the SlimeVR server.
@@ -16,20 +16,20 @@ Full-body tracking in SteamVR with only **3 SlimeVR trackers** (both ankles + wa
 trackers (ESP8266 + ICM-45686 + QMC6309)
    | UDP 6969, SlimeVR protocol + raw mag packet
    v
-slimelite_engine.dll (hot-reloaded)            slimevr_lite_overlay.exe (dashboard UI)
+smt_engine.dll (hot-reloaded)            SlimeMotionTracker.exe (dashboard UI)
    tracker hub -> mag calibration + heading      <-- localhost JSON (docs/IPC.md) -->
    body solver, calibration, session recorder
-   ^ C ABI (engine/include/slimelite/engine_api.h)
-driver_slimevr_lite.dll (thin SteamVR host: HMD/controller poses in, 3 virtual trackers out)
+   ^ C ABI (engine/include/smt/engine_api.h)
+driver_slime_motion_tracker.dll (thin SteamVR host: HMD/controller poses in, 3 virtual trackers out)
 ```
 
 ## Changing the algorithm without restarting SteamVR
 
-The SteamVR driver is a thin host that loads `slimelite_engine.dll` from a temporary copy
+The SteamVR driver is a thin host that loads `smt_engine.dll` from a temporary copy
 and reloads it when the file changes. Rebuilding is enough:
 
 ```
-cmake --build build --config Release --target slimelite_engine
+cmake --build build --config Release --target smt_engine
 ```
 
 A post-build step copies the engine into the installed driver folder; within a second the
@@ -38,14 +38,14 @@ file) to the new engine and continues. The overlay is restarted the same way whe
 rebuilt. Only changes to `driver/` or to `engine_api.h` need a SteamVR restart (and an
 `install.ps1`); the host refuses an engine built against another API version.
 
-`slimelite_engine_host.exe <engine.dll>` runs the engine with a fake headset, without
+`smt_engine_host.exe <engine.dll>` runs the engine with a fake headset, without
 SteamVR, to test the reload path.
 
 ## Session recordings
 
 While SteamVR runs, every raw tracker packet, every SteamVR device pose (headset,
 controllers), the engine outputs, calibrations and config snapshots are written to
-`%LOCALAPPDATA%\SlimeVR-lite\recordings\session_*.jsonl` (about 400 MB per hour, toggle
+`%LOCALAPPDATA%\Slime Motion Tracker\recordings\session_*.jsonl` (about 400 MB per hour, toggle
 in the overlay settings). Format: `engine/src/recorder.h`. They are meant for offline
 replay, tuning and training.
 
@@ -53,7 +53,7 @@ replay, tuning and training.
 
 | Path | What |
 |------|------|
-| `firmware/SlimeVR-Tracker-ESP` | SlimeVR tracker firmware + SlimeVR-lite patches (mag fix, raw mag streaming) |
+| `firmware/SlimeVR-Tracker-ESP` | SlimeVR tracker firmware + Slime Motion Tracker patches (mag fix, raw mag streaming) |
 | `firmware/backup` | Original firmware dumps (git-ignored, contain WiFi credentials) and how to restore |
 | `core/` | Protocol, tracker hub, mag calibration + anti-mag, mounting calibration, body solver |
 | `driver/` | SteamVR driver |
@@ -88,8 +88,8 @@ powershell -ExecutionPolicy Bypass -File tools\install.ps1
 ```
 
 The trackers work as soon as SteamVR starts. The dashboard app (calibration, settings,
-tracker states) is not started with SteamVR: launch it with the **SlimeVR-lite** Start menu
-shortcut the installer creates, before or after SteamVR (desktop window + "SlimeVR-lite" tab
+tracker states) is not started with SteamVR: launch it with the **Slime Motion Tracker** Start menu
+shortcut the installer creates, before or after SteamVR (desktop window + "Slime Motion Tracker" tab
 in the SteamVR dashboard). The SlimeVR server must not run at the same time (both use UDP
 6969).
 
@@ -111,10 +111,10 @@ Later sessions: just put the trackers on. If something looks rotated, use **Quic
 ## Tools
 
 - `tools/slime_server.py`: minimal Python server; live view and JSONL recording.
-- `build/Release/slimelite_monitor.exe`: runs the C++ tracker hub without SteamVR
+- `build/Release/smt_monitor.exe`: runs the C++ tracker hub without SteamVR
   (`--magcal MAC` runs a guided mag calibration).
-- `build/Release/slimelite_replay.exe rec.jsonl`: replays a recording through the mag fusion.
-- `build/Release/slimelite_tests.exe`: unit tests.
+- `build/Release/smt_replay.exe rec.jsonl`: replays a recording through the mag fusion.
+- `build/Release/smt_tests.exe`: unit tests.
 
 ## Limits
 

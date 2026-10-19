@@ -1,11 +1,11 @@
-#include "slimelite/foot_model.h"
+#include "smt/foot_model.h"
 
 #include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <nlohmann/json.hpp>
 
-namespace slimelite {
+namespace smt {
 
 namespace {
 
@@ -28,7 +28,7 @@ bool FootModel::load(const std::string& path) {
 			return false;
 		}
 		nlohmann::json j = nlohmann::json::parse(f);
-		if (j.value("format", "") != "slimelite_foot_model" || j.value("version", 0) != 1) {
+		if (j.value("format", "") != "smt_foot_model" || j.value("version", 0) != 1) {
 			m_error = "not a foot model (version 1)";
 			return false;
 		}
@@ -218,4 +218,4 @@ FootEstimate FootModel::update(const BodyInput& in, double now) {
 	return est;
 }
 
-}  // namespace slimelite
+}  // namespace smt

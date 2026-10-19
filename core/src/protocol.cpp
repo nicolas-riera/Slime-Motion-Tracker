@@ -1,9 +1,9 @@
-#include "slimelite/protocol.h"
+#include "smt/protocol.h"
 
 #include <cstdio>
 #include <cstring>
 
-namespace slimelite::proto {
+namespace smt::proto {
 
 namespace {
 
@@ -212,4 +212,4 @@ Quat firmwareToWorld(const Quat& q) {
 	return (kAxes * q).normalized();
 }
 
-}  // namespace slimelite::proto
+}  // namespace smt::proto

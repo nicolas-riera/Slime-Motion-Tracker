@@ -3,7 +3,7 @@
 // where the legs really are (foot on a bed, leg held up, crossed legs) from any
 // viewing angle. No Kinect skeleton is used (it needs the user facing the sensor).
 //
-// Output, in %LOCALAPPDATA%\SlimeVR-lite\recordings (or --dir):
+// Output, in %LOCALAPPDATA%\Slime Motion Tracker\recordings (or --dir):
 //   kinect_YYYYMMDD_HHMMSS.depth   frames
 //     header: "SLKD" u32 version=2, u32 width, u32 height
 //     frame:  f64 t (host steady clock, s, same clock as the session recordings),
@@ -15,7 +15,7 @@
 //     width*height pairs of f32 (x, y): point = (x * z, y * z, z), z in meters
 // The Kinect -> SteamVR transform and the time offset are solved offline.
 //
-// Usage: slimelite_kinect_recorder [--seconds N] [--dir PATH]
+// Usage: smt_kinect_recorder [--seconds N] [--dir PATH]
 #include <Windows.h>
 #include <Kinect.h>
 #include <compressapi.h>
@@ -63,7 +63,7 @@ int main(int argc, char** argv) {
 	}
 	if (dir.empty()) {
 		const char* base = std::getenv("LOCALAPPDATA");
-		dir = std::filesystem::path(base ? base : ".") / "SlimeVR-lite" / "recordings";
+		dir = std::filesystem::path(base ? base : ".") / "Slime Motion Tracker" / "recordings";
 	}
 	std::filesystem::create_directories(dir);
 	SetConsoleCtrlHandler(onConsoleEvent, TRUE);

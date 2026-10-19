@@ -1,6 +1,6 @@
 # Original firmware backups
 
-Full 4 MB flash dumps of the trackers **before** flashing the SlimeVR-lite firmware.
+Full 4 MB flash dumps of the trackers **before** flashing the Slime Motion Tracker firmware.
 The `.bin` files are git-ignored on purpose: they contain your WiFi SSID and password.
 Keep them somewhere safe.
 

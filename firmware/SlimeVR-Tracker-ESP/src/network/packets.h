@@ -57,7 +57,7 @@ enum class SendPacketType : uint8_t {
 	// PositionData = 27,
 	Bundle = 100,
 	Inspection = 105,
-	// SlimeVR-lite extension: raw magnetometer counts for host-side fusion
+	// Slime Motion Tracker extension: raw magnetometer counts for host-side fusion
 	RawMagnetometer = 210,
 };
 

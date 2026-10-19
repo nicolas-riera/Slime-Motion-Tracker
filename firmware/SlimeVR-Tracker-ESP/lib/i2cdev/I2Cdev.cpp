@@ -217,7 +217,7 @@ int8_t I2Cdev::readBytes(uint8_t devAddr, uint8_t regAddr, uint8_t length, uint8
         Serial.print("...");
     #endif
 
-    // SlimeVR-lite: int, not int8_t. With int8_t, reads over 127 bytes wrapped
+    // Slime Motion Tracker: int, not int8_t. With int8_t, reads over 127 bytes wrapped
     // to data[-128] and silently corrupted the heap (ICM-45686 FIFO reads are 160 bytes).
     int count = 0;
     uint32_t t1 = millis();
@@ -336,7 +336,7 @@ int8_t I2Cdev::readWords(uint8_t devAddr, uint8_t regAddr, uint8_t length, uint1
         Serial.print("...");
     #endif
 
-    // SlimeVR-lite: int, not int8_t. With int8_t, reads over 127 bytes wrapped
+    // Slime Motion Tracker: int, not int8_t. With int8_t, reads over 127 bytes wrapped
     // to data[-128] and silently corrupted the heap (ICM-45686 FIFO reads are 160 bytes).
     int count = 0;
     uint32_t t1 = millis();

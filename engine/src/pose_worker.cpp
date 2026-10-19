@@ -1,6 +1,6 @@
 #include "pose_worker.h"
 
-namespace slimelite {
+namespace smt {
 
 bool PoseWorker::start(const std::string& path) {
 	stop();
@@ -64,4 +64,4 @@ void PoseWorker::run() {
 	}
 }
 
-}  // namespace slimelite
+}  // namespace smt

@@ -1,4 +1,4 @@
-// USB dongle bridge. Trackers that find the dongle (firmware/slimelite-dongle)
+// USB dongle bridge. Trackers that find the dongle (firmware/smt-dongle)
 // talk ESP-NOW to it instead of joining the WiFi network, and the dongle relays
 // their packets over USB serial. The bridge finds the dongle among the serial
 // ports and gives each tracker its own local UDP socket (127.0.0.1, a port
@@ -18,7 +18,7 @@
 #include <thread>
 #include <vector>
 
-namespace slimelite {
+namespace smt {
 
 // Serial framing shared with the dongle firmware: A5 5A type len mac[6] payload xor
 namespace dongle {
@@ -80,4 +80,4 @@ private:
 	std::map<std::string, Client> m_clients;  // by MAC string
 };
 
-}  // namespace slimelite
+}  // namespace smt

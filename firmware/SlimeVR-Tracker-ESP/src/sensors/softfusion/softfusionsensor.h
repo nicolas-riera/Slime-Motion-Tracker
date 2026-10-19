@@ -90,7 +90,7 @@ class SoftFusionSensor : public Sensor {
 		sendMagIfNeeded();
 	}
 
-	// SlimeVR-lite: raw magnetometer samples are streamed to the host, which does
+	// Slime Motion Tracker: raw magnetometer samples are streamed to the host, which does
 	// the calibration, heading fusion and disturbance rejection. The on-device VQF
 	// stays 6D so the firmware remains fully compatible with the SlimeVR server.
 	static constexpr uint32_t MagPollIntervalMicros = 20000;  // 50 Hz

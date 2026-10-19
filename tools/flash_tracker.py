@@ -1,9 +1,9 @@
-"""Back up, build and flash the SlimeVR-lite firmware on a USB-connected tracker.
+"""Back up, build and flash the Slime Motion Tracker firmware on a USB-connected tracker.
 
 Steps:
   1. read the MAC address
   2. dump the full 4 MB flash to firmware/backup/<MAC>_full_4MB.bin (once per tracker)
-  3. build the SLIMELITE_D1MINI PlatformIO env
+  3. build the SMT_D1MINI PlatformIO env
   4. flash the application image only (WiFi credentials and calibration are kept)
   5. reboot and check the boot log for the magnetometer
 
@@ -24,9 +24,9 @@ from serial.tools import list_ports
 ROOT = Path(__file__).resolve().parent.parent
 FW_DIR = ROOT / "firmware" / "SlimeVR-Tracker-ESP"
 BACKUP_DIR = ROOT / "firmware" / "backup"
-BOARD_JSON = ROOT / "firmware" / "slimelite-board.json"
+BOARD_JSON = ROOT / "firmware" / "smt-board.json"
 VENV_SCRIPTS = ROOT / ".venv" / "Scripts"
-ENV_NAME = "SLIMELITE_D1MINI"
+ENV_NAME = "SMT_D1MINI"
 
 
 def esptool(*args):

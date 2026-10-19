@@ -27,7 +27,7 @@
 
 namespace SlimeVR::Network {
 
-// SlimeVR-lite: the USB dongle (ESP-NOW) is preferred: the WiFi network is then
+// Slime Motion Tracker: the USB dongle (ESP-NOW) is preferred: the WiFi network is then
 // never joined, which saves power. Without a dongle, normal WiFi. A tracker that
 // loses its server (or its dongle) for kResearchMs looks for the dongle again.
 namespace {

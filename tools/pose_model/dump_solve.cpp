@@ -3,10 +3,10 @@
 // converted to our sensors (tools/pose_model/amass_bench.py), to score the
 // solver against exact ground truth.
 //
-// Usage: slimelite_dump_solve inputs.bin out.bin [--ankles] [--pose-model model.bin]
+// Usage: smt_dump_solve inputs.bin out.bin [--ankles] [--pose-model model.bin]
 //        [--wrist-identity] [--stand T]
 // out.bin: float64 rows t, valid, waist xyz, left ankle xyz, right ankle xyz, pose
-// model weight, knees (columns in out.bin.json). SL_TUNE applies to the solver as usual.
+// model weight, knees (columns in out.bin.json). SMT_TUNE applies to the solver as usual.
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -16,10 +16,10 @@
 #include <string>
 #include <vector>
 
-#include "slimelite/body_solver.h"
-#include "slimelite/pose_model.h"
+#include "smt/body_solver.h"
+#include "smt/pose_model.h"
 
-using namespace slimelite;
+using namespace smt;
 
 int main(int argc, char** argv) {
 	if (argc < 3) {

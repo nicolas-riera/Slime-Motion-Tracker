@@ -11,23 +11,23 @@
 #include "overlay_link.h"
 #include "pose_worker.h"
 #include "recorder.h"
-#include "slimelite/body_solver.h"
-#include "slimelite/config.h"
-#include "slimelite/dongle_bridge.h"
-#include "slimelite/engine_api.h"
-#include "slimelite/foot_model.h"
-#include "slimelite/tracker_hub.h"
+#include "smt/body_solver.h"
+#include "smt/config.h"
+#include "smt/dongle_bridge.h"
+#include "smt/engine_api.h"
+#include "smt/foot_model.h"
+#include "smt/tracker_hub.h"
 
-namespace slimelite {
+namespace smt {
 
 class Engine {
 public:
-	Engine(const SlEngineHost& host, const char* handover);
+	Engine(const SmtEngineHost& host, const char* handover);
 	~Engine();
 
-	void frame(const SlFrameInput& in, SlFrameOutput& out);
+	void frame(const SmtFrameInput& in, SmtFrameOutput& out);
 	// Battery of the tracker behind each virtual tracker slot
-	void batteries(SlBattery out[SL_DEVICE_COUNT]) const;
+	void batteries(SmtBattery out[SMT_DEVICE_COUNT]) const;
 	// State passed to the next engine on hot reload
 	nlohmann::json handover() const;
 
@@ -48,13 +48,13 @@ private:
 	void applySettings();
 	void markDirty() { m_dirty = true; }
 	bool trackerOrientation(const TrackerSnapshot& t, const TrackerConfig& tc, Quat& out) const;
-	void recordFrame(const SlFrameInput& in, const BodyOutput& out,
+	void recordFrame(const SmtFrameInput& in, const BodyOutput& out,
 					 const std::vector<TrackerSnapshot>& trackers);
 	void recordEvent(const char* what, const std::string& detail = {});
 	void updateRecordingState();
 	void log(const char* fmt, ...);
 
-	SlEngineHost m_host;
+	SmtEngineHost m_host;
 	std::string m_moduleDirectory;
 	Config m_config;
 	TrackerHub m_hub;
@@ -102,4 +102,4 @@ private:
 	double m_lastState = 0;
 };
 
-}  // namespace slimelite
+}  // namespace smt

@@ -1,6 +1,6 @@
 # Body solver live tuning log
 
-Live tuning sessions: recordings replayed with `slimelite_body_replay`, scored
+Live tuning sessions: recordings replayed with `smt_body_replay`, scored
 with `tools/eval_replay.py` (plausibility metrics, no ground truth), plotted with
 `tools/plot_replay.py`, deployed by hot reload. Metrics are given as
 session 224844 (25 min) / live session 232318.

@@ -4,20 +4,20 @@
 // to the recorded outputs. Lets the solver be changed and compared on real
 // sessions without SteamVR (tools/plot_replay.py plots the CSV).
 //
-// Usage: slimelite_body_replay session.jsonl out.csv [--from S] [--to S] [--floor Y] [--model foot_model.json]
+// Usage: smt_body_replay session.jsonl out.csv [--from S] [--to S] [--floor Y] [--model foot_model.json]
 //   --from/--to: seconds from the start of the recording
 //   --floor: floor height in raw tracking space (default: from the recording)
 //   --dump inputs.bin: also write the per-frame inputs as float64 rows (names in
 //     inputs.bin.json): HMD and controller poses, calibrated segment orientations,
 //     world accelerations (tools/pose_model)
-//   SL_NO_WAIST=1: ignore the waist tracker (ankles-only mode on a three-tracker recording)
-//   SL_MAG_REPLAY=1: rerun the mag heading filter (current code, SL_TUNE mag constants)
+//   SMT_NO_WAIST=1: ignore the waist tracker (ankles-only mode on a three-tracker recording)
+//   SMT_MAG_REPLAY=1: rerun the mag heading filter (current code, SMT_TUNE mag constants)
 //     instead of the recorded headings. The replayed heading is aligned to the
 //     recorded one at each body calibration, which the mountings were measured with.
 //
 // Parsing the JSON lines dominates the run time (a 5 h session is 3.4 GB), so the
 // parsed events are cached in a binary file next to the session (session.jsonl.evc,
-// or in SL_EVENT_CACHE_DIR), rebuilt when the session file changes.
+// or in SMT_EVENT_CACHE_DIR), rebuilt when the session file changes.
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
@@ -31,14 +31,14 @@
 #include <string>
 #include <vector>
 
-#include "slimelite/body_solver.h"
-#include "slimelite/config.h"
-#include "slimelite/foot_model.h"
-#include "slimelite/mag.h"
-#include "slimelite/pose_model.h"
-#include "slimelite/protocol.h"
+#include "smt/body_solver.h"
+#include "smt/config.h"
+#include "smt/foot_model.h"
+#include "smt/mag.h"
+#include "smt/pose_model.h"
+#include "smt/protocol.h"
 
-using namespace slimelite;
+using namespace smt;
 using nlohmann::json;
 namespace fs = std::filesystem;
 
@@ -52,7 +52,7 @@ struct TrackerState {
 	Vec3 accelLocal;
 	bool hasHeading = false;
 	double heading = 0;
-	// SL_MAG_REPLAY
+	// SMT_MAG_REPLAY
 	HeadingFilter filter;
 	double magResidual = -1, lastMag = 0, temperature = std::nan("");
 	double recHeading = 0, offset = 0;
@@ -236,7 +236,7 @@ bool buildCache(const std::string& session, const std::string& cache, uint64_t s
 }
 
 std::string cachePath(const std::string& session) {
-	if (const char* dir = std::getenv("SL_EVENT_CACHE_DIR"))
+	if (const char* dir = std::getenv("SMT_EVENT_CACHE_DIR"))
 		return (fs::path(dir) / fs::path(session).filename()).string() + ".evc";
 	return session + ".evc";
 }
@@ -357,8 +357,8 @@ int main(int argc, char** argv) {
 		}
 	}
 	BodySolver solver;
-	const bool noWaist = std::getenv("SL_NO_WAIST") && std::atoi(std::getenv("SL_NO_WAIST"));
-	const bool magReplay = std::getenv("SL_MAG_REPLAY") && std::atoi(std::getenv("SL_MAG_REPLAY"));
+	const bool noWaist = std::getenv("SMT_NO_WAIST") && std::atoi(std::getenv("SMT_NO_WAIST"));
+	const bool magReplay = std::getenv("SMT_MAG_REPLAY") && std::atoi(std::getenv("SMT_MAG_REPLAY"));
 	HeadingFilterSettings magSettings;
 	magSettings.magSigma = deg2rad(tunable("magSigmaDeg", rad2deg(magSettings.magSigma)));
 	magSettings.magCorrTime = tunable("magCorrTime", magSettings.magCorrTime);
@@ -371,26 +371,26 @@ int main(int argc, char** argv) {
 	auto realign = [&] {
 		for (auto& [mac, ts] : trackers) ts.aligned = false;
 	};
-	// Learned foot model (optional): --model path, or SL_FOOT_MODEL
+	// Learned foot model (optional): --model path, or SMT_FOOT_MODEL
 	FootModel footModel;
-	std::string modelPath = std::getenv("SL_FOOT_MODEL") ? std::getenv("SL_FOOT_MODEL") : "";
+	std::string modelPath = std::getenv("SMT_FOOT_MODEL") ? std::getenv("SMT_FOOT_MODEL") : "";
 	for (int i = 3; i + 1 < argc; i += 2)
 		if (std::string(argv[i]) == "--model") modelPath = argv[i + 1];
 	if (!modelPath.empty() && !footModel.load(modelPath)) std::printf("cannot load the foot model %s\n", modelPath.c_str());
 	// Fusion sigma of the model (defaults of footMeasurementSigma), tunable offline
 	const double modelFloor = tunable("modelFloor", 0.03), modelScale = tunable("modelScale", 0.6);
-	// Learned pose model (optional): --pose-model path, or SL_POSE_MODEL; fusion
-	// settings from SL_POSE_RATIO_LOW / SL_POSE_RATIO_HIGH / SL_POSE_MIN_ANKLE
+	// Learned pose model (optional): --pose-model path, or SMT_POSE_MODEL; fusion
+	// settings from SMT_POSE_RATIO_LOW / SMT_POSE_RATIO_HIGH / SMT_POSE_MIN_ANKLE
 	PoseModel poseModel;
 	PoseFusionSettings fusion;
-	std::string poseModelPath = std::getenv("SL_POSE_MODEL") ? std::getenv("SL_POSE_MODEL") : "";
+	std::string poseModelPath = std::getenv("SMT_POSE_MODEL") ? std::getenv("SMT_POSE_MODEL") : "";
 	for (int i = 3; i + 1 < argc; i += 2)
 		if (std::string(argv[i]) == "--pose-model") poseModelPath = argv[i + 1];
 	if (!poseModelPath.empty() && !poseModel.load(poseModelPath))
 		std::printf("cannot load the pose model %s: %s\n", poseModelPath.c_str(), poseModel.error().c_str());
-	if (const char* v = std::getenv("SL_POSE_RATIO_LOW")) fusion.ratioLow = std::atof(v);
-	if (const char* v = std::getenv("SL_POSE_RATIO_HIGH")) fusion.ratioHigh = std::atof(v);
-	if (const char* v = std::getenv("SL_POSE_MIN_ANKLE")) fusion.minAnkleHeight = std::atof(v);
+	if (const char* v = std::getenv("SMT_POSE_RATIO_LOW")) fusion.ratioLow = std::atof(v);
+	if (const char* v = std::getenv("SMT_POSE_RATIO_HIGH")) fusion.ratioHigh = std::atof(v);
+	if (const char* v = std::getenv("SMT_POSE_MIN_ANKLE")) fusion.minAnkleHeight = std::atof(v);
 	double t0 = -1, lastFrame = -1;
 	int frames = 0;
 	double solveSeconds = 0;
@@ -607,9 +607,9 @@ int main(int argc, char** argv) {
 				pin.waistAccel = waistAccel;
 				poseModel.setHeight(dims.height);
 				PoseFusionSettings fs = PoseFusionSettings::forWaist(bin.hasWaist);
-				if (std::getenv("SL_POSE_RATIO_LOW")) fs.ratioLow = fusion.ratioLow;
-				if (std::getenv("SL_POSE_RATIO_HIGH")) fs.ratioHigh = fusion.ratioHigh;
-				if (std::getenv("SL_POSE_MIN_ANKLE")) fs.minAnkleHeight = fusion.minAnkleHeight;
+				if (std::getenv("SMT_POSE_RATIO_LOW")) fs.ratioLow = fusion.ratioLow;
+				if (std::getenv("SMT_POSE_RATIO_HIGH")) fs.ratioHigh = fusion.ratioHigh;
+				if (std::getenv("SMT_POSE_MIN_ANKLE")) fs.minAnkleHeight = fusion.minAnkleHeight;
 				fusePose(poseModel.update(pin, t), hmd, floorY, dims.eyeHeight, o, fs);
 			}
 			solveSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - solveStart).count();

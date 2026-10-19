@@ -10,7 +10,7 @@
 
 #include <cstring>
 
-namespace slimelite {
+namespace smt {
 
 static_assert(sizeof(sockaddr_in) == 16);
 
@@ -69,4 +69,4 @@ void OverlayLink::send(const nlohmann::json& msg) {
 		   reinterpret_cast<const sockaddr*>(m_peer), sizeof(sockaddr_in));
 }
 
-}  // namespace slimelite
+}  // namespace smt

@@ -1,5 +1,5 @@
 // Subset of the SlimeVR tracker UDP protocol (firmware protocol 22) plus the
-// SlimeVR-lite raw magnetometer extension (packet 210).
+// Slime Motion Tracker raw magnetometer extension (packet 210).
 //
 // Tracker -> server datagram: [u32 BE type][u64 BE packet number][payload]
 // Bundle (100): header, then repeated [u16 BE length][u32 BE type][payload].
@@ -11,9 +11,9 @@
 #include <string>
 #include <vector>
 
-#include "slimelite/linalg.h"
+#include "smt/linalg.h"
 
-namespace slimelite::proto {
+namespace smt::proto {
 
 constexpr uint16_t kTrackerPort = 6969;
 
@@ -86,4 +86,4 @@ std::vector<uint8_t> featureFlags(uint64_t packetNumber);
 // Same convention as the SlimeVR server: q_world = Rx(-90 deg) * q_firmware.
 Quat firmwareToWorld(const Quat& q);
 
-}  // namespace slimelite::proto
+}  // namespace smt::proto

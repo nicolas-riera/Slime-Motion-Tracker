@@ -1,4 +1,4 @@
-// Persistent configuration, stored as JSON in %LOCALAPPDATA%\SlimeVR-lite\config.json
+// Persistent configuration, stored as JSON in %LOCALAPPDATA%\Slime Motion Tracker\config.json
 #pragma once
 
 #include <array>
@@ -8,10 +8,10 @@
 #include <optional>
 #include <string>
 
-#include "slimelite/linalg.h"
-#include "slimelite/mag.h"
+#include "smt/linalg.h"
+#include "smt/mag.h"
 
-namespace slimelite {
+namespace smt {
 
 enum class Role { None, Waist, LeftAnkle, RightAnkle };
 enum class Mode { Three, Ankles };
@@ -64,4 +64,4 @@ struct Config {
 	bool save(const std::filesystem::path& path) const;
 };
 
-}  // namespace slimelite
+}  // namespace smt

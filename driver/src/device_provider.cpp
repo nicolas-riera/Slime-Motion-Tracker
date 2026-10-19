@@ -5,12 +5,12 @@
 #include <chrono>
 #include <cstring>
 
-namespace slimelite {
+namespace smt {
 
 namespace {
 
-const char* kSerials[SL_DEVICE_COUNT] = {"SLV-WAIST", "SLV-LFOOT", "SLV-RFOOT"};
-const char* kRoles[SL_DEVICE_COUNT] = {"TrackerRole_Waist", "TrackerRole_LeftFoot",
+const char* kSerials[SMT_DEVICE_COUNT] = {"SMT-WAIST", "SMT-LFOOT", "SMT-RFOOT"};
+const char* kRoles[SMT_DEVICE_COUNT] = {"TrackerRole_Waist", "TrackerRole_LeftFoot",
 									   "TrackerRole_RightFoot"};
 
 std::filesystem::path moduleDirectory() {
@@ -23,7 +23,7 @@ std::filesystem::path moduleDirectory() {
 }
 
 void driverLog(const std::string& msg) {
-	if (auto* l = vr::VRDriverLog()) l->Log(("[slimevr_lite] " + msg + "\n").c_str());
+	if (auto* l = vr::VRDriverLog()) l->Log(("[slime_motion_tracker] " + msg + "\n").c_str());
 }
 
 double nowSeconds() {
@@ -36,10 +36,10 @@ double nowSeconds() {
 vr::EVRInitError DeviceProvider::Init(vr::IVRDriverContext* ctx) {
 	VR_INIT_SERVER_DRIVER_CONTEXT(ctx);
 
-	for (int i = 0; i < SL_DEVICE_COUNT; i++) {
+	for (int i = 0; i < SMT_DEVICE_COUNT; i++) {
 		m_devices[i] = std::make_unique<VirtualTracker>(kSerials[i], kRoles[i]);
 		// Assign the SteamVR tracker role so games pick them up without manual setup
-		std::string key = std::string("/devices/slimevr_lite/") + kSerials[i];
+		std::string key = std::string("/devices/slime_motion_tracker/") + kSerials[i];
 		vr::VRSettings()->SetString("trackers", key.c_str(), kRoles[i]);
 		vr::VRServerDriverHost()->TrackedDeviceAdded(kSerials[i], vr::TrackedDeviceClass_GenericTracker,
 													  m_devices[i].get());
@@ -48,7 +48,7 @@ vr::EVRInitError DeviceProvider::Init(vr::IVRDriverContext* ctx) {
 	auto dir = moduleDirectory();
 	std::u8string u8 = dir.u8string();
 	std::string dirUtf8(u8.begin(), u8.end());
-	m_engine = std::make_unique<EngineLoader>(dir / "slimelite_engine.dll", dirUtf8, driverLog);
+	m_engine = std::make_unique<EngineLoader>(dir / "smt_engine.dll", dirUtf8, driverLog);
 	return vr::VRInitError_None;
 }
 
@@ -64,22 +64,22 @@ void DeviceProvider::RunFrame() {
 	double now = nowSeconds();
 	m_engine->poll(now);
 
-	static SlFrameInput in;  // large, keep it off the stack
-	in = SlFrameInput{};
+	static SmtFrameInput in;  // large, keep it off the stack
+	in = SmtFrameInput{};
 	in.now = now;
-	vr::TrackedDevicePose_t poses[SL_MAX_DEVICES];
-	vr::VRServerDriverHost()->GetRawTrackedDevicePoses(0, poses, SL_MAX_DEVICES);
+	vr::TrackedDevicePose_t poses[SMT_MAX_DEVICES];
+	vr::VRServerDriverHost()->GetRawTrackedDevicePoses(0, poses, SMT_MAX_DEVICES);
 	in.hmdValid = poses[0].bPoseIsValid ? 1 : 0;
 	for (int r = 0; r < 3; r++)
 		for (int c = 0; c < 4; c++) in.hmd[r][c] = poses[0].mDeviceToAbsoluteTracking.m[r][c];
 
 	if (now - m_lastInfoRefresh > 3.0) {
 		m_lastInfoRefresh = now;
-		SlBattery batteries[SL_DEVICE_COUNT] = {};
+		SmtBattery batteries[SMT_DEVICE_COUNT] = {};
 		if (m_engine->batteries(batteries))
-			for (int i = 0; i < SL_DEVICE_COUNT; i++) m_devices[i]->updateBattery(batteries[i]);
+			for (int i = 0; i < SMT_DEVICE_COUNT; i++) m_devices[i]->updateBattery(batteries[i]);
 		auto props = vr::VRProperties();
-		for (uint32_t i = 0; i < SL_MAX_DEVICES; i++) {
+		for (uint32_t i = 0; i < SMT_MAX_DEVICES; i++) {
 			auto& info = m_deviceInfo[i];
 			info = DeviceInfo{};
 			if (!poses[i].bDeviceIsConnected) continue;
@@ -90,8 +90,8 @@ void DeviceProvider::RunFrame() {
 			props->GetStringProperty(c, vr::Prop_SerialNumber_String, info.serial, sizeof(info.serial), &err);
 		}
 	}
-	in.deviceCount = SL_MAX_DEVICES;
-	for (int i = 0; i < SL_MAX_DEVICES; i++) {
+	in.deviceCount = SMT_MAX_DEVICES;
+	for (int i = 0; i < SMT_MAX_DEVICES; i++) {
 		auto& d = in.devices[i];
 		const auto& p = poses[i];
 		d.connected = p.bDeviceIsConnected ? 1 : 0;
@@ -107,9 +107,9 @@ void DeviceProvider::RunFrame() {
 		}
 	}
 
-	SlFrameOutput out{};
+	SmtFrameOutput out{};
 	m_engine->frame(in, out);
-	for (int i = 0; i < SL_DEVICE_COUNT; i++) m_devices[i]->updatePose(out.devices[i], out.sendVelocity != 0);
+	for (int i = 0; i < SMT_DEVICE_COUNT; i++) m_devices[i]->updatePose(out.devices[i], out.sendVelocity != 0);
 }
 
-}  // namespace slimelite
+}  // namespace smt

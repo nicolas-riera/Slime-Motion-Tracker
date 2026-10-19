@@ -4,7 +4,7 @@
 
 #include <vector>
 
-namespace slimelite {
+namespace smt {
 
 namespace {
 
@@ -16,7 +16,7 @@ void hostLog(const char* msg) {
 
 std::filesystem::path tempDirectory() {
 	std::error_code ec;
-	auto dir = std::filesystem::temp_directory_path(ec) / "slimevr_lite_engine";
+	auto dir = std::filesystem::temp_directory_path(ec) / "slime_motion_tracker_engine";
 	std::filesystem::create_directories(dir, ec);
 	return dir;
 }
@@ -70,20 +70,20 @@ bool EngineLoader::loadModule(Module& m) {
 		std::filesystem::remove(m.copy, ec);
 		return false;
 	}
-	auto version = reinterpret_cast<SlEngineApiVersionFn>(GetProcAddress(dll, "sl_engine_api_version"));
-	m.create = reinterpret_cast<SlEngineCreateFn>(GetProcAddress(dll, "sl_engine_create"));
-	m.frame = reinterpret_cast<SlEngineFrameFn>(GetProcAddress(dll, "sl_engine_frame"));
-	m.destroy = reinterpret_cast<SlEngineDestroyFn>(GetProcAddress(dll, "sl_engine_destroy"));
-	m.batteries = reinterpret_cast<SlEngineBatteriesFn>(GetProcAddress(dll, "sl_engine_batteries"));
+	auto version = reinterpret_cast<SmtEngineApiVersionFn>(GetProcAddress(dll, "sl_engine_api_version"));
+	m.create = reinterpret_cast<SmtEngineCreateFn>(GetProcAddress(dll, "sl_engine_create"));
+	m.frame = reinterpret_cast<SmtEngineFrameFn>(GetProcAddress(dll, "sl_engine_frame"));
+	m.destroy = reinterpret_cast<SmtEngineDestroyFn>(GetProcAddress(dll, "sl_engine_destroy"));
+	m.batteries = reinterpret_cast<SmtEngineBatteriesFn>(GetProcAddress(dll, "sl_engine_batteries"));
 	m.dll = dll;
 	if (!version || !m.create || !m.frame || !m.destroy) {
 		m_log("engine is missing exports");
 		freeModule(m);
 		return false;
 	}
-	if (version() != SL_ENGINE_API_VERSION) {
+	if (version() != SMT_ENGINE_API_VERSION) {
 		m_log("engine API version " + std::to_string(version()) + " != host "
-			  + std::to_string(SL_ENGINE_API_VERSION) + ": restart SteamVR to update the host");
+			  + std::to_string(SMT_ENGINE_API_VERSION) + ": restart SteamVR to update the host");
 		freeModule(m);
 		return false;
 	}
@@ -149,18 +149,18 @@ void EngineLoader::poll(double now) {
 	}
 }
 
-bool EngineLoader::batteries(SlBattery out[SL_DEVICE_COUNT]) {
+bool EngineLoader::batteries(SmtBattery out[SMT_DEVICE_COUNT]) {
 	if (!m_engine || !m_module.batteries) return false;
 	m_module.batteries(m_engine, out);
 	return true;
 }
 
-void EngineLoader::frame(const SlFrameInput& in, SlFrameOutput& out) {
+void EngineLoader::frame(const SmtFrameInput& in, SmtFrameOutput& out) {
 	if (!m_engine) {
-		out = SlFrameOutput{};
+		out = SmtFrameOutput{};
 		return;
 	}
 	m_module.frame(m_engine, &in, &out);
 }
 
-}  // namespace slimelite
+}  // namespace smt

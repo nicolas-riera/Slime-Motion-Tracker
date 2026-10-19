@@ -27,9 +27,9 @@
 #include <optional>
 #include <vector>
 
-#include "slimelite/linalg.h"
+#include "smt/linalg.h"
 
-namespace slimelite {
+namespace smt {
 
 struct MagCalibration {
 	Mat3 K = Mat3::zero();
@@ -190,4 +190,4 @@ private:
 // Heading of the horizontal part of v, increasing with rotations around +Y
 inline double headingOf(const Vec3& v) { return std::atan2(v.x, v.z); }
 
-}  // namespace slimelite
+}  // namespace smt

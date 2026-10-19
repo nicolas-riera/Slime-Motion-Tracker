@@ -1,4 +1,4 @@
-"""Plausibility metrics of a slimelite_body_replay CSV, per time window and overall.
+"""Plausibility metrics of a smt_body_replay CSV, per time window and overall.
 
 There is no ground truth in most recordings, so these metrics measure physically
 implausible outputs (feet in the air while standing, skating, legs bent while the

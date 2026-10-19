@@ -35,7 +35,7 @@ public:
 	void setup();
 	void update();
 
-	// SlimeVR-lite: transport in use (ESP-NOW to the USB dongle, or WiFi)
+	// Slime Motion Tracker: transport in use (ESP-NOW to the USB dongle, or WiFi)
 	enum class Transport { SearchingDongle, EspNow, WiFi };
 	Transport transport() const { return m_Transport; }
 

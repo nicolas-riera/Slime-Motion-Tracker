@@ -1,7 +1,7 @@
 """Scores body solver outputs against Kinect ground truth (extract.py).
 
 Compares, at each ground-truth frame, the ankle positions of a replay CSV
-(slimelite_body_replay: replayed solver, plus the outputs recorded live as rec_*)
+(smt_body_replay: replayed solver, plus the outputs recorded live as rec_*)
 with the Kinect ankles. Errors in cm: 3D, horizontal, vertical; split by whether
 the ground-truth foot is on the floor or lifted.
 

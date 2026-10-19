@@ -1,8 +1,8 @@
 #include <algorithm>
 
-#include "slimelite/mag.h"
+#include "smt/mag.h"
 
-namespace slimelite {
+namespace smt {
 
 namespace {
 
@@ -185,4 +185,4 @@ void HeadingFilter::update(const Quat& qWorld, const std::array<int16_t, 3>& raw
 	m_rate = std::clamp(m_rate, -maxRate, maxRate);
 }
 
-}  // namespace slimelite
+}  // namespace smt

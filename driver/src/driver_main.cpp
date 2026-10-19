@@ -5,7 +5,7 @@
 
 #include "device_provider.h"
 
-static slimelite::DeviceProvider g_provider;
+static smt::DeviceProvider g_provider;
 
 extern "C" __declspec(dllexport) void* HmdDriverFactory(const char* interfaceName, int* returnCode) {
 	if (std::strcmp(interfaceName, vr::IServerTrackedDeviceProvider_Version) == 0) return &g_provider;

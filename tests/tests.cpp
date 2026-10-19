@@ -1,16 +1,16 @@
-// Core unit tests on synthetic data. Run: build\Release\slimelite_tests.exe
+// Core unit tests on synthetic data. Run: build\Release\smt_tests.exe
 #include <cstdio>
 #include <cstring>
 #include <random>
 
-#include "slimelite/body_solver.h"
-#include "slimelite/dongle_bridge.h"
-#include "slimelite/pose_model.h"
-#include "slimelite/mag.h"
-#include "slimelite/mounting_calibration.h"
-#include "slimelite/protocol.h"
+#include "smt/body_solver.h"
+#include "smt/dongle_bridge.h"
+#include "smt/pose_model.h"
+#include "smt/mag.h"
+#include "smt/mounting_calibration.h"
+#include "smt/protocol.h"
 
-using namespace slimelite;
+using namespace smt;
 
 static int g_failures = 0;
 
@@ -94,7 +94,7 @@ static SyntheticMag makeMag() {
 }
 
 static void testDongleFrames() {
-	using namespace slimelite::dongle;
+	using namespace smt::dongle;
 	Frame a;
 	a.type = kData;
 	const uint8_t mac[6] = {0x2C, 0xF4, 0x32, 0x7B, 0xFF, 0xD1};

@@ -6,7 +6,7 @@ Kinect depth ground truth (tools/kinect_gt), and ship it as a C++ module.
 
 ## Pipeline
 
-1. `slimelite_ml_dump session.jsonl out.bin` (tools/ml/ml_dump.cpp): one row per
+1. `smt_ml_dump session.jsonl out.bin` (tools/ml/ml_dump.cpp): one row per
    engine frame with the body solver inputs exactly as the engine builds them
    (HMD pose, floor, pelvis and shin segment orientations, shin world linear
    accelerations and angular speeds, same code as body_replay) plus the live
@@ -16,7 +16,7 @@ Kinect depth ground truth (tools/kinect_gt), and ship it as a C++ module.
    live and replayed solver outputs at the same frames.
 3. `python tools/ml/train.py ... --out model.pt`: MLP training and test report.
 4. `python tools/ml/export.py model.pt engine/models/foot_model.json --ref ref.bin`
-   then `slimelite_foot_model_check dump.bin foot_model.json ref.bin`: C++ vs
+   then `smt_foot_model_check dump.bin foot_model.json ref.bin`: C++ vs
    Python on ~10k frames of a session (must be < 1e-4 m; currently ~1e-14).
 5. `python tools/ml/evaluate.py foot_model.json`: all 90 Hz frames: jitter,
    lag, held-out breakdown, uncertainty calibration.
@@ -156,11 +156,11 @@ Decisions and findings:
 
 - engine/models/foot_model.json (1.14 MB): MLP 630-128-128-12 (ReLU), outputs
   both ankles (heading frame) + per-axis log Laplace scales.
-- core/include/slimelite/foot_model.h, core/src/foot_model.cpp (in
-  slimelite_core, std + nlohmann json only): `FootModel::load(path)`,
+- core/include/smt/foot_model.h, core/src/foot_model.cpp (in
+  smt_core, std + nlohmann json only): `FootModel::load(path)`,
   `FootModel::update(const BodyInput&, double now) -> FootEstimate` (world
   ankles, per-axis sigma in the heading frame, the heading).
-- Checked: `slimelite_foot_model_check dump.bin engine/models/foot_model.json
+- Checked: `smt_foot_model_check dump.bin engine/models/foot_model.json
   ref.bin` -> PASS, max |C++ - Python| 2e-15 m on 12,645 frames (also checked
   for a "dr" model).
 
@@ -201,12 +201,12 @@ Kalman filter.
   target from it (the solver's floor error is mostly a horizontal offset,
   ~10 cm on the left foot, that this removes).
 
-Retraining with new sessions: `slimelite_ml_dump session.jsonl s.bin`, Kinect
+Retraining with new sessions: `smt_ml_dump session.jsonl s.bin`, Kinect
 GT extraction, `dataset.py --dump s.bin --name vN`, `train.py --data
 recordings/ml/ds_vN.npz --clean --cambias --mirror --hetero --hidden 128 128
 --lagidx 0,1,2,3,4,6,8,10,13,16,20,23,24,25,26,27,28,29 --trainval --out
 m.pt`, `export.py m.pt engine/models/foot_model.json --ref ref.bin --dump
-s.bin`, `slimelite_foot_model_check s.bin engine/models/foot_model.json
+s.bin`, `smt_foot_model_check s.bin engine/models/foot_model.json
 ref.bin`, `evaluate.py engine/models/foot_model.json --dump s.bin --data
 ds_vN.npz`.
 

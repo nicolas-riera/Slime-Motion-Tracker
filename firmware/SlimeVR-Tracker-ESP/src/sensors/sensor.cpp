@@ -33,7 +33,7 @@ SensorStatus Sensor::getSensorState() {
 
 void Sensor::setAcceleration(Vector3 a) {
 	acceleration = a;
-	// SlimeVR-lite: express the acceleration in the same frame as fusedRotation
+	// Slime Motion Tracker: express the acceleration in the same frame as fusedRotation
 	// (r * sensorOffset), i.e. rotate by the inverse offset. Upstream used the
 	// offset itself, which mirrors X/Y for 90/270 degree mounting rotations.
 	Quat inverseOffset = sensorOffset.inverse();

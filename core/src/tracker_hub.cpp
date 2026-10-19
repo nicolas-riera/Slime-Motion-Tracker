@@ -1,4 +1,4 @@
-#include "slimelite/tracker_hub.h"
+#include "smt/tracker_hub.h"
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -11,7 +11,7 @@
 #include <algorithm>
 #include <chrono>
 
-namespace slimelite {
+namespace smt {
 
 namespace {
 // rad/s between two rotation packets; no limb turns this fast (kicks peak ~20)
@@ -487,4 +487,4 @@ void TrackerHub::networkLoop() {
 	}
 }
 
-}  // namespace slimelite
+}  // namespace smt

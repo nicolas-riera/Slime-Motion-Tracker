@@ -1,4 +1,4 @@
-// SlimeVR-lite dashboard overlay.
+// Slime Motion Tracker dashboard overlay.
 //
 // One Dear ImGui UI is rendered into an offscreen D3D11 texture (1024x768). That texture
 // is both submitted to a SteamVR dashboard overlay and copied into the back buffer of a
@@ -36,10 +36,10 @@ namespace {
 
 using Microsoft::WRL::ComPtr;
 using Clock = std::chrono::steady_clock;
-using namespace slimelite;
+using namespace smt;
 
 constexpr wchar_t kWindowClass[] = L"SlimeVRLiteOverlayWindow";
-constexpr wchar_t kWindowTitle[] = L"SlimeVR-lite";
+constexpr wchar_t kWindowTitle[] = L"Slime Motion Tracker";
 constexpr wchar_t kMutexName[] = L"SlimeVRLiteOverlay";
 constexpr DXGI_FORMAT kFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
 constexpr auto kFramePeriod = std::chrono::microseconds(16667);  // ~60 Hz
@@ -157,7 +157,7 @@ bool isProcessRunning(const wchar_t* exeName) {
 
 // ------------------------------------------------------------------ standalone engine
 
-// Without SteamVR the overlay runs the engine itself (slimelite_engine_host with a
+// Without SteamVR the overlay runs the engine itself (smt_engine_host with a
 // fake headset, next to the overlay), so the trackers and the dongle can be checked
 // without a headset. The host exits with the overlay and as soon as SteamVR starts,
 // leaving the tracker port and the dongle to the driver.
@@ -191,18 +191,18 @@ private:
         if (n == 0 || n == MAX_PATH) return;
         std::wstring dir(path, n);
         dir.resize(dir.find_last_of(L'\\') + 1);
-        const std::wstring host = dir + L"slimelite_engine_host.exe";
-        const std::wstring engine = dir + L"slimelite_engine.dll";
+        const std::wstring host = dir + L"smt_engine_host.exe";
+        const std::wstring engine = dir + L"smt_engine.dll";
         if (GetFileAttributesW(host.c_str()) == INVALID_FILE_ATTRIBUTES ||
             GetFileAttributesW(engine.c_str()) == INVALID_FILE_ATTRIBUTES)
             return;
         std::wstring cmd = L"\"" + host + L"\" \"" + engine + L"\" --parent " +
                            std::to_wstring(GetCurrentProcessId()) + L" --until-steamvr";
-        // The engine's log goes to %LOCALAPPDATA%\SlimeVR-lite\standalone.log
+        // The engine's log goes to %LOCALAPPDATA%\Slime Motion Tracker\standalone.log
         HANDLE logFile = INVALID_HANDLE_VALUE;
         if (const wchar_t* appData = _wgetenv(L"LOCALAPPDATA")) {
             SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
-            const std::wstring logPath = std::wstring(appData) + L"\\SlimeVR-lite\\standalone.log";
+            const std::wstring logPath = std::wstring(appData) + L"\\Slime Motion Tracker\\standalone.log";
             logFile = CreateFileW(logPath.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_ALWAYS,
                                   FILE_ATTRIBUTE_NORMAL, nullptr);
         }
@@ -226,10 +226,12 @@ private:
     Clock::time_point missingSince_ = Clock::now();
 };
 
-// 128x128 RGBA dashboard thumbnail: a rounded accent square with "SL" in a 5x7 pixel font.
+// 128x128 RGBA dashboard thumbnail: a rounded accent square with "SMT" in a 5x7 pixel font
+// (same design as the app icon, tools/icon/make_icon.py).
 std::vector<uint8_t> makeThumbnail(int size) {
     static constexpr std::array<const char*, 7> kS = {".####", "#....", "#....", ".###.", "....#", "....#", "####."};
-    static constexpr std::array<const char*, 7> kL = {"#....", "#....", "#....", "#....", "#....", "#....", "#####"};
+    static constexpr std::array<const char*, 7> kM = {"#...#", "##.##", "#.#.#", "#.#.#", "#...#", "#...#", "#...#"};
+    static constexpr std::array<const char*, 7> kT = {"#####", "..#..", "..#..", "..#..", "..#..", "..#..", "..#.."};
     std::vector<uint8_t> px(static_cast<size_t>(size) * size * 4, 0);
     const auto put = [&](int x, int y, uint8_t r, uint8_t g, uint8_t b) {
         uint8_t* p = &px[(static_cast<size_t>(y) * size + x) * 4];
@@ -247,9 +249,9 @@ std::vector<uint8_t> makeThumbnail(int size) {
         }
     }
 
-    const int scale = size / 14;  // glyph pixel size
-    const int glyphW = 5 * scale, glyphH = 7 * scale, gap = scale * 2;
-    const int x0 = (size - (2 * glyphW + gap)) / 2;
+    const int scale = size / 20;  // glyph pixel size
+    const int glyphW = 5 * scale, glyphH = 7 * scale, gap = scale;
+    const int x0 = (size - (3 * glyphW + 2 * gap)) / 2;
     const int y0 = (size - glyphH) / 2;
     const auto drawGlyph = [&](const std::array<const char*, 7>& glyph, int left) {
         for (int gy = 0; gy < 7; ++gy)
@@ -259,7 +261,8 @@ std::vector<uint8_t> makeThumbnail(int size) {
                         for (int x = 0; x < scale; ++x) put(left + gx * scale + x, y0 + gy * scale + y, 255, 255, 255);
     };
     drawGlyph(kS, x0);
-    drawGlyph(kL, x0 + glyphW + gap);
+    drawGlyph(kM, x0 + glyphW + gap);
+    drawGlyph(kT, x0 + 2 * (glyphW + gap));
     return px;
 }
 
@@ -284,7 +287,7 @@ public:
         }
 
         vr::IVROverlay* ov = vr::VROverlay();
-        if (ov->CreateDashboardOverlay("slimevr_lite.dashboard", "SlimeVR-lite", &handle_, &thumbnail_) !=
+        if (ov->CreateDashboardOverlay("slime_motion_tracker.dashboard", "Slime Motion Tracker", &handle_, &thumbnail_) !=
             vr::VROverlayError_None) {
             vr::VR_Shutdown();
             return false;

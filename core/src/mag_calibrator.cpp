@@ -1,8 +1,8 @@
 #include <algorithm>
 
-#include "slimelite/mag.h"
+#include "smt/mag.h"
 
-namespace slimelite {
+namespace smt {
 
 namespace {
 
@@ -157,4 +157,4 @@ std::optional<MagCalibration> MagCalibrator::solveSamples(const std::vector<Samp
 	return cal;
 }
 
-}  // namespace slimelite
+}  // namespace smt

@@ -21,7 +21,7 @@ import sys
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-EXE = os.path.join(HERE, "..", "..", "build", "Release", "slimelite_dump_solve.exe")
+EXE = os.path.join(HERE, "..", "..", "build", "Release", "smt_dump_solve.exe")
 sys.path.insert(0, HERE)
 import features  # noqa: E402
 
@@ -69,7 +69,7 @@ def main():
     def run(job):
         vi, v, (p, stand, d), ws = job
         env = dict(os.environ)
-        env["SL_TUNE"] = ",".join(f"{k}={x}" for k, x in v.items())
+        env["SMT_TUNE"] = ",".join(f"{k}={x}" for k, x in v.items())
         out = p + f".solve{vi}.bin"
         cmd = [EXE, p, out] + (["--ankles"] if args.ankles else [])
         if args.pose_model:

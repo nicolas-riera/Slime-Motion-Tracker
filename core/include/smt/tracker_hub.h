@@ -14,11 +14,11 @@
 #include <thread>
 #include <vector>
 
-#include "slimelite/linalg.h"
-#include "slimelite/mag.h"
-#include "slimelite/protocol.h"
+#include "smt/linalg.h"
+#include "smt/mag.h"
+#include "smt/protocol.h"
 
-namespace slimelite {
+namespace smt {
 
 enum class MagState { Absent, Disabled, Uncalibrated, Calibrating, Ok, Disturbed };
 const char* magStateName(MagState s);
@@ -111,4 +111,4 @@ private:
 	uint64_t m_packetNumber = 0;
 };
 
-}  // namespace slimelite
+}  // namespace smt

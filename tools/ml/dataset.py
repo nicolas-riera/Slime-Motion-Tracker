@@ -1,7 +1,7 @@
 """Dataset for the learned foot model: causal features from the body solver
 inputs, Kinect ground-truth ankle targets.
 
-Inputs come from `slimelite_ml_dump session.jsonl out.bin` (the solver inputs as
+Inputs come from `smt_ml_dump session.jsonl out.bin` (the solver inputs as
 the engine builds them, one row per engine frame). Everything is expressed in a
 heading-normalized frame (yaw of the pelvis, taken from its left-right axis so
 that bending forward or leaning back does not change it), with the horizontal
@@ -21,7 +21,7 @@ import os
 
 import numpy as np
 
-REC = os.path.join(os.environ.get("LOCALAPPDATA", ""), "SlimeVR-lite", "recordings")
+REC = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Slime Motion Tracker", "recordings")
 ML = os.path.join(REC, "ml")
 
 ACC_CLIP = 40.0  # m/s^2, per axis, before the low-pass (impacts reach 60-90)
@@ -349,7 +349,7 @@ def first_time(session):
 
 
 def replay_at(replay_csv, session, fr, idx):
-    """Replayed solver ankles (slimelite_body_replay CSV) at frames idx, heading frame (N, 6)."""
+    """Replayed solver ankles (smt_body_replay CSV) at frames idx, heading frame (N, 6)."""
     rp = np.genfromtxt(replay_csv, delimiter=",", names=True, usecols=("t", "lx", "ly", "lz", "rx", "ry", "rz"))
     t_rp = rp["t"] + first_time(session)
     tt = fr.t[idx]

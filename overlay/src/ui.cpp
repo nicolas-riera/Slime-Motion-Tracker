@@ -15,7 +15,7 @@
 #include "battery_estimator.h"
 #include "imgui.h"
 
-namespace slimelite::ui {
+namespace smt::ui {
 
 namespace {
 
@@ -162,7 +162,7 @@ std::string shortMac(const std::string& mac) {
 // ---------------------------------------------------------------- sections
 
 void drawHeader(const DriverLink& link, const DriverState& s, bool connected) {
-    ImGui::TextColored(kAccent, "SlimeVR-lite");
+    ImGui::TextColored(kAccent, "Slime Motion Tracker");
     ImGui::SameLine();
     if (connected) {
         if (s.driverVersion.empty())
@@ -540,7 +540,7 @@ void setup() {
     io.LogFilename = nullptr;
 
     if (const char* appData = std::getenv("LOCALAPPDATA"))
-        g.battery.load(std::string(appData) + "\\SlimeVR-lite\\battery_history.json");
+        g.battery.load(std::string(appData) + "\\Slime Motion Tracker\\battery_history.json");
 
     // Large fonts so the UI is readable in the headset. Segoe UI ships with Windows;
     // fall back to the (scaled) built-in font otherwise.
@@ -621,7 +621,7 @@ void draw(DriverLink& link, const FrameInfo& info) {
     const ImGuiIO& io = ImGui::GetIO();
     ImGui::SetNextWindowPos(ImVec2(0, 0));
     ImGui::SetNextWindowSize(io.DisplaySize);
-    ImGui::Begin("SlimeVR-lite", nullptr,
+    ImGui::Begin("Slime Motion Tracker", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
                      ImGuiWindowFlags_NoBringToFrontOnFocus);
 
@@ -655,4 +655,4 @@ void draw(DriverLink& link, const FrameInfo& info) {
     ImGui::End();
 }
 
-}  // namespace slimelite::ui
+}  // namespace smt::ui

@@ -1,13 +1,13 @@
 <#
 .SYNOPSIS
-  Builds SlimeVR-lite and registers the driver with SteamVR.
+  Builds Slime Motion Tracker and registers the driver with SteamVR.
 
 .DESCRIPTION
   1. Configures and builds the CMake project (Release).
-  2. Copies build\slimevr_lite to %LOCALAPPDATA%\SlimeVR-lite\driver\slimevr_lite
+  2. Copies build\slime_motion_tracker to %LOCALAPPDATA%\Slime Motion Tracker\driver\slime_motion_tracker
      (SteamVR keeps the DLL locked while running, so SteamVR must be closed).
   3. Registers that folder with vrpathreg.
-  4. Creates a "SlimeVR-lite" Start menu shortcut to the dashboard app (it is not
+  4. Creates a "Slime Motion Tracker" Start menu shortcut to the dashboard app (it is not
      started with SteamVR).
 
   Run from the repository root:  powershell -ExecutionPolicy Bypass -File tools\install.ps1
@@ -20,7 +20,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$target = Join-Path $env:LOCALAPPDATA 'SlimeVR-lite\driver\slimevr_lite'
+$target = Join-Path $env:LOCALAPPDATA 'Slime Motion Tracker\driver\slime_motion_tracker'
 
 function Find-VrPathReg {
     $vrpaths = Join-Path $env:LOCALAPPDATA 'openvr\openvrpaths.vrpath'
@@ -39,9 +39,9 @@ if (Get-Process vrserver -ErrorAction SilentlyContinue) {
 }
 
 $vrpathreg = Find-VrPathReg
-$shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'SlimeVR-lite.lnk'
+$shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'Slime Motion Tracker.lnk'
 # Older installs put it on the desktop
-$oldShortcut = Join-Path ([Environment]::GetFolderPath('Desktop')) 'SlimeVR-lite.lnk'
+$oldShortcut = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Slime Motion Tracker.lnk'
 if (Test-Path $oldShortcut) { Remove-Item $oldShortcut }
 
 if ($Uninstall) {
@@ -58,24 +58,50 @@ if (-not $NoBuild) {
     if ($LASTEXITCODE -ne 0) { throw 'build failed' }
 }
 
-$package = Join-Path $root 'build\slimevr_lite'
-if (-not (Test-Path (Join-Path $package 'bin\win64\driver_slimevr_lite.dll'))) {
+# Migration from the project's former name (SlimeVR-lite): unregister the old driver,
+# move the data folder (config, mag calibrations, recordings) and drop the old files
+$oldRoot = Join-Path $env:LOCALAPPDATA 'SlimeVR-lite'
+$newRoot = Join-Path $env:LOCALAPPDATA 'Slime Motion Tracker'
+if (Test-Path $oldRoot) {
+    Write-Host 'Migrating from SlimeVR-lite...'
+    & $vrpathreg removedriver (Join-Path $oldRoot 'driver\slimevr_lite') | Out-Null
+    Get-Process slimevr_lite_overlay, slimelite_engine_host -ErrorAction SilentlyContinue | Stop-Process -Force
+    Start-Sleep -Milliseconds 500
+    if (-not (Test-Path $newRoot)) {
+        # A rename keeps everything inside, including a recordings junction
+        Rename-Item $oldRoot (Split-Path -Leaf $newRoot)
+    } else {
+        foreach ($f in 'config.json', 'battery_history.json') {
+            $src = Join-Path $oldRoot $f
+            if ((Test-Path $src) -and -not (Test-Path (Join-Path $newRoot $f))) { Copy-Item $src $newRoot }
+        }
+    }
+    $oldDriver = Join-Path $newRoot 'driver\slimevr_lite'
+    if (Test-Path $oldDriver) { Remove-Item -Recurse -Force $oldDriver }
+    foreach ($dir in [Environment]::GetFolderPath('Programs'), [Environment]::GetFolderPath('Desktop')) {
+        $old = Join-Path $dir 'SlimeVR-lite.lnk'
+        if (Test-Path $old) { Remove-Item $old }
+    }
+}
+
+$package = Join-Path $root 'build\slime_motion_tracker'
+if (-not (Test-Path (Join-Path $package 'bin\win64\driver_slime_motion_tracker.dll'))) {
     throw "driver package not found in $package"
 }
 
-Get-Process slimevr_lite_overlay -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process SlimeMotionTracker -ErrorAction SilentlyContinue | Stop-Process -Force
 New-Item -ItemType Directory -Force $target | Out-Null
 Copy-Item -Recurse -Force (Join-Path $package '*') $target
 
 & $vrpathreg adddriver $target | Out-Null
 
 # Start menu shortcut to the dashboard app, with the icon embedded in the exe
-$exe = Join-Path $target 'bin\win64\slimevr_lite_overlay.exe'
+$exe = Join-Path $target 'bin\win64\SlimeMotionTracker.exe'
 $link = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcut)
 $link.TargetPath = $exe
 $link.WorkingDirectory = Split-Path $exe
 $link.IconLocation = "$exe,0"
-$link.Description = 'SlimeVR-lite: trackers, calibration and settings'
+$link.Description = 'Slime Motion Tracker: trackers, calibration and settings'
 $link.Save()
 
 Write-Host "Installed to $target and registered with SteamVR. Start menu shortcut: $shortcut"

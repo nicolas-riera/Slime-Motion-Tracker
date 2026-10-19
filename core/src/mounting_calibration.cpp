@@ -1,8 +1,8 @@
-#include "slimelite/mounting_calibration.h"
+#include "smt/mounting_calibration.h"
 
 #include <cstdio>
 
-namespace slimelite {
+namespace smt {
 
 MountingResult solveMounting(const Quat& qStand, const Quat& qSki, double bodyYaw,
 							 double minBendDegrees) {
@@ -47,4 +47,4 @@ MountingResult solveQuickReset(const Quat& qStand, const Quat& mounting, double 
 	return r;
 }
 
-}  // namespace slimelite
+}  // namespace smt

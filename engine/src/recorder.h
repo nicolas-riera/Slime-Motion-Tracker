@@ -1,6 +1,6 @@
 // Session recorder: every raw tracker packet, every SteamVR device pose (HMD,
 // controllers), the engine outputs and the calibration context, as JSONL in
-// %LOCALAPPDATA%\SlimeVR-lite\recordings. Used to replay sessions offline, tune
+// %LOCALAPPDATA%\Slime Motion Tracker\recordings. Used to replay sessions offline, tune
 // the estimator and train models. Times are steady-clock seconds (same clock as
 // the tracker hub).
 //
@@ -32,9 +32,9 @@
 #include <string>
 #include <thread>
 
-#include "slimelite/protocol.h"
+#include "smt/protocol.h"
 
-namespace slimelite {
+namespace smt {
 
 class Recorder {
 public:
@@ -67,4 +67,4 @@ private:
 	std::thread m_writer;
 };
 
-}  // namespace slimelite
+}  // namespace smt

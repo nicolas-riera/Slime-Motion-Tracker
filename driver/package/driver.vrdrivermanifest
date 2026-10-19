@@ -1,6 +1,6 @@
 {
   "alwaysActivate": true,
-  "name": "slimevr_lite",
+  "name": "slime_motion_tracker",
   "directory": "",
   "resourceOnly": false,
   "hmd_presence": []

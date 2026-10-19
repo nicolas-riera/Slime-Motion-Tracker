@@ -1,7 +1,7 @@
 """Offline tuning of the body solver constants against the Kinect ground truth.
 
-Runs slimelite_body_replay on the Kinect-covered part of a session with solver
-constants overridden through SL_TUNE (core/src/body_solver.cpp, tunable()), scores
+Runs smt_body_replay on the Kinect-covered part of a session with solver
+constants overridden through SMT_TUNE (core/src/body_solver.cpp, tunable()), scores
 every run and searches the constants with a simple evolution strategy (CMA-like:
 weighted recombination of the best samples, step size adapted to the success rate).
 Runs in parallel, with no network and no AI: it can run for hours unattended.
@@ -38,7 +38,7 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 import eval_replay  # noqa: E402
 
-REPLAY = os.path.join(ROOT, "build", "Release", "slimelite_body_replay.exe")
+REPLAY = os.path.join(ROOT, "build", "Release", "smt_body_replay.exe")
 CAMERA = np.array([1.46257241, 1.92838919, 1.48353078])  # tools/ml/dataset.py
 LIFTED = 0.15
 GUARDRAILS = ("standing_air", "planted_h", "skate", "foot_far", "jit_foot", "jit_knee",
@@ -153,7 +153,7 @@ def accuracy(rp, t_rp, gt, sel):
 
 def run(args, params, gt, t_first):
     env = dict(os.environ)
-    env["SL_TUNE"] = ",".join(f"{k}={v:.6g}" for k, v in params.items())
+    env["SMT_TUNE"] = ",".join(f"{k}={v:.6g}" for k, v in params.items())
     fd, csv = tempfile.mkstemp(suffix=".csv", dir=args.out)
     os.close(fd)
     try:

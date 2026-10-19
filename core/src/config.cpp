@@ -1,10 +1,10 @@
-#include "slimelite/config.h"
+#include "smt/config.h"
 
 #include <cstdlib>
 #include <fstream>
 #include <nlohmann/json.hpp>
 
-namespace slimelite {
+namespace smt {
 
 using nlohmann::json;
 
@@ -41,7 +41,7 @@ Quat quatFromJson(const json& j) {
 std::filesystem::path Config::defaultPath() {
 	const char* base = std::getenv("LOCALAPPDATA");
 	std::filesystem::path dir = base ? base : ".";
-	return dir / "SlimeVR-lite" / "config.json";
+	return dir / "Slime Motion Tracker" / "config.json";
 }
 
 bool Config::load(const std::filesystem::path& path) {
@@ -158,4 +158,4 @@ bool Config::save(const std::filesystem::path& path) const {
 	return !ec;
 }
 
-}  // namespace slimelite
+}  // namespace smt

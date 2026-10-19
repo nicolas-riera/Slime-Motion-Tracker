@@ -5,7 +5,7 @@
 // with --parent (exit with the overlay) and --until-steamvr (exit when SteamVR
 // starts, so the driver gets the tracker port and the dongle).
 //
-// Usage: slimelite_engine_host <path\to\slimelite_engine.dll> [--seconds N]
+// Usage: smt_engine_host <path\to\smt_engine.dll> [--seconds N]
 //        [--parent PID] [--until-steamvr]
 #include <windows.h>
 #include <tlhelp32.h>
@@ -18,7 +18,7 @@
 
 #include "../../driver/src/engine_loader.h"
 
-using namespace slimelite;
+using namespace smt;
 
 namespace {
 
@@ -38,7 +38,7 @@ bool processRunning(const wchar_t* exeName) {
 
 int main(int argc, char** argv) {
 	if (argc < 2) {
-		std::printf("usage: %s slimelite_engine.dll [--seconds N]\n", argv[0]);
+		std::printf("usage: %s smt_engine.dll [--seconds N]\n", argv[0]);
 		return 1;
 	}
 	double seconds = 1e9;
@@ -62,8 +62,8 @@ int main(int argc, char** argv) {
 	using clock = std::chrono::steady_clock;
 	auto now = [] { return std::chrono::duration<double>(clock::now().time_since_epoch()).count(); };
 	double start = now(), lastPrint = 0, lastCheck = 0;
-	static SlFrameInput in;
-	SlFrameOutput out{};
+	static SmtFrameInput in;
+	SmtFrameOutput out{};
 	while (now() - start < seconds) {
 		double t = now();
 		if (t - lastCheck > 0.5) {
@@ -72,7 +72,7 @@ int main(int argc, char** argv) {
 			if (untilSteamVr && processRunning(L"vrserver.exe")) break;
 		}
 		loader.poll(t);
-		in = SlFrameInput{};
+		in = SmtFrameInput{};
 		in.now = t;
 		in.hmdValid = 1;
 		// Identity rotation, eyes 1.65 m above a floor at y = 0

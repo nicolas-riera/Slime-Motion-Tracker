@@ -5,9 +5,9 @@
 
 #include <string>
 
-#include "slimelite/engine_api.h"
+#include "smt/engine_api.h"
 
-namespace slimelite {
+namespace smt {
 
 class VirtualTracker : public vr::ITrackedDeviceServerDriver {
 public:
@@ -18,8 +18,8 @@ public:
 	const std::string& role() const { return m_role; }
 	bool isActive() const { return m_id != vr::k_unTrackedDeviceIndexInvalid; }
 
-	void updatePose(const SlPose& pose, bool sendVelocity);
-	void updateBattery(const SlBattery& battery);
+	void updatePose(const SmtPose& pose, bool sendVelocity);
+	void updateBattery(const SmtBattery& battery);
 
 	vr::EVRInitError Activate(uint32_t unObjectId) override;
 	void Deactivate() override;
@@ -37,4 +37,4 @@ private:
 	vr::DriverPose_t m_pose{};
 };
 
-}  // namespace slimelite
+}  // namespace smt

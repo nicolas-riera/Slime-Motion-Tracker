@@ -11,7 +11,7 @@
 #include "engine_loader.h"
 #include "virtual_tracker.h"
 
-namespace slimelite {
+namespace smt {
 
 class DeviceProvider : public vr::IServerTrackedDeviceProvider {
 public:
@@ -24,7 +24,7 @@ public:
 	void LeaveStandby() override {}
 
 private:
-	std::array<std::unique_ptr<VirtualTracker>, SL_DEVICE_COUNT> m_devices;
+	std::array<std::unique_ptr<VirtualTracker>, SMT_DEVICE_COUNT> m_devices;
 	std::unique_ptr<EngineLoader> m_engine;
 	// Device class/role/serial, refreshed every few seconds (property reads are not free)
 	struct DeviceInfo {
@@ -32,8 +32,8 @@ private:
 		int role = 0;
 		char serial[48] = {};
 	};
-	std::array<DeviceInfo, SL_MAX_DEVICES> m_deviceInfo{};
+	std::array<DeviceInfo, SMT_MAX_DEVICES> m_deviceInfo{};
 	double m_lastInfoRefresh = 0;
 };
 
-}  // namespace slimelite
+}  // namespace smt

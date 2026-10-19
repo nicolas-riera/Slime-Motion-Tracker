@@ -7,7 +7,7 @@ Segments of the packed AMASS (amass_prep.py) are picked by what the body does (a
 foot held up while standing, seated, kneeling, lying, walking). Each is converted to what our hardware sees (HMD,
 controllers, shin and waist tracker orientations and accelerations, as in
 train_pose.py) in the body_replay --dump layout, run through the C++ solver
-(slimelite_dump_solve, optionally with SL_TUNE variants and the pose model), and
+(smt_dump_solve, optionally with SMT_TUNE variants and the pose model), and
 scored against the exact SMPL ankles: median 3D error, and the error while a foot
 is raised (> 15 cm above its floor height).
 """
@@ -27,7 +27,7 @@ sys.path.insert(0, HERE)
 import train_pose as tp  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
-EXE = os.path.join(ROOT, "build", "Release", "slimelite_dump_solve.exe")
+EXE = os.path.join(ROOT, "build", "Release", "smt_dump_solve.exe")
 M = np.array([[1, 0, 0], [0, 0, 1], [0, -1, 0]], np.float64)  # Rx90^T: AMASS -> ours
 RY180 = np.diag([-1.0, 1.0, -1.0])
 HEAD_OFFSET = np.array([0.0, -0.08, 0.10])  # features.py: head joint in the HMD frame
@@ -197,7 +197,7 @@ def main():
     ap.add_argument("body_models")
     ap.add_argument("work")
     ap.add_argument("--per-cat", type=int, default=20)
-    ap.add_argument("--variants", default='[{}]', help="JSON list of SL_TUNE dicts")
+    ap.add_argument("--variants", default='[{}]', help="JSON list of SMT_TUNE dicts")
     ap.add_argument("--pose-model")
     ap.add_argument("--ankles", action="store_true")
     ap.add_argument("--workers", type=int, default=14)
@@ -231,7 +231,7 @@ def main():
     def run(job):
         vi, v, (cat, f, dump, gtp) = job
         env = dict(os.environ)
-        env["SL_TUNE"] = ",".join(f"{k}={x}" for k, x in v.items())
+        env["SMT_TUNE"] = ",".join(f"{k}={x}" for k, x in v.items())
         out = dump[:-4] + f"_out{vi}.bin"
         cmd = [EXE, dump, out] + (["--ankles"] if args.ankles else [])
         if args.pose_model:

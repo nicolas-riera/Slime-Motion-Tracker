@@ -14,7 +14,7 @@
 #include <string>
 #include <vector>
 
-namespace slimelite::ui {
+namespace smt::ui {
 
 class BatteryEstimator {
 public:
@@ -51,4 +51,4 @@ private:
     bool m_dirty = false;
 };
 
-}  // namespace slimelite::ui
+}  // namespace smt::ui

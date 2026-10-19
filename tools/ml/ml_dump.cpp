@@ -4,7 +4,7 @@
 // speeds) plus the outputs recorded live, as a raw float64 matrix. Used to train
 // and check the learned foot model (tools/ml, core/src/foot_model.cpp).
 //
-// Usage: slimelite_ml_dump session.jsonl out.bin
+// Usage: smt_ml_dump session.jsonl out.bin
 //   out.bin: rows of kColumns float64 (column names in out.bin.json)
 #include <cstdio>
 #include <fstream>
@@ -14,11 +14,11 @@
 #include <string>
 #include <vector>
 
-#include "slimelite/config.h"
-#include "slimelite/linalg.h"
-#include "slimelite/protocol.h"
+#include "smt/config.h"
+#include "smt/linalg.h"
+#include "smt/protocol.h"
 
-using namespace slimelite;
+using namespace smt;
 using nlohmann::json;
 
 namespace {
