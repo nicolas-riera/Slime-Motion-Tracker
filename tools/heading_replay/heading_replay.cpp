@@ -8,7 +8,9 @@
 //      dev_yaw_deg (device yaw, uncorrected), hmd_yaw_deg
 // Options: --sensitivity S, --adaptive 0|1 (local field reference), --ref-time S,
 //          --mag-sigma DEG, --corr-time S, --heading-walk DEG_PER_SQRT_MIN, --consistent 0|1,
-//          --max-rate DEG_PER_MIN
+//          --max-rate DEG_PER_MIN, --fast 0|1 (fast realignment), --restore 1 (start from the
+//          recorded live headings instead of acquiring)
+// mag_deg: the heading the mag measures (the filter's target)
 #include <cstdio>
 #include <fstream>
 #include <map>
@@ -31,6 +33,7 @@ struct Track {
 	bool hasRotation = false;
 	double prevRotTime = 0, angularSpeed = 0, lastMag = 0, recHeading = 0;
 	double temperature = std::nan("");
+	bool restored = false;
 	int lastOutput = -1;
 };
 
@@ -52,6 +55,7 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 	HeadingFilterSettings settings;
+	bool restore = false;
 	for (int i = 3; i + 1 < argc; i += 2)
 		if (std::string(argv[i]) == "--sensitivity") settings.sensitivity = std::atof(argv[i + 1]);
 		else if (std::string(argv[i]) == "--adaptive") settings.adaptiveRef = std::atoi(argv[i + 1]) != 0;
@@ -59,6 +63,8 @@ int main(int argc, char** argv) {
 		else if (std::string(argv[i]) == "--mag-sigma") settings.magSigma = deg2rad(std::atof(argv[i + 1]));
 		else if (std::string(argv[i]) == "--corr-time") settings.magCorrTime = std::atof(argv[i + 1]);
 		else if (std::string(argv[i]) == "--consistent") settings.consistentRelock = std::atoi(argv[i + 1]) != 0;
+		else if (std::string(argv[i]) == "--fast") settings.fastRealign = std::atoi(argv[i + 1]) != 0;
+		else if (std::string(argv[i]) == "--restore") restore = std::atoi(argv[i + 1]) != 0;
 		else if (std::string(argv[i]) == "--max-rate") settings.maxRate = deg2rad(std::atof(argv[i + 1])) / 60.0;
 		else if (std::string(argv[i]) == "--heading-walk")
 			settings.headingWalk = deg2rad(std::atof(argv[i + 1])) / std::sqrt(60.0);
@@ -68,7 +74,7 @@ int main(int argc, char** argv) {
 		std::printf("cannot open the files\n");
 		return 1;
 	}
-	std::fprintf(out, "t,mac,role,heading_deg,state,rec_heading_deg,rate_deg_min,sigma_deg,norm,dip_dev_deg,speed,dev_yaw_deg,hmd_yaw_deg\n");
+	std::fprintf(out, "t,mac,role,heading_deg,state,rec_heading_deg,rate_deg_min,sigma_deg,norm,dip_dev_deg,speed,dev_yaw_deg,hmd_yaw_deg,mag_deg\n");
 
 	Config config;
 	std::map<std::string, Track> tracks;
@@ -98,7 +104,12 @@ int main(int argc, char** argv) {
 		} else if (k == "tmp") {
 			tracks[j["mac"].get<std::string>()].temperature = j.value("c", 0.0);
 		} else if (k == "trk") {
-			tracks[j["mac"].get<std::string>()].recHeading = rad2deg(j.value("hdg", 0.0));
+			Track& tr = tracks[j["mac"].get<std::string>()];
+			tr.recHeading = rad2deg(j.value("hdg", 0.0));
+			if (restore && !tr.restored && tr.cal.valid) {
+				tr.filter.restore(j.value("hdg", 0.0));
+				tr.restored = true;
+			}
 		} else if (k == "rot" && j.value("s", 0) == 0) {
 			auto q = j["q"];
 			Quat qw = proto::firmwareToWorld(
@@ -132,11 +143,12 @@ int main(int argc, char** argv) {
 				const char* role = it != config.trackers.end() ? roleName(it->second.role) : "none";
 				// Yaws (twist about the vertical): device (uncorrected) and headset
 				const double devYaw = 2.0 * std::atan2(tr.qWorld.y, tr.qWorld.w);
-				std::fprintf(out, "%.2f,%s,%s,%.2f,%s,%.2f,%.3f,%.2f,%.4f,%.2f,%.3f,%.2f,%s\n", t - t0, mac.c_str(), role,
+				std::fprintf(out, "%.2f,%s,%s,%.2f,%s,%.2f,%.3f,%.2f,%.4f,%.2f,%.3f,%.2f,%s,%.2f\n", t - t0, mac.c_str(), role,
 							 rad2deg(tr.filter.heading()), stateName(tr.filter.state()), tr.recHeading,
 							 rad2deg(tr.filter.rate()) * 60, rad2deg(tr.filter.headingSigma()), tr.filter.lastNorm(),
 							 rad2deg(tr.filter.lastDip() - tr.filter.calibration().dip), tr.angularSpeed,
-							 rad2deg(devYaw), hasHmd ? std::to_string(rad2deg(hmdYaw)).c_str() : "");
+							 rad2deg(devYaw), hasHmd ? std::to_string(rad2deg(hmdYaw)).c_str() : "",
+							 rad2deg(tr.filter.lastMagHeading()));
 			}
 		}
 	}

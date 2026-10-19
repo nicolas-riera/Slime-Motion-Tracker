@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 
 #include "smt/mag.h"
 
@@ -26,6 +27,8 @@ void HeadingFilter::reset() {
 	m_acqSin = m_acqCos = m_acqTime = 0;
 	m_relock = false;
 	m_consistTime = 0;
+	m_fastTime = 0;
+	m_glide = 0;
 	m_refNorm = 1;
 	m_refDip = m_cal.dip;
 }
@@ -50,6 +53,7 @@ void HeadingFilter::update(const Quat& qWorld, const std::array<int16_t, 3>& raw
 		m_state = State::Uncalibrated;
 		return;
 	}
+	m_glide *= std::exp(-dt / std::max(1e-3, s.glideTime));
 	Vec3 v = qWorld.rotate(m_cal.apply(raw));
 	double norm = v.norm();
 	if (norm < 1e-6) return;
@@ -57,6 +61,7 @@ void HeadingFilter::update(const Quat& qWorld, const std::array<int16_t, 3>& raw
 	double h = wrapAngle(headingOf(v) + m_cal.headingOffset);
 	m_lastNorm = norm;
 	m_lastDip = dip;
+	m_lastHeading = h;
 
 	double sens = std::clamp(s.sensitivity, 0.0, 1.0);
 	double normTol = lerp(0.35, 0.08, sens);
@@ -127,14 +132,18 @@ void HeadingFilter::update(const Quat& qWorld, const std::array<int16_t, 3>& raw
 		m_relockCos += std::cos(innovation);
 		m_relockTime += dt;
 		if (m_relockTime >= 0.3) {
-			m_heading = wrapAngle(m_heading + std::atan2(m_relockSin, m_relockCos));
-			m_P[0][0] = s.magSigma * s.magSigma;
-			m_P[0][1] = m_P[1][0] = m_P[0][2] = m_P[2][0] = 0;
+			// The orientation itself jumped: no glide, it would only prolong the error
+			jump(std::atan2(m_relockSin, m_relockCos), s.magSigma, false);
 			m_relock = false;
-			m_rejectRatio = m_cleanTime = 0;
-			m_state = State::Ok;
 		}
 		return;
+	}
+
+	if (s.fastRealign && fieldOk && dNorm < s.fastFieldTol * s.normSoft && dDip < s.fastFieldTol * s.dipSoft) {
+		fastRealign(innovation, angularSpeed, dt, s);
+		innovation = wrapAngle(h - m_heading);
+	} else {
+		m_fastTime = 0;
 	}
 
 	// Gate against the predicted uncertainty: a heading the gyro cannot explain is a
@@ -205,15 +214,42 @@ void HeadingFilter::consistentRelock(double innovation, double norm, double dip,
 
 	// The gyro heading drifted (or the field here differs uniformly from the calibration
 	// room's): take the mag heading and this field
-	m_heading = wrapAngle(m_heading + std::atan2(m_consistSin, m_consistCos));
-	m_P[0][0] = s.magSigma * s.magSigma;
-	m_P[0][1] = m_P[1][0] = m_P[0][2] = m_P[2][0] = 0;
+	jump(std::atan2(m_consistSin, m_consistCos), s.magSigma);
 	if (s.adaptiveRef) {
 		m_refNorm = std::clamp(m_consistNorm / m_consistTime, 1.0 - s.refMaxNorm, 1.0 + s.refMaxNorm);
 		m_refDip = std::clamp(m_consistDip / m_consistTime, m_cal.dip - s.refMaxDip, m_cal.dip + s.refMaxDip);
 	}
 	m_consistTime = 0;
+}
+
+void HeadingFilter::fastRealign(double innovation, double angularSpeed, double dt, const HeadingFilterSettings& s) {
+	if (m_fastTime > 0.5) {
+		// Leaving the running mean offset: noise or a bending field, start over
+		double mean = std::atan2(m_fastSin, m_fastCos);
+		if (std::fabs(wrapAngle(innovation - mean)) > s.fastTol) m_fastTime = 0;
+	}
+	if (m_fastTime == 0) m_fastSin = m_fastCos = m_fastRot = 0;
+	m_fastTime += dt;
+	m_fastSin += std::sin(innovation) * dt;
+	m_fastCos += std::cos(innovation) * dt;
+	m_fastRot += angularSpeed * dt;
+	if (m_fastTime < s.fastTime || m_fastRot < s.fastRotation) return;
+	double mean = std::atan2(m_fastSin, m_fastCos);
+	if (std::fabs(mean) < s.fastMin) {
+		// Already aligned: keep measuring the recent samples
+		m_fastTime = 0;
+		return;
+	}
+	jump(mean, s.fastTol);
+}
+
+void HeadingFilter::jump(double delta, double sigma, bool smooth) {
+	m_heading = wrapAngle(m_heading + delta);
+	m_glide = smooth ? wrapAngle(m_glide - delta) : 0.0;
+	m_P[0][0] = sigma * sigma;
+	m_P[0][1] = m_P[1][0] = m_P[0][2] = m_P[2][0] = 0;
 	m_rejectRatio = m_cleanTime = 0;
+	m_consistTime = m_fastTime = 0;
 	m_state = State::Ok;
 }
 

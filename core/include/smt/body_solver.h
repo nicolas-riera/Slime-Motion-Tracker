@@ -157,6 +157,8 @@ private:
 		Vec3 insPos, insVel;
 		double swingTime = 0;
 		double footBlend = 0;  // 0 flat on the floor, 1 follows the shin
+		bool footYawInit = false;
+		double footYaw = 0;  // flat foot yaw, held while planted
 		// Thigh direction (pelvis frame) of the last solve, and the one held when a
 		// swing outlasts the dead reckoning (knee kept up, see kHoldTime)
 		Vec3 thighLocal{0, -1, 0}, holdThigh{0, -1, 0};

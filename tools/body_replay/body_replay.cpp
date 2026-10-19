@@ -294,7 +294,7 @@ int main(int argc, char** argv) {
 				 "ankle_floor,eye_h,lc_x,lc_y,lc_z,rc_x,rc_y,rc_z,"
 				 "hmd_yaw,rec_w_yaw,rec_w_tilt,w_yaw,w_tilt,l_shin_yaw,r_shin_yaw,hip0_x,hip0_z,"
 				 "l_td_swing,r_td_swing,l_td_h,r_td_h,"
-				 "lkx,lky,lkz,rkx,rky,rkz,l_flex,r_flex,l_abd,r_abd,l_ins_x,l_ins_z,r_ins_x,r_ins_z,pelvis_fwd_y\n");
+				 "lkx,lky,lkz,rkx,rky,rkz,l_flex,r_flex,l_abd,r_abd,l_ins_x,l_ins_z,r_ins_x,r_ins_z,pelvis_fwd_y,pelvis_up_x,pelvis_up_z\n");
 
 	Config config;
 	bool haveConfig = false;
@@ -688,8 +688,9 @@ int main(int argc, char** argv) {
 			}
 			std::fprintf(csv, "%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.1f,%.1f,%.1f,%.1f,", o.knees[0].x, o.knees[0].y,
 						 o.knees[0].z, o.knees[1].x, o.knees[1].y, o.knees[1].z, flex[0], flex[1], abd[0], abd[1]);
-			std::fprintf(csv, "%.4f,%.4f,%.4f,%.4f,%.3f\n", dbg.ins[0].x, dbg.ins[0].z, dbg.ins[1].x, dbg.ins[1].z,
-						 bin.hasWaist ? bin.waist.rotate({0, 0, 1}).y : 0.0);
+			const Vec3 pelvisUp = o.waist.rotation.rotate({0, 1, 0});
+			std::fprintf(csv, "%.4f,%.4f,%.4f,%.4f,%.3f,%.4f,%.4f\n", dbg.ins[0].x, dbg.ins[0].z, dbg.ins[1].x,
+						 dbg.ins[1].z, bin.hasWaist ? bin.waist.rotate({0, 0, 1}).y : 0.0, pelvisUp.x, pelvisUp.z);
 		}
 	}
 	std::fclose(csv);

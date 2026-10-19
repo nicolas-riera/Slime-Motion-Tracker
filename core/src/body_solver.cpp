@@ -123,8 +123,16 @@ const double kNeckStandOnly = tunable("kNeckStandOnly", 0.0);
 // still shins and pelvis leaves the hip where the legs hold it
 const double kHipSigmaFwd = tunable("kHipSigmaFwd", 0.0);
 // Hip position prior around the head chain (m), with the waist tracker: horizontal
-// and vertical sigmas against the legs' anchors
-const double kHipSigmaH = tunable("kHipSigmaH", 0.05);
+// and vertical sigmas against the legs' anchors. 0.05 let the planted feet pull the
+// hip: standing sway came out 40 % larger than the pelvis measured with both
+// controllers held on it (2026-10-20, fore-aft error 6.9 -> 5.5 cm with 0.02).
+// Seated the seat anchor needs the looser one (the hip stays put as the head leans)
+const double kHipSigmaH = tunable("kHipSigmaH", 0.02);
+const double kHipSigmaSeated = tunable("kHipSigmaSeated", 0.05);
+// Planted on the floor, the foot keeps the yaw it landed with: the shin twists by
+// ~10 deg per step and, with the SteamVR foot point ahead of the ankle, that twist
+// slid the foot. Beyond kFootYawFree (rad) it is dragged along (pivoting in place)
+const double kFootYawFree = tunable("kFootYawFree", 0.26);
 const double kHipSigmaV = tunable("kHipSigmaV", 0.06);
 // Reclined (pelvis up axis height from kReclineStart to kReclineFull: leaning back
 // on a bed, lying): the chest emulation applies, and the planted feet rest on the
@@ -615,7 +623,7 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 		if (!ls.planted && inertial > 0.01 && ls.swingTime < kMaxSwing)
 			insSigma[i] = (0.01 + 0.25 * sq(ls.swingTime)) * insScale;
 	}
-	const double hipSigmaH = useWaistTracker ? kHipSigmaH : 0.15;
+	const double hipSigmaH = useWaistTracker ? lerp(kHipSigmaSeated, kHipSigmaH, standing) : 0.15;
 	const double hipSigmaV = useWaistTracker ? kHipSigmaV : 0.10;
 	const double hipSigmaSmooth = std::max(0.002, 1.5 * dt);
 	const double hipLimitH = lerp(useWaistTracker ? 0.25 : 0.4, kSeatReach + 0.1, seated);
@@ -803,7 +811,19 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 		bool onFloor = ls.planted && std::fabs(ankle.y - ankleY) < 0.06 && down[i].y < -0.5;
 		double target = onFloor ? 0.0 : 1.0;
 		ls.footBlend += (target - ls.footBlend) * std::min(1.0, dt / 0.12);
-		Quat flat = Quat::yaw(shinYaw(in.legs[i].shin));
+		const double yawNow = shinYaw(in.legs[i].shin);
+		if (!ls.footYawInit) {
+			ls.footYawInit = true;
+			ls.footYaw = yawNow;
+		}
+		const double yawDiff = wrapAngle(yawNow - ls.footYaw);
+		if (onFloor) {
+			if (std::fabs(yawDiff) > kFootYawFree)
+				ls.footYaw = wrapAngle(ls.footYaw + yawDiff - std::copysign(kFootYawFree, yawDiff));
+		} else {
+			ls.footYaw = wrapAngle(ls.footYaw + yawDiff * std::min(1.0, dt / 0.1));
+		}
+		Quat flat = Quat::yaw(ls.footYaw);
 		Quat footRot = slerp(flat, in.legs[i].shin, ls.footBlend);
 
 		out.feet[i] = {ankle, footRot};

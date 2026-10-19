@@ -174,6 +174,8 @@ def replay_job(job):
     s = _SESS[i]
     env = dict(os.environ)
     env["SMT_TUNE"] = ",".join(f"{k}={v:.6g}" for k, v in params.items())
+    if os.environ.get("SMT_TUNE_EXTRA"):  # first match wins: overrides the candidate
+        env["SMT_TUNE"] = os.environ["SMT_TUNE_EXTRA"] + "," + env["SMT_TUNE"]
     env["SMT_NO_WAIST"] = "1" if no_waist else "0"
     env["SMT_MAG_REPLAY"] = "1" if MAG else "0"
     fd, csv = tempfile.mkstemp(suffix=".csv", dir=out_dir)

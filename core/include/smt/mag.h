@@ -138,6 +138,20 @@ struct HeadingFilterSettings {
 	// Learnt drift bound: the firmware removes most of the gyro bias, what is left is a
 	// few deg/min at most
 	double maxRate = deg2rad(5.0) / 60.0;
+	// Fast realignment: in a clean field (norm and dip within fastFieldTol soft scales of
+	// the local reference), a mag heading that keeps the same offset from the gyro heading
+	// (within fastTol) for fastTime seconds while the tracker turns by fastRotation is
+	// drift, not noise: take it at once instead of the slow Kalman pull (time constant of
+	// minutes) or waiting for the rotation-consistent relock
+	bool fastRealign = true;
+	double fastMin = deg2rad(4.0);
+	double fastTol = deg2rad(4.0);
+	double fastTime = 1.5;
+	double fastRotation = deg2rad(30.0);
+	double fastFieldTol = 1.5;
+	// Heading jumps (fast realignment, relocks) reach the output smoothly, with this
+	// time constant (s)
+	double glideTime = 0.3;
 };
 
 class HeadingFilter {
@@ -159,6 +173,7 @@ public:
 		m_P[0][0] = deg2rad(2.0) * deg2rad(2.0);
 		m_P[1][1] = d.rateInit * d.rateInit;
 		m_P[2][2] = d.tempRateInit * d.tempRateInit;
+		m_glide = 0;
 		m_initialized = true;
 		m_state = State::Ok;
 	}
@@ -176,7 +191,7 @@ public:
 
 	// Yaw to apply on the left of the device orientation: q_corrected = Ry(-h) * q
 	bool hasHeading() const { return m_initialized; }
-	double heading() const { return m_heading; }
+	double heading() const { return wrapAngle(m_heading + m_glide); }
 	// Learnt drift rate of the heading correction (rad/s) and its temperature slope
 	double rate() const { return m_rate; }
 	double tempRate() const { return m_tempRate; }
@@ -186,6 +201,7 @@ public:
 	// Last measurement, for diagnostics
 	double lastNorm() const { return m_lastNorm; }
 	double lastDip() const { return m_lastDip; }
+	double lastMagHeading() const { return m_lastHeading; }
 	double refNorm() const { return m_refNorm; }
 	double refDip() const { return m_refDip; }
 
@@ -200,7 +216,13 @@ private:
 	double m_stillTime = 0;
 	double m_cleanTime = 0;
 	double m_rejectRatio = 0;  // recent fraction of heading-inconsistent samples
-	double m_lastNorm = 0, m_lastDip = 0;
+	double m_lastNorm = 0, m_lastDip = 0, m_lastHeading = 0;
+	// Output offset still to absorb after a heading jump (heading() = m_heading + m_glide)
+	double m_glide = 0;
+	void jump(double delta, double sigma, bool smooth = true);
+	// Fast realignment window (fastRealign)
+	void fastRealign(double innovation, double angularSpeed, double dt, const HeadingFilterSettings& s);
+	double m_fastSin = 0, m_fastCos = 0, m_fastTime = 0, m_fastRot = 0;
 	double m_refNorm = 1, m_refDip = 0;  // local field reference (adaptiveRef)
 	// Initial acquisition: circular mean of the first consistent samples
 	double m_acqSin = 0, m_acqCos = 0, m_acqTime = 0;
