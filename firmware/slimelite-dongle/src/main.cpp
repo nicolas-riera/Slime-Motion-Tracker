@@ -12,6 +12,8 @@
 //           payload "SLDONGLE" version channel, mac = dongle
 //   type 2: probe, PC -> dongle
 //   type 3: set channel, PC -> dongle, payload[0] = 1..13
+// LED: 3 fast blinks once ready, then off; every 5 s, one blink per tracker
+// heard in the last 3 s.
 // ESP-NOW frames: 'S' 'L' version kind payload. kind 0: SlimeVR packet, 1: a
 // tracker searching for the dongle (broadcast), 2: the dongle's answer. A tracker
 // that finds the dongle never joins the WiFi network (power saving).
@@ -121,6 +123,67 @@ void sendToTracker(const uint8_t* mac, uint8_t kind, const uint8_t* payload, uin
 	esp_now_send(m, buf, kHeader + len);
 }
 
+// Trackers heard recently (data frames), for the LED
+constexpr int kMaxTrackers = 16;
+constexpr uint32_t kTrackerTimeout = 3000;
+struct Tracker {
+	uint8_t mac[6];
+	uint32_t lastSeen;
+};
+Tracker g_trackers[kMaxTrackers];
+int g_trackerCount = 0;
+
+void trackerSeen(const uint8_t* mac) {
+	uint32_t now = millis();
+	for (int i = 0; i < g_trackerCount; i++)
+		if (memcmp(g_trackers[i].mac, mac, 6) == 0) {
+			g_trackers[i].lastSeen = now;
+			return;
+		}
+	int slot = 0;
+	if (g_trackerCount < kMaxTrackers) slot = g_trackerCount++;
+	else
+		for (int i = 1; i < kMaxTrackers; i++)
+			if (now - g_trackers[i].lastSeen > now - g_trackers[slot].lastSeen) slot = i;
+	memcpy(g_trackers[slot].mac, mac, 6);
+	g_trackers[slot].lastSeen = now;
+}
+
+int connectedTrackers() {
+	int n = 0;
+	for (int i = 0; i < g_trackerCount; i++)
+		if (millis() - g_trackers[i].lastSeen < kTrackerTimeout) n++;
+	return n;
+}
+
+// LED (GPIO2, lit when low): 3 fast blinks once ready, then off, and every
+// kLedPeriod one blink per connected tracker (nothing when none)
+constexpr uint8_t kLed = 2;
+constexpr uint32_t kLedPeriod = 5000;
+uint32_t g_blinkStart = 0, g_blinkOn = 0, g_blinkStep = 0;
+int g_blinkCount = 0;
+
+void blink(int count, uint32_t on, uint32_t step) {
+	g_blinkStart = millis();
+	g_blinkCount = count;
+	g_blinkOn = on;
+	g_blinkStep = step;
+}
+
+void updateLed() {
+	static uint32_t lastCount = 0;
+	uint32_t now = millis();
+	uint32_t t = now - g_blinkStart;
+	bool busy = t < g_blinkStep * uint32_t(g_blinkCount);
+	if (!busy && now - lastCount >= kLedPeriod) {
+		lastCount = now;
+		blink(connectedTrackers(), 150, 400);
+		t = 0;
+		busy = g_blinkCount > 0;
+	}
+	digitalWrite(kLed, busy && t % g_blinkStep < g_blinkOn ? LOW : HIGH);
+}
+
 // Serial frame parser
 uint8_t g_rx[4 + 6 + 255 + 1];
 size_t g_rxLen = 0;
@@ -157,6 +220,8 @@ void readSerial() {
 }  // namespace
 
 void setup() {
+	pinMode(kLed, OUTPUT);
+	digitalWrite(kLed, HIGH);
 	Serial.begin(921600);
 	Serial.setRxBufferSize(1024);
 	WiFi.persistent(false);
@@ -168,6 +233,7 @@ void setup() {
 	esp_now_set_self_role(ESP_NOW_ROLE_COMBO);
 	esp_now_register_recv_cb(onReceive);
 	sendInfo();
+	blink(3, 60, 140);
 }
 
 void loop() {
@@ -179,8 +245,10 @@ void loop() {
 	while (g_tail != g_head) {
 		Slot& s = g_slots[g_tail];
 		writeFrame(0, s.mac, s.data, s.len);
+		trackerSeen(s.mac);
 		g_tail = (g_tail + 1) % kSlots;
 	}
+	updateLed();
 	static uint32_t lastInfo = 0;
 	if (millis() - lastInfo > 1000) {
 		lastInfo = millis();
