@@ -168,7 +168,7 @@ const double kHoldBounce = tunable("kHoldBounce", 0.15);
 // hip's horizontal position gets a target of feet + ratio x (head - feet) plus an
 // offset that follows the head chain's answer over kSwayTime (a held posture stays
 // the solver's): fast sway follows the ankle pivot, slow posture the waist tracker.
-const double kSwaySigma = tunable("kSwaySigma", 0.008);  // m, 0 = off
+const double kSwaySigma = tunable("kSwaySigma", 0.0);  // m, 0 = off (worse in VR, 2026-10-19)
 const double kSwayTime = tunable("kSwayTime", 8.0);  // s
 const double kSwayDropStart = tunable("kSwayDropStart", 0.04);  // m of head drop: a bend
 const double kSwayDropEnd = tunable("kSwayDropEnd", 0.08);
