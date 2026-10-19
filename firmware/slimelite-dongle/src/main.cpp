@@ -1,6 +1,6 @@
 // SlimeVR-lite USB dongle (ESP8266 D1 mini).
 //
-// Relays the trackers' ESP-NOW frames (tracker firmware env SLIMELITE_D1MINI_ESPNOW)
+// Relays the trackers' ESP-NOW frames (the SLIMELITE_D1MINI tracker firmware looks for it at boot)
 // to the PC over USB serial and back. The PC side (core/src/dongle_bridge.cpp)
 // turns each tracker into a local UDP client of the tracker hub.
 //
