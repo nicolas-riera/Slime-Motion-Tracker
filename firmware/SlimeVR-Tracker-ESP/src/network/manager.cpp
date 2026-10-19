@@ -71,7 +71,7 @@ void Manager::update() {
 	} else if (m_LostSince == 0) {
 		m_LostSince = millis();
 	} else if (millis() - m_LostSince > kResearchMs) {
-		if (m_Transport == Transport::WiFi) WiFi.disconnect();
+		if (m_Transport == Transport::WiFi) EspNow::leaveNetwork();
 		startDongleSearch();
 		return;
 	}

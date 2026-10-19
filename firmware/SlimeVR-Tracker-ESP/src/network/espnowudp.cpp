@@ -71,7 +71,7 @@ void begin() {
 	g_hops = 0;
 	WiFi.persistent(false);
 	WiFi.mode(WIFI_STA);
-	WiFi.disconnect();
+	leaveNetwork();
 	// The radio must stay on to receive the server's packets
 	wifi_set_sleep_type(NONE_SLEEP_T);
 	wifi_set_channel(g_channel);
@@ -81,6 +81,8 @@ void begin() {
 	esp_now_add_peer(g_broadcast, ESP_NOW_ROLE_COMBO, 0, nullptr, 0);
 	g_lastHop = 0;
 }
+
+void leaveNetwork() { wifi_station_disconnect(); }
 
 bool searchStep() {
 	if (g_paired) return true;

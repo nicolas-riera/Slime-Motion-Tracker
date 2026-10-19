@@ -29,6 +29,9 @@ enum Kind : uint8_t { Data = 0, Search = 1, Here = 2 };
 
 // Radio in ESP-NOW mode (WiFi disconnected), searching for the dongle
 void begin();
+// Leaves the WiFi network, keeping the saved credentials (WiFi.disconnect() on
+// the ESP8266 core clears them, and erases them from flash when persistent)
+void leaveNetwork();
 // One search step: call from loop(); hops channel every ~150 ms. Returns true once
 // the dongle answered
 bool searchStep();
