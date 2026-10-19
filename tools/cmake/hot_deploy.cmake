@@ -3,6 +3,10 @@
 # With RESTART_OVERLAY, stops the running overlay first and starts the new one.
 # With STOP_FIRST, stops the running program first (the overlay restarts the
 # standalone engine host by itself).
+# SMT_NO_DEPLOY set in the environment: build only (e.g. while a VR session runs)
+if(DEFINED ENV{SMT_NO_DEPLOY})
+  return()
+endif()
 if(NOT IS_DIRECTORY "${DST}")
   return()
 endif()
