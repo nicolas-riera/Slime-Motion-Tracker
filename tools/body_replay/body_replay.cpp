@@ -565,6 +565,7 @@ int main(int argc, char** argv) {
 					bin.hasWaist = true;
 					bin.waist = seg;
 					waistAccel = (seg * tc.mounting.conj()).rotate(ts.accelLocal);
+					bin.waistAccel = waistAccel;
 				} else if (tc.role == Role::LeftAnkle || tc.role == Role::RightAnkle) {
 					int i = tc.role == Role::LeftAnkle ? 0 : 1;
 					auto& leg = bin.legs[i];

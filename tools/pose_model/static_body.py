@@ -12,6 +12,7 @@ not to degrade. With --pose-model, dumps need their stand capture time
 (dump.bin:T) to calibrate the wrists.
 """
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import subprocess
@@ -63,25 +64,35 @@ def main():
         data.append((path, stand, features.load_dump(path)))
     wins = [windows(d) for _, _, d in data]
     print(f"{sum(len(w) for w in wins)} still-body windows", flush=True)
-    for v in json.loads(args.variants):
+    variants = json.loads(args.variants)
+
+    def run(job):
+        vi, v, (p, stand, d), ws = job
         env = dict(os.environ)
         env["SL_TUNE"] = ",".join(f"{k}={x}" for k, x in v.items())
+        out = p + f".solve{vi}.bin"
+        cmd = [EXE, p, out] + (["--ankles"] if args.ankles else [])
+        if args.pose_model:
+            cmd += ["--pose-model", args.pose_model, "--stand", stand]
+        subprocess.run(cmd, env=env, check=True)
+        cols = json.load(open(out + ".json"))["columns"]
+        o = np.fromfile(out).reshape(-1, len(cols))
+        c = {n: o[:, k] for k, n in enumerate(cols)}
         ratios = []
-        for (p, stand, d), ws in zip(data, wins):
-            out = p + ".solve.bin"
-            cmd = [EXE, p, out] + (["--ankles"] if args.ankles else [])
-            if args.pose_model:
-                cmd += ["--pose-model", args.pose_model, "--stand", stand]
-            subprocess.run(cmd, env=env, check=True)
-            cols = json.load(open(out + ".json"))["columns"]
-            o = np.fromfile(out).reshape(-1, len(cols))
-            c = {n: o[:, k] for k, n in enumerate(cols)}
-            for k, e, u, amp in ws:
-                Wv = np.stack([c["wx"][k:e], c["wz"][k:e]], 1)
-                ratios.append(np.ptp((Wv - Wv.mean(0)) @ u) / amp)
-            os.remove(out)
-            os.remove(out + ".json")
-        r = np.array(ratios)
+        for k, e, u, amp in ws:
+            Wv = np.stack([c["wx"][k:e], c["wz"][k:e]], 1)
+            ratios.append(np.ptp((Wv - Wv.mean(0)) @ u) / amp)
+        os.remove(out)
+        os.remove(out + ".json")
+        return vi, ratios
+
+    jobs = [(vi, v, dd, ws) for vi, v in enumerate(variants) for dd, ws in zip(data, wins)]
+    by_variant = {}
+    with ThreadPoolExecutor(14) as pool:
+        for vi, ratios in pool.map(run, jobs):
+            by_variant.setdefault(vi, []).extend(ratios)
+    for vi, v in enumerate(variants):
+        r = np.array(by_variant[vi])
         print(f"{v or 'default'}: waist/head median {np.median(r):.2f}  p75 {np.percentile(r, 75):.2f}  "
               f">0.5: {(r > 0.5).mean() * 100:.0f}%", flush=True)
 

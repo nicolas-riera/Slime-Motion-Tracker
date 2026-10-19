@@ -98,6 +98,7 @@ struct BodyInput {
 
 	bool hasWaist = false;
 	Quat waist;  // pelvis segment orientation
+	Vec3 waistAccel;  // waist tracker linear acceleration, world frame
 	struct Leg {
 		bool valid = false;
 		Quat shin;  // shin segment orientation
@@ -180,6 +181,20 @@ private:
 	// HMD vertical speed (low-passed |vy|): walking and running bounce, holding a
 	// leg up in place does not
 	double m_prevHmdY = 0, m_hmdBounce = 0;
+	// Raised-foot detector from micro-movements (see updateRaised): one-pole filter
+	// and energy states, probability per leg that the foot is off the ground
+	struct Raised {
+		bool init = false, haveVel = false;
+		Vec3 hmdLp, hmdPrev, hmdVel, hbLo, hbHi, wbLo, wbHi;
+		double sway = 0;
+		struct Leg {
+			Vec3 hp, lo, hi;
+			double hf = 0, lf = 0, xh = 0, xw = 0, ph = 0, pw = 0, acc = 0;
+		};
+		std::array<Leg, 2> leg;
+		std::array<double, 2> p{};
+	} m_raised;
+	void updateRaised(const BodyInput& in, double dt);
 	Vec3 m_seat;  // where the hip rests when seated or lying
 	bool m_seatValid = false;
 	bool m_initialized = false;

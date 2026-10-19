@@ -28,6 +28,11 @@ constexpr int kPhiSteps = 78;
 // Hip flexion range: thigh direction relative to the pelvis, in its sagittal plane
 constexpr double kFlexMin = -35.0 * kPi / 180;
 constexpr double kFlexMax = 135.0 * kPi / 180;
+// Kneeling (shin flat: the knee is on the floor), the thigh hangs vertical or goes
+// forward from the hip, never far back: with a flat shin both knee bends reach the
+// floor, and the extended one put the knee ~35 cm behind (AMASS bench). Hip
+// extension costs this sigma (rad) as the shin gets flat; 0 disables
+const double kKneelExtSigma = tunable("kKneelExtSigma", 0.05);
 // Among the allowed poses, prefer straight legs (sigma of the knee angle prior)
 const double kStraightSigma = tunable("kStraightSigma", 1.2);
 // Bending a knee a little costs about as much as bending it a lot (saturating
@@ -91,6 +96,10 @@ const double kUnderHeightSigma = tunable("kUnderHeightSigma", 0.10);
 // anchor follows the head chain slowly (kSeatLeak s) and stays within kSeatReach
 // (m) of it
 const double kSitBack = tunable("kSitBack", 0.092);
+// Lying (reclined), the sit-back shift goes along the pelvis back axis, which is
+// horizontal lying on the side and tilts sideways as the pelvis rolls on the
+// back: the hip ended up beside the body. Fraction of it removed when reclined
+const double kSitBackRecline = tunable("kSitBackRecline", 1.0);
 // Seated or lying, there is no chest tracker and the spine curves (slumped, leaning
 // back against the bed head): its upper part follows the head's up axis by this
 // fraction, its lower part the pelvis (a straight spine along a reclined pelvis put
@@ -102,10 +111,13 @@ const double kUpperSpine = tunable("kUpperSpine", 0.5);
 // Not reclined (standing, seated upright), the same chest emulation by this
 // fraction: leaning the head forward bends the upper back instead of sliding the
 // whole rigid trunk, hip included, along with the head
-const double kChestStand = tunable("kChestStand", 0.0);
+const double kChestStand = tunable("kChestStand", 0.5);
 // The neck takes the first kNeckRange (rad) of head tilt away from the trunk: only
 // the excess bends the chest, so looking down or around never moves the body
-const double kNeckRange = tunable("kNeckRange", 0.0);
+const double kNeckRange = tunable("kNeckRange", 0.6);
+// 1: the neck range only applies with the head high (standing, looking around);
+// head low (kneeling, squatting, seated) the head follows the back fully
+const double kNeckStandOnly = tunable("kNeckStandOnly", 0.0);
 // Extra freedom of the hip prior along the pelvis forward axis (m, added in
 // quadrature to kHipSigmaH): the upper back bends, so a head moving forward with
 // still shins and pelvis leaves the hip where the legs hold it
@@ -146,6 +158,21 @@ const double kInsHipScale = tunable("kInsHipScale", 5.0);
 const double kHoldTime = tunable("kHoldTime", 0.0);
 const double kHoldSigma = tunable("kHoldSigma", 0.25);
 const double kHoldBounce = tunable("kHoldBounce", 0.15);
+// Raised-foot probability from micro-movements (updateRaised): how much it stops
+// pulling a raised foot to the floor and keeps its knee up (kRaisedUse 0..1), and
+// how fast a planted foot it says is on the floor sinks there (kRaisedSink, 1/s)
+const double kRaisedUse = tunable("kRaisedUse", 0.0);
+const double kRaisedSink = tunable("kRaisedSink", 0.0);
+// Logistic regression on the Kinect sessions (tools/pose_model/raised_features.py):
+// self_hf, self_lf, self_coh_hmd, self_coh_waist, self_acc, self_h, other_hf,
+// other_lf, other_coh_hmd, other_coh_waist, other_acc, other_h, sway_hmd
+const double kRaisedMu[] = {-1.96602, -1.99652, 0.0163138, -0.0318284, 1.19918, 0.111609, -2.04239,
+							-2.10878, 0.0224781, -0.0214982, 0.886776, 0.0784857, -1.82379};
+const double kRaisedSd[] = {3.17906, 3.09844, 0.182323, 0.254436, 2.23811, 0.119208, 3.13544,
+							3.03849, 0.179549, 0.248483, 1.71786, 0.024172, 2.22666};
+const double kRaisedW[] = {-0.628427, 1.06536, -0.212864, -0.0841964, 0.0249402, 1.83609, 0.137374,
+						   -0.244041, -0.144097, -0.182913, 0.163446, -0.0186003, -0.290828};
+const double kRaisedB = -0.172468;
 
 double sq(double x) { return x * x; }
 double lerp(double a, double b, double t) { return a + (b - a) * t; }
@@ -188,6 +215,73 @@ Vec3 BodySolver::OneEuro::filter(const Vec3& v, double dt, double minCutoff, dou
 	double cutoff = minCutoff + beta * dx.norm();
 	x += (v - x) * alpha(cutoff);
 	return x;
+}
+
+// Postural sway tells a raised foot from a planted one: a planted leg sways with
+// the body (pelvis, HMD), a raised one trembles and moves on its own, and standing
+// on one leg sways more. One-pole filters following the frame time, identical to
+// tools/pose_model/raised_features.py
+void BodySolver::updateRaised(const BodyInput& in, double dt) {
+	Raised& r = m_raised;
+	auto pole = [dt](Vec3& y, const Vec3& x, double fc) {
+		double tau = 1.0 / (2 * kPi * fc);
+		y += (x - y) * std::min(1.0, dt / (tau + dt));
+	};
+	auto ema = [dt](double& y, double x, double tau) { y += (x - y) * std::min(1.0, dt / tau); };
+	auto horiz = [](const Vec3& v) { return Vec3{v.x, 0, v.z}; };
+	const Vec3 zero;
+	Vec3 ha;
+	if (!r.init) {
+		r.hmdLp = r.hmdPrev = in.hmd.position;
+		r.hmdVel = zero;
+		r.hbLo = r.hbHi = r.wbLo = r.wbHi = zero;
+		for (int k = 0; k < 2; k++) {
+			r.leg[k] = {};
+			r.leg[k].hp = r.leg[k].lo = r.leg[k].hi = in.legs[k].accelWorld;
+		}
+		r.wbLo = r.wbHi = in.waistAccel;
+		r.init = true;
+	} else {
+		pole(r.hmdLp, in.hmd.position, 5.0);
+		Vec3 v = (r.hmdLp - r.hmdPrev) / dt;
+		ha = (v - r.hmdVel) / dt;
+		r.hmdPrev = r.hmdLp;
+		r.hmdVel = v;
+	}
+	pole(r.hbHi, ha, 3.0);
+	pole(r.hbLo, ha, 0.3);
+	pole(r.wbHi, in.waistAccel, 3.0);
+	pole(r.wbLo, in.waistAccel, 0.3);
+	const Vec3 hb = horiz(r.hbHi - r.hbLo), wb = horiz(r.wbHi - r.wbLo);
+	ema(r.sway, hb.dot(hb), 2.0);
+	std::array<std::array<double, 6>, 2> f;
+	for (int k = 0; k < 2; k++) {
+		Raised::Leg& L = r.leg[k];
+		const Vec3& a = in.legs[k].accelWorld;
+		pole(L.hp, a, 3.0);
+		pole(L.hi, a, 3.0);
+		pole(L.lo, a, 0.3);
+		Vec3 hf = a - L.hp, ab = horiz(L.hi - L.lo);
+		ema(L.hf, hf.dot(hf), 1.0);
+		ema(L.lf, ab.dot(ab), 2.0);
+		ema(L.xh, ab.dot(hb), 2.0);
+		ema(L.xw, ab.dot(wb), 2.0);
+		ema(L.ph, hb.dot(hb), 2.0);
+		ema(L.pw, wb.dot(wb), 2.0);
+		ema(L.acc, a.norm(), 0.1);
+		double h = m_initialized ? m_smoothedFeet[k].y - in.floorY : 0.08;
+		f[k] = {std::log(L.hf + 1e-6), std::log(L.lf + 1e-6), L.xh / std::sqrt(L.lf * L.ph + 1e-12),
+				L.xw / std::sqrt(L.lf * L.pw + 1e-12), L.acc, h};
+	}
+	for (int k = 0; k < 2; k++) {
+		double z = kRaisedB;
+		for (int j = 0; j < 6; j++) {
+			z += kRaisedW[j] * (f[k][j] - kRaisedMu[j]) / kRaisedSd[j];
+			z += kRaisedW[6 + j] * (f[1 - k][j] - kRaisedMu[6 + j]) / kRaisedSd[6 + j];
+		}
+		z += kRaisedW[12] * (std::log(r.sway + 1e-9) - kRaisedMu[12]) / kRaisedSd[12];
+		r.p[k] = 1.0 / (1.0 + std::exp(-z));
+	}
 }
 
 BodyDimensions BodyDimensions::fromHeight(double h, std::optional<double> eyeHeight) {
@@ -244,6 +338,8 @@ void BodySolver::reset() {
 	m_filters = {};
 	m_smoothedFeet = {};
 	m_smoothedWaist = {};
+	m_raised = {};
+	m_hmdBounce = 0;
 }
 
 double BodySolver::legCost(const LegProblem& p, double phi) const {
@@ -262,6 +358,7 @@ double BodySolver::legCost(const LegProblem& p, double phi) const {
 		double flex = std::atan2(-t.z, -t.y);
 		if (flex > kFlexMax) c += sq((flex - kFlexMax) / 0.1);
 		if (flex < kFlexMin) c += sq((kFlexMin - flex) / 0.1);
+		if (kKneelExtSigma > 0 && flex < 0) c += smoothstep(0.5, 0.15, std::fabs(p.down.y)) * sq(flex / kKneelExtSigma);
 	}
 	if (p.planted) c += robust(squaredNorm(ankle - p.anchor) / sq(p.anchorSigma), 3.0);
 	if (p.insSigma > 0) c += robust(squaredNorm(ankle - p.ins) / sq(p.insSigma), kInsRobust);
@@ -337,6 +434,8 @@ BodyOutput BodySolver::update(const BodyInput& in) {
 	}
 	m_prevHmdY = in.hmd.position.y;
 
+	updateRaised(in, dt);
+
 	// ---- upper body: head pivot, pelvis, neck base, hip center ----
 	const Quat& hq = in.hmd.rotation;
 	Vec3 headPivot = in.hmd.position + hq.rotate({0, -d.headDown, d.headBack});
@@ -378,10 +477,12 @@ BodyOutput BodySolver::update(const BodyInput& in) {
 		const double w = kChestHead * reclined + kChestStand * (1 - reclined);
 		Vec3 headUp = hq.rotate(up);
 		const double tilt = std::acos(std::clamp(torsoUp.dot(headUp), -1.0, 1.0));
-		if (kNeckRange > 0 && tilt > 1e-6) {
+		const double neckRange =
+			kNeckRange * (kNeckStandOnly > 0 ? lerp(1.0, smoothstep(0.6, 0.8, eyeRatio), kNeckStandOnly) : 1.0);
+		if (neckRange > 0 && tilt > 1e-6) {
 			// Keep only the tilt beyond the neck's range
 			Vec3 axis = torsoUp.cross(headUp);
-			double excess = std::max(0.0, tilt - kNeckRange);
+			double excess = std::max(0.0, tilt - neckRange);
 			headUp = axis.norm() > 1e-9 ? Quat::fromAxisAngle(axis, excess).rotate(torsoUp) : torsoUp;
 		}
 		const Vec3 chestUp = (torsoUp * (1 - w) + headUp * w).normalized();
@@ -393,7 +494,7 @@ BodyOutput BodySolver::update(const BodyInput& in) {
 		// fading out as the pelvis tilts (lying down)
 		Vec3 pelvisBack = pelvis.rotate({0, 0, 1});
 		pelvisBack.y = 0;
-		hip0 += pelvisBack * (kSitBack * d.height * seated);
+		hip0 += pelvisBack * (kSitBack * d.height * seated * (1 - kSitBackRecline * reclined));
 	}
 
 	// Per leg, how much a planted foot rests on the bed (at the hip's height) rather
@@ -522,12 +623,18 @@ BodyOutput BodySolver::update(const BodyInput& in) {
 				p.model = in.legs[i].footMeasurement;
 			}
 			p.under = !ls.planted && insSigma[i] <= 0 ? standing : 0.0;
-			if (kHoldTime > 0 && !ls.planted && ls.swingTime >= kMaxSwing) {
-				double quiet = smoothstep(kHoldBounce, 0.5 * kHoldBounce, m_hmdBounce);
-				p.hold = quiet * std::exp(-(ls.swingTime - kMaxSwing) / kHoldTime);
+			if (!ls.planted && ls.swingTime >= kMaxSwing) {
+				if (kHoldTime > 0) {
+					double quiet = smoothstep(kHoldBounce, 0.5 * kHoldBounce, m_hmdBounce);
+					p.hold = quiet * std::exp(-(ls.swingTime - kMaxSwing) / kHoldTime);
+				}
+				// Standing only: the detector learnt standing, and seated or squatting a
+				// moving leg rests on the floor or the seat
+				p.hold = std::max(p.hold, kRaisedUse * m_raised.p[i]) * standing;
 				p.holdThigh = pelvis.rotate(ls.holdThigh);
 				p.under *= 1 - p.hold;
 			}
+			p.under *= 1 - kRaisedUse * m_raised.p[i];
 			p.bedWeight = ls.planted ? bedness[i] : 0.0;
 			p.bedY = std::max(ankleY, (hip0 + hipOffset).y - kBedBelowHip);
 			p.otherHeight = std::max(0.0, (hip0 + hipOffset + legVector(o, phi[o])).y - ankleY);
@@ -588,8 +695,16 @@ BodyOutput BodySolver::update(const BodyInput& in) {
 		}
 		if (lowest >= 0 && !onFloor && standing > 0.5) {
 			Vec3& a = m_legs[lowest].anchor;
-			a.y += (ankleY - a.y) * std::min(1.0, standing * dt / kNoSupportSinkTime);
+			double keep = 1 - kRaisedUse * m_raised.p[lowest];
+			a.y += (ankleY - a.y) * std::min(1.0, keep * standing * dt / kNoSupportSinkTime);
 		}
+		// A planted foot left in the air that the micro-movements say is on the floor
+		if (kRaisedSink > 0 && standing > 0.5)
+			for (int i = 0; i < 2; i++) {
+				LegState& ls = m_legs[i];
+				if (!ls.planted || ls.anchor.y - ankleY < kFloorSnap) continue;
+				ls.anchor.y += (ankleY - ls.anchor.y) * std::min(1.0, kRaisedSink * (1 - m_raised.p[i]) * standing * dt);
+			}
 	}
 
 	// ---- legs: positions, anchors, swing correction, foot orientation ----

@@ -251,6 +251,7 @@ void Engine::frame(const SlFrameInput& fin, SlFrameOutput& fout) {
 			in.hasWaist = true;
 			in.waist = seg;
 			waistAccel = (seg * tc.mounting.conj()).rotate(t.accelLocal);
+			in.waistAccel = waistAccel;
 		} else if (tc.role == Role::LeftAnkle || tc.role == Role::RightAnkle) {
 			auto& leg = in.legs[tc.role == Role::LeftAnkle ? 0 : 1];
 			leg.valid = true;

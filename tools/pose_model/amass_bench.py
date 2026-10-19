@@ -12,6 +12,7 @@ scored against the exact SMPL ankles: median 3D error, and the error while a foo
 is raised (> 15 cm above its floor height).
 """
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import subprocess
@@ -45,7 +46,7 @@ def find_segments(amass_npz, per_cat, seconds=12.0):
     z = np.load(amass_npz)
     poses, trans, rest = z["poses"], z["trans"], z["rest"]
     starts, lens = z["seq_start"], z["seq_len"]
-    found = {k: [] for k in ("raised_hold", "seated", "kneel", "lying", "walking")}
+    found = {k: [] for k in ("raised_hold", "seated", "kneel", "lying", "walking", "running")}
     rng = np.random.default_rng(0)
     order = rng.permutation(len(starts))
     half = int(seconds * 30)
@@ -69,9 +70,10 @@ def find_segments(amass_npz, per_cat, seconds=12.0):
             "seated": (head > 0.45) & (head < 0.8) & (pelvis < 0.65) & (knee.min(1) > 0.25),
             "kneel": (knee.min(1) < 0.12) & (head > 0.4),
             "lying": head < 0.35,
-            "walking": (head > 0.9) & (speed > 0.8),
+            "walking": (head > 0.9) & (speed > 0.8) & (speed < 1.8),
+            "running": (head > 0.85) & (speed > 1.8),
         }
-        need = {"raised_hold": 120, "seated": 180, "kneel": 120, "lying": 180, "walking": 180}
+        need = {"raised_hold": 120, "seated": 180, "kneel": 120, "lying": 180, "walking": 180, "running": 60}
         for cat, m in masks.items():
             if len(found[cat]) >= per_cat:
                 continue
@@ -122,7 +124,12 @@ def convert(poses, trans, rest, models, rng):
         return M @ Gj @ RY180
 
     head_r = rot(G[:, 15])
-    hmd = pos(P[:, 15]) - np.einsum("nij,j->ni", head_r, HEAD_OFFSET)
+    # The solver's calibration puts the hip under the head pivot; the SMPL head
+    # joint sits a few cm in front of the pelvis at rest: shift the HMD back by as
+    # much so a still standing body is solved where it is (the user's own geometry
+    # was fitted on Kinect ground truth)
+    lean = rest[15, 2] - rest[0, 2]  # SMPL +Z forward
+    hmd = pos(P[:, 15]) - np.einsum("nij,j->ni", head_r, HEAD_OFFSET - np.array([0.0, 0.0, lean]))
     cols = {c: np.zeros(T) for c in COLS}
     cols["t"] = np.arange(T) / 60.0
     cols["hmd_valid"][:] = 1
@@ -161,7 +168,8 @@ def convert(poses, trans, rest, models, rng):
         for k, c in enumerate("wxyz"):
             cols[name + "q" + c] = q[:, k]
     X = np.stack([cols[c] for c in COLS], 1).astype(np.float64)
-    gt = {"l": pos(P[:, 7]), "r": pos(P[:, 8]), "pelvis": pos(P[:, 0]), "ankle_h": ankle_h}
+    gt = {"l": pos(P[:, 7]), "r": pos(P[:, 8]), "pelvis": pos(P[:, 0]), "lknee": pos(P[:, 4]), "rknee": pos(P[:, 5]),
+          "ankle_h": ankle_h}
     return X, gt
 
 
@@ -192,6 +200,7 @@ def main():
     ap.add_argument("--variants", default='[{}]', help="JSON list of SL_TUNE dicts")
     ap.add_argument("--pose-model")
     ap.add_argument("--ankles", action="store_true")
+    ap.add_argument("--workers", type=int, default=14)
     args = ap.parse_args()
     os.makedirs(args.work, exist_ok=True)
     models = {g: dict(np.load(os.path.join(args.body_models, "smplh", g, "model.npz"), allow_pickle=True))
@@ -218,19 +227,29 @@ def main():
             items.append((cat, name, dump, gtp))
     print(f"{len(items)} motions: " + ", ".join(f"{c} {len(v)}" for c, v in sel.items()), flush=True)
     variants = json.loads(args.variants)
-    for v in variants:
+
+    def run(job):
+        vi, v, (cat, f, dump, gtp) = job
         env = dict(os.environ)
         env["SL_TUNE"] = ",".join(f"{k}={x}" for k, x in v.items())
-        res = {}
-        for cat, f, dump, gtp in items:
-            out = dump[:-4] + "_out.bin"
-            cmd = [EXE, dump, out] + (["--ankles"] if args.ankles else [])
-            if args.pose_model:
-                cmd += ["--pose-model", args.pose_model, "--wrist-identity"]
-            subprocess.run(cmd, env=env, check=True)
-            z = np.load(gtp)
-            gt = {"l": z["l"], "r": z["r"], "ankle_h": float(z["ankle_h"])}
-            res.setdefault(cat, []).append(score(out, gt))
+        out = dump[:-4] + f"_out{vi}.bin"
+        cmd = [EXE, dump, out] + (["--ankles"] if args.ankles else [])
+        if args.pose_model:
+            cmd += ["--pose-model", args.pose_model, "--wrist-identity"]
+        subprocess.run(cmd, env=env, check=True)
+        z = np.load(gtp)
+        r = score(out, {"l": z["l"], "r": z["r"], "ankle_h": float(z["ankle_h"])})
+        os.remove(out)
+        os.remove(out + ".json")
+        return vi, cat, r
+
+    jobs = [(vi, v, it) for vi, v in enumerate(variants) for it in items]
+    results = {}
+    with ThreadPoolExecutor(args.workers) as pool:
+        for vi, cat, r in pool.map(run, jobs):
+            results.setdefault(vi, {}).setdefault(cat, []).append(r)
+    for vi, v in enumerate(variants):
+        res = results[vi]
         line = []
         for cat, rs in res.items():
             a = np.array([r[0] for r in rs])

@@ -6,7 +6,7 @@
 // Usage: slimelite_dump_solve inputs.bin out.bin [--ankles] [--pose-model model.bin]
 //        [--wrist-identity] [--stand T]
 // out.bin: float64 rows t, valid, waist xyz, left ankle xyz, right ankle xyz, pose
-// model weight (columns in out.bin.json). SL_TUNE applies to the solver as usual.
+// model weight, knees (columns in out.bin.json). SL_TUNE applies to the solver as usual.
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -53,7 +53,11 @@ int main(int argc, char** argv) {
 	bf.read(reinterpret_cast<char*>(data.data()), bytes);
 	const size_t nc = cols.size(), n = data.size() / nc;
 	if (n == 0) return 1;
-	auto at = [&](size_t row, const std::string& name) { return data[row * nc + c.at(name)]; };
+	// Older dumps lack some columns (waist acceleration): read them as 0
+	auto at = [&](size_t row, const std::string& name) {
+		auto it = c.find(name);
+		return it == c.end() ? 0.0 : data[row * nc + it->second];
+	};
 	auto vec = [&](size_t row, const std::string& p) { return Vec3{at(row, p + "x"), at(row, p + "y"), at(row, p + "z")}; };
 	auto quat = [&](size_t row, const std::string& p) {
 		return Quat{at(row, p + "qw"), at(row, p + "qx"), at(row, p + "qy"), at(row, p + "qz")};
@@ -76,7 +80,7 @@ int main(int argc, char** argv) {
 
 	std::FILE* out = std::fopen(argv[2], "wb");
 	std::ofstream(std::string(argv[2]) + ".json")
-		<< nlohmann::json{{"columns", {"t", "valid", "wx", "wy", "wz", "lx", "ly", "lz", "rx", "ry", "rz", "pose_w"}}}.dump();
+		<< nlohmann::json{{"columns", {"t", "valid", "wx", "wy", "wz", "lx", "ly", "lz", "rx", "ry", "rz", "pose_w", "lkx", "lky", "lkz", "rkx", "rky", "rkz"}}}.dump();
 	std::array<Quat, 2> prevShin;
 	std::array<double, 2> gyro{};
 	double prevT = -1;
@@ -91,6 +95,7 @@ int main(int argc, char** argv) {
 		in.floorY = at(r, "floor");
 		in.hasWaist = !ankles && at(r, "w_valid") > 0;
 		in.waist = quat(r, "w");
+		in.waistAccel = vec(r, "wa");
 		for (int i = 0; i < 2; i++) {
 			const std::string p = i == 0 ? "l" : "r";
 			auto& leg = in.legs[i];
@@ -130,10 +135,11 @@ int main(int argc, char** argv) {
 			}
 			w = fusePose(pose.update(pin, t), in.hmd, in.floorY, dims.eyeHeight, o);
 		}
-		double row[12] = {t, o.valid ? 1.0 : 0.0, o.waist.position.x, o.waist.position.y, o.waist.position.z,
+		double row[18] = {t, o.valid ? 1.0 : 0.0, o.waist.position.x, o.waist.position.y, o.waist.position.z,
 						  o.feet[0].position.x, o.feet[0].position.y, o.feet[0].position.z,
-						  o.feet[1].position.x, o.feet[1].position.y, o.feet[1].position.z, w};
-		std::fwrite(row, sizeof(double), 12, out);
+						  o.feet[1].position.x, o.feet[1].position.y, o.feet[1].position.z, w,
+						  o.knees[0].x, o.knees[0].y, o.knees[0].z, o.knees[1].x, o.knees[1].y, o.knees[1].z};
+		std::fwrite(row, sizeof(double), 18, out);
 	}
 	std::fclose(out);
 	return 0;
