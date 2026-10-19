@@ -285,13 +285,17 @@ void drawCloudView(const TrackerDetail* d, ImVec2 size) {
             const float t = std::clamp(v.y * 0.5f + 0.5f, 0.0f, 1.0f);
             sc.point(v, 3.0f, alpha(mix(col::accentSoft, col::pink, t), 0.9f));
         }
-        const V3 cur = (V3{static_cast<float>(d->magRaw[0]), static_cast<float>(d->magRaw[1]),
-                           static_cast<float>(d->magRaw[2])} -
-                        center) *
-                       (1.0f / radius);
-        sc.line({0, 0, 0}, cur, alpha(col::white, 0.6f), 1.5f);
-        sc.point(cur, 5.5f, col::white);
-        sc.ring(cur, 10.0f, alpha(col::white, 0.5f), 1.5f);
+        V3 cur = (V3{static_cast<float>(d->magRaw[0]), static_cast<float>(d->magRaw[1]),
+                     static_cast<float>(d->magRaw[2])} -
+                  center) *
+                 (1.0f / radius);
+        // Far outside the cloud (a disturbance): pinned to the edge, in orange
+        const bool outside = v3::length(cur) > 1.3f;
+        if (outside) cur = v3::normalized(cur) * 1.3f;
+        const ImU32 cc = outside ? col::orange : col::white;
+        sc.line({0, 0, 0}, cur, alpha(cc, 0.6f), 1.5f);
+        sc.point(cur, 5.5f, cc);
+        sc.ring(cur, 10.0f, alpha(cc, 0.5f), 1.5f);
     }
     sc.flush();
     char info[64];

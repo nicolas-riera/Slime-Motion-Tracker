@@ -95,15 +95,16 @@ in the SteamVR dashboard). The SlimeVR server must not run at the same time (bot
 
 ## 3. First setup
 
-1. **Trackers tab**: shake a tracker to see which row moves, assign its role
-   (left ankle, right ankle, waist).
-2. **Mag calibration** (once per tracker, before strapping it): click "Calibrate mag" and
-   slowly rotate the tracker in every direction (upside down, on each side, figure eights)
-   until the bar is full. The calibration is stored and refined automatically afterwards.
+1. **Body tab**: enter your height, shake a tracker to see which row lights up and assign
+   its role (left ankle, right ankle, waist). The mode follows the trackers: ankles only,
+   or ankles + waist when a waist tracker is assigned and connected.
+2. **Mag calibration** (once per tracker, before strapping it): on the Home tab click the
+   tracker, then **Calibrate**, and slowly rotate the tracker in every direction (upside
+   down, on each side, figure eights) until the bar is full. The calibration is stored and
+   refined automatically afterwards.
 3. Strap the trackers: ankles just above the ankle bone (any side), waist on the belt.
-4. **Setup tab**: choose the mode and enter your height.
-5. **Full calibration**: stand straight looking ahead, then when asked take the ski pose
-   (knees bent, leaning forward, arms down). Done.
+4. **Full calibration** (Home tab): stand straight looking ahead, then when asked take the
+   ski pose (knees bent, leaning forward, arms down). 3 s each, with a beep every second.
 
 Later sessions: just put the trackers on. If something looks rotated, use **Quick reset**
 (stand straight). If you turned the mag off, a quick reset is needed after a tracker reboots.

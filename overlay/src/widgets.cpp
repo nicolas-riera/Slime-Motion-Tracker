@@ -86,7 +86,7 @@ float animate(ImGuiID id, float target, float rate) {
 
 void setupTheme() {
     ImGuiIO& io = ImGui::GetIO();
-    static const ImWchar kRanges[] = {0x0020, 0x00FF, 0x2010, 0x2027, 0x2190, 0x2193, 0x2248, 0x2248, 0};
+    static const ImWchar kRanges[] = {0x0020, 0x00FF, 0x2010, 0x2027, 0x2190, 0x2193, 0x2212, 0x2212, 0x2248, 0x2248, 0};
     const std::string regular = fontPath("segoeui.ttf");
     const std::string semibold = fileExists(fontPath("seguisb.ttf")) ? fontPath("seguisb.ttf") : fontPath("segoeuib.ttf");
     if (fileExists(regular) && fileExists(semibold)) {
