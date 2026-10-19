@@ -53,7 +53,10 @@ int main(int argc, char** argv) {
 
 	std::filesystem::path engine = std::filesystem::absolute(argv[1]);
 	std::string dir = engine.parent_path().string();
-	EngineLoader loader(engine, dir, [](const std::string& msg) { std::printf("[engine] %s\n", msg.c_str()); });
+	EngineLoader loader(engine, dir, [](const std::string& msg) {
+		std::printf("[engine] %s\n", msg.c_str());
+		std::fflush(stdout);  // a log file when the overlay starts it
+	});
 	if (!loader.loaded()) return 2;
 
 	using clock = std::chrono::steady_clock;
@@ -81,7 +84,7 @@ int main(int argc, char** argv) {
 		std::memcpy(in.devices[0].pose, in.hmd, sizeof(in.hmd));
 		std::strcpy(in.devices[0].serial, "FAKE-HMD");
 		loader.frame(in, out);
-		if (t - lastPrint > 2.0) {
+		if (!untilSteamVr && t - lastPrint > 2.0) {
 			lastPrint = t;
 			std::printf("t=%5.1f outputs valid: waist %d, left %d, right %d\n", t - start,
 						out.devices[0].valid, out.devices[1].valid, out.devices[2].valid);

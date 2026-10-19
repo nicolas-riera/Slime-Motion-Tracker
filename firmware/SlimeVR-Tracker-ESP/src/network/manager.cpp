@@ -32,6 +32,7 @@ namespace SlimeVR::Network {
 // loses its server (or its dongle) for kResearchMs looks for the dongle again.
 namespace {
 constexpr uint32_t kResearchMs = 15000;
+constexpr uint32_t kDongleLostMs = 1000;
 }
 
 void Manager::setup() { startDongleSearch(); }
@@ -58,6 +59,12 @@ void Manager::update() {
 
 	auto wasConnected = m_IsConnected;
 	if (m_Transport == Transport::EspNow) {
+		// The dongle beacons every 100 ms: silent for 1 s, it is gone (unplugged).
+		// Search again at once (then WiFi) instead of waiting for the server timeout
+		if (millis() - EspNow::lastReceiveMillis() > kDongleLostMs) {
+			startDongleSearch();
+			return;
+		}
 		m_IsConnected = true;
 		// The signal strength the overlay shows: the dongle's frames instead of the AP
 		if (millis() - m_LastRssiSample >= 2000 && EspNow::rssi() != 0) {

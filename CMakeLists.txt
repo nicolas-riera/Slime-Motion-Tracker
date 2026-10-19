@@ -130,7 +130,7 @@ add_custom_command(TARGET slimelite_engine POST_BUILD
 # The overlay starts the host when SteamVR is not running (standalone mode)
 add_custom_command(TARGET slimelite_engine_host POST_BUILD
   COMMAND ${CMAKE_COMMAND} -DSRC=$<TARGET_FILE:slimelite_engine_host> -DDST=${SLIMELITE_INSTALL_BIN}
-          -P ${CMAKE_SOURCE_DIR}/tools/cmake/hot_deploy.cmake)
+          -DSTOP_FIRST=ON -P ${CMAKE_SOURCE_DIR}/tools/cmake/hot_deploy.cmake)
 endif()
 
 # ---- dashboard overlay ----

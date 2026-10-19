@@ -98,6 +98,8 @@ Engine::Engine(const SlEngineHost& host, const char* handover)
 	updateRecordingState();
 	recordEvent(h.is_object() ? "engine_reloaded" : "engine_started", kVersion);
 	applySettings();
+	m_hub.setLog([this](const std::string& msg) { log("%s", msg.c_str()); });
+	m_dongle.setLog([this](const std::string& msg) { log("%s", msg.c_str()); });
 	if (!m_hub.start()) log("%s", m_hub.portError().c_str());
 	m_dongle.start(proto::kTrackerPort);
 	if (!m_overlay.start()) log("cannot bind the overlay port %d", OverlayLink::kPort);

@@ -180,6 +180,7 @@ bool DongleBridge::openAndProbe(const std::string& name) {
 			if (!parseInfo(f, st)) continue;
 			st.connected = true;
 			st.port = name;
+			if (m_log) m_log("dongle: found on " + name + ", channel " + std::to_string(st.channel));
 			m_port = h;
 			m_decoder = dongle::Decoder{};
 			m_lastInfo = now();
@@ -225,10 +226,20 @@ bool DongleBridge::serve() {
 			a.sin_family = AF_INET;
 			a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
 			a.sin_port = htons(uint16_t(40000 + ((f.mac[3] << 16 | f.mac[4] << 8 | f.mac[5]) % 20000)));
+			const int wanted = ntohs(a.sin_port);
 			if (bind(s, reinterpret_cast<sockaddr*>(&a), sizeof(a)) != 0) {
 				a.sin_port = 0;
 				bind(s, reinterpret_cast<sockaddr*>(&a), sizeof(a));
 			}
+			int got = 0;
+			{
+				sockaddr_in b{};
+				int bl = sizeof(b);
+				if (getsockname(s, reinterpret_cast<sockaddr*>(&b), &bl) == 0) got = ntohs(b.sin_port);
+			}
+			if (m_log)
+				m_log("dongle: tracker " + mac + " -> local port " + std::to_string(got)
+					  + (got == wanted ? "" : " (wanted " + std::to_string(wanted) + ")"));
 			u_long nonBlocking = 1;
 			ioctlsocket(s, FIONBIO, &nonBlocking);
 			DWORD noReset = FALSE, bytes = 0;
@@ -265,6 +276,7 @@ void DongleBridge::loop() {
 			if (!serve()) {
 				// Gone or silent: probe that port again on the next scan
 				std::string port = status().port;
+				if (m_log) m_log("dongle: lost on " + port);
 				closePort();
 				m_probed.erase(port);
 			}

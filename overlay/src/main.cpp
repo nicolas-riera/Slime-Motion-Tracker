@@ -198,12 +198,25 @@ private:
             return;
         std::wstring cmd = L"\"" + host + L"\" \"" + engine + L"\" --parent " +
                            std::to_wstring(GetCurrentProcessId()) + L" --until-steamvr";
+        // The engine's log goes to %LOCALAPPDATA%\SlimeVR-lite\standalone.log
+        HANDLE logFile = INVALID_HANDLE_VALUE;
+        if (const wchar_t* appData = _wgetenv(L"LOCALAPPDATA")) {
+            SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
+            const std::wstring logPath = std::wstring(appData) + L"\\SlimeVR-lite\\standalone.log";
+            logFile = CreateFileW(logPath.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_ALWAYS,
+                                  FILE_ATTRIBUTE_NORMAL, nullptr);
+        }
         STARTUPINFOW si{};
         si.cb = sizeof(si);
+        if (logFile != INVALID_HANDLE_VALUE) {
+            si.dwFlags = STARTF_USESTDHANDLES;
+            si.hStdOutput = si.hStdError = logFile;
+        }
         PROCESS_INFORMATION pi{};
-        if (!CreateProcessW(host.c_str(), cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr,
-                            dir.c_str(), &si, &pi))
-            return;
+        const BOOL ok = CreateProcessW(host.c_str(), cmd.data(), nullptr, nullptr, logFile != INVALID_HANDLE_VALUE,
+                                       CREATE_NO_WINDOW, nullptr, dir.c_str(), &si, &pi);
+        if (logFile != INVALID_HANDLE_VALUE) CloseHandle(logFile);
+        if (!ok) return;
         CloseHandle(pi.hThread);
         process_ = pi.hProcess;
     }

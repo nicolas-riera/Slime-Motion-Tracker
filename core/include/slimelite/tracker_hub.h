@@ -73,6 +73,8 @@ public:
 	// Called from the network thread when a calibration is found (guided or online)
 	void onMagCalibration(MagCalibrationCallback cb);
 	void setEventSink(EventSink sink) { m_eventSink = std::move(sink); }
+	// Connection log (handshakes, packet counters), from the network thread. Set before start().
+	void setLog(std::function<void(const std::string&)> log) { m_log = std::move(log); }
 	// Known calibration for a tracker (from the config), applied when it connects
 	void setStoredMagCalibration(const std::string& mac, const MagCalibration& cal);
 	void startGuidedMagCalibration(const std::string& mac);
@@ -98,6 +100,7 @@ private:
 	std::map<std::string, MagCalibration> m_storedMag;
 	MagCalibrationCallback m_magCallback;
 	EventSink m_eventSink;
+	std::function<void(const std::string&)> m_log;
 	bool m_magEnabled = true;
 	HeadingFilterSettings m_headingSettings;
 

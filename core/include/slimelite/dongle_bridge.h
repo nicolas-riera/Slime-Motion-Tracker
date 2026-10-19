@@ -9,6 +9,7 @@
 #pragma once
 
 #include <atomic>
+#include <functional>
 #include <cstdint>
 #include <map>
 #include <mutex>
@@ -50,6 +51,8 @@ public:
 	};
 
 	~DongleBridge() { stop(); }
+	// Connection log, from the bridge thread. Set before start().
+	void setLog(std::function<void(const std::string&)> log) { m_log = std::move(log); }
 	void start(uint16_t hubPort);
 	void stop();
 	Status status() const;
@@ -60,6 +63,7 @@ private:
 	void closePort();
 	bool serve();  // false when the dongle is gone
 
+	std::function<void(const std::string&)> m_log;
 	uint16_t m_hubPort = 0;
 	std::atomic<bool> m_running{false};
 	std::thread m_thread;

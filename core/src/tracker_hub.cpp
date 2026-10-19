@@ -43,6 +43,9 @@ struct TrackerHub::Tracker {
 	double pingSent = 0, lastPingTime = 0;
 	std::vector<double> roundTrips;
 
+	// Connection log: events by kind since the last report
+	std::array<int, 16> eventCount{};
+
 	Quat prevRotation;
 	double prevRotationTime = 0;
 	bool hasMagData = false;
@@ -352,6 +355,18 @@ void TrackerHub::networkLoop() {
 	std::vector<uint8_t> buf(2048);
 	double lastHeartbeat = 0;
 
+	auto addrString = [](const sockaddr_in& a) {
+		char ip[INET_ADDRSTRLEN] = {};
+		inet_ntop(AF_INET, &a.sin_addr, ip, sizeof(ip));
+		return std::string(ip) + ":" + std::to_string(ntohs(a.sin_port));
+	};
+	auto log = [&](const std::string& msg) {
+		if (m_log) m_log(msg);
+	};
+	double lastReport = 0;
+	int unknownPackets = 0;
+	std::string lastUnknown;
+
 	auto sendTo = [&](const sockaddr_in& addr, const std::vector<uint8_t>& data) {
 		sendto(s, reinterpret_cast<const char*>(data.data()), int(data.size()), 0,
 			   reinterpret_cast<const sockaddr*>(&addr), sizeof(addr));
@@ -381,6 +396,8 @@ void TrackerHub::networkLoop() {
 					tr.snap.ip = ip;
 					tr.snap.connected = true;
 					tr.lastPacketTime = t;
+					if (isNew)
+						log("hub: handshake " + mac + " from " + addrString(from) + " (firmware " + e.firmware + ")");
 					if (isNew) {
 						tr.snap.bootCount++;
 						tr.snap.hasRotation = false;
@@ -401,7 +418,17 @@ void TrackerHub::networkLoop() {
 					}
 				}
 			}
+			if (mac.empty()) {
+				unknownPackets++;
+				lastUnknown = addrString(from) + " (" + std::to_string(n) + " bytes, " + std::to_string(events.size())
+							+ " events)";
+			}
 			if (!mac.empty()) {
+				{
+					std::lock_guard lock(m_mutex);
+					Tracker& tr = trackerFor(mac);
+					for (const auto& e : events) tr.eventCount[size_t(e.kind) & 15]++;
+				}
 				for (const auto& e : events) {
 					if (m_eventSink) m_eventSink(mac, e, t);
 					if (e.kind == proto::Event::Kind::Handshake) continue;
@@ -411,6 +438,28 @@ void TrackerHub::networkLoop() {
 						sendTo(from, proto::featureFlags(++m_packetNumber));
 					processEvent(mac, e, t);
 				}
+			}
+		}
+
+		if (m_log && t - lastReport > 10.0) {
+			// Packets per kind over the last 10 s (rotation, mag, heartbeat, other)
+			lastReport = t;
+			std::lock_guard lock(m_mutex);
+			for (auto& [m, tr] : m_trackers) {
+				const auto& c = tr->eventCount;
+				int total = 0;
+				for (int v : c) total += v;
+				if (!tr->snap.connected && total == 0) continue;
+				log("hub: " + m + " " + addrString(tr->addr) + (tr->snap.connected ? "" : " (disconnected)")
+					+ ": rotation " + std::to_string(c[size_t(proto::Event::Kind::Rotation)]) + ", mag "
+					+ std::to_string(c[size_t(proto::Event::Kind::Mag)]) + ", heartbeat "
+					+ std::to_string(c[size_t(proto::Event::Kind::Heartbeat)]) + ", sensor info "
+					+ std::to_string(c[size_t(proto::Event::Kind::SensorInfo)]) + ", all " + std::to_string(total));
+				tr->eventCount = {};
+			}
+			if (unknownPackets) {
+				log("hub: " + std::to_string(unknownPackets) + " packets from unknown addresses, last " + lastUnknown);
+				unknownPackets = 0;
 			}
 		}
 
