@@ -25,6 +25,7 @@ void HeadingFilter::reset() {
 	m_stillTime = m_cleanTime = m_rejectRatio = 0;
 	m_acqSin = m_acqCos = m_acqTime = 0;
 	m_relock = false;
+	m_consistTime = 0;
 	m_refNorm = 1;
 	m_refDip = m_cal.dip;
 }
@@ -156,8 +157,10 @@ void HeadingFilter::update(const Quat& qWorld, const std::array<int16_t, 3>& raw
 		// Anti-mag: something distorts the field, trust the gyro (and the learnt drift)
 		m_state = State::Disturbed;
 		m_cleanTime = 0;
+		if (s.consistentRelock) consistentRelock(innovation, norm, dip, angularSpeed, dt, s);
 		return;
 	}
+	m_consistTime = 0;
 	if (m_state == State::Disturbed) {
 		m_cleanTime += dt;
 		if (m_cleanTime < s.clearTime || m_rejectRatio > 0.3) return;
@@ -181,8 +184,37 @@ void HeadingFilter::update(const Quat& qWorld, const std::array<int16_t, 3>& raw
 	for (int i = 0; i < 3; i++)
 		for (int j = 0; j < 3; j++) m_P[i][j] -= g[i] * p0[j];
 	// Keep the drift physically plausible (the firmware already removes most of it)
-	double maxRate = deg2rad(20.0) / 60.0;
-	m_rate = std::clamp(m_rate, -maxRate, maxRate);
+	m_rate = std::clamp(m_rate, -s.maxRate, s.maxRate);
+}
+
+void HeadingFilter::consistentRelock(double innovation, double norm, double dip, double angularSpeed, double dt,
+									 const HeadingFilterSettings& s) {
+	if (m_consistTime > 0.5) {
+		// Leaving the running mean offset: the field bends with the orientation, start over
+		double mean = std::atan2(m_consistSin, m_consistCos);
+		if (std::fabs(wrapAngle(innovation - mean)) > s.consistTol) m_consistTime = 0;
+	}
+	if (m_consistTime == 0) m_consistSin = m_consistCos = m_consistRot = m_consistNorm = m_consistDip = 0;
+	m_consistTime += dt;
+	m_consistSin += std::sin(innovation) * dt;
+	m_consistCos += std::cos(innovation) * dt;
+	m_consistNorm += norm * dt;
+	m_consistDip += dip * dt;
+	m_consistRot += angularSpeed * dt;
+	if (m_consistTime < s.consistTime || m_consistRot < s.consistRotation) return;
+
+	// The gyro heading drifted (or the field here differs uniformly from the calibration
+	// room's): take the mag heading and this field
+	m_heading = wrapAngle(m_heading + std::atan2(m_consistSin, m_consistCos));
+	m_P[0][0] = s.magSigma * s.magSigma;
+	m_P[0][1] = m_P[1][0] = m_P[0][2] = m_P[2][0] = 0;
+	if (s.adaptiveRef) {
+		m_refNorm = std::clamp(m_consistNorm / m_consistTime, 1.0 - s.refMaxNorm, 1.0 + s.refMaxNorm);
+		m_refDip = std::clamp(m_consistDip / m_consistTime, m_cal.dip - s.refMaxDip, m_cal.dip + s.refMaxDip);
+	}
+	m_consistTime = 0;
+	m_rejectRatio = m_cleanTime = 0;
+	m_state = State::Ok;
 }
 
 }  // namespace smt

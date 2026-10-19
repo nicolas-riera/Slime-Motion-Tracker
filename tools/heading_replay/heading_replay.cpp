@@ -6,7 +6,9 @@
 // CSV: t (relative), mac, role, heading_deg (replayed), state, rec_heading_deg, rate_deg_min, sigma_deg,
 //      norm (field / calibration norm), dip_dev_deg (dip - calibration dip), speed (rad/s),
 //      dev_yaw_deg (device yaw, uncorrected), hmd_yaw_deg
-// Options: --sensitivity S, --adaptive 0|1 (local field reference), --ref-time S
+// Options: --sensitivity S, --adaptive 0|1 (local field reference), --ref-time S,
+//          --mag-sigma DEG, --corr-time S, --heading-walk DEG_PER_SQRT_MIN, --consistent 0|1,
+//          --max-rate DEG_PER_MIN
 #include <cstdio>
 #include <fstream>
 #include <map>
@@ -54,6 +56,12 @@ int main(int argc, char** argv) {
 		if (std::string(argv[i]) == "--sensitivity") settings.sensitivity = std::atof(argv[i + 1]);
 		else if (std::string(argv[i]) == "--adaptive") settings.adaptiveRef = std::atoi(argv[i + 1]) != 0;
 		else if (std::string(argv[i]) == "--ref-time") settings.refTime = std::atof(argv[i + 1]);
+		else if (std::string(argv[i]) == "--mag-sigma") settings.magSigma = deg2rad(std::atof(argv[i + 1]));
+		else if (std::string(argv[i]) == "--corr-time") settings.magCorrTime = std::atof(argv[i + 1]);
+		else if (std::string(argv[i]) == "--consistent") settings.consistentRelock = std::atoi(argv[i + 1]) != 0;
+		else if (std::string(argv[i]) == "--max-rate") settings.maxRate = deg2rad(std::atof(argv[i + 1])) / 60.0;
+		else if (std::string(argv[i]) == "--heading-walk")
+			settings.headingWalk = deg2rad(std::atof(argv[i + 1])) / std::sqrt(60.0);
 	std::ifstream in(argv[1]);
 	FILE* out = std::fopen(argv[2], "w");
 	if (!in || !out) {

@@ -124,6 +124,20 @@ struct HeadingFilterSettings {
 	double refTime = 20.0;
 	double refMaxNorm = 0.4;  // relative
 	double refMaxDip = deg2rad(25.0);
+	// Rotation-consistent relock: a disturbance (metal nearby) bends the field by an
+	// amount that changes with the tracker's orientation, a drifted gyro heading is off
+	// by the same angle whatever the orientation. While rejected, a mag heading that
+	// keeps the same offset (within consistTol) for consistTime seconds while the tracker
+	// turns by consistRotation is the truth: relock to it and take that field as the
+	// local reference. Without it a drifted heading (or a field unlike the calibration
+	// room's) stayed rejected until the tracker rebooted.
+	bool consistentRelock = true;
+	double consistTol = deg2rad(5.0);
+	double consistTime = 4.0;
+	double consistRotation = deg2rad(90.0);
+	// Learnt drift bound: the firmware removes most of the gyro bias, what is left is a
+	// few deg/min at most
+	double maxRate = deg2rad(5.0) / 60.0;
 };
 
 class HeadingFilter {
@@ -193,6 +207,11 @@ private:
 	// Re-lock after a gyro glitch: circular mean of the innovation
 	bool m_relock = false;
 	double m_relockSin = 0, m_relockCos = 0, m_relockTime = 0;
+	// Rotation-consistent relock window (consistentRelock)
+	void consistentRelock(double innovation, double norm, double dip, double angularSpeed, double dt,
+						  const HeadingFilterSettings& s);
+	double m_consistSin = 0, m_consistCos = 0, m_consistTime = 0, m_consistRot = 0;
+	double m_consistNorm = 0, m_consistDip = 0;
 };
 
 // Heading of the horizontal part of v, increasing with rotations around +Y

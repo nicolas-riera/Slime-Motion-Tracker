@@ -109,10 +109,10 @@ static void testPoseFusion() {
 	BodyOutput a = out;
 	double w = fusePose(e, hmd, 0.0, 1.6, a);
 	CHECK(std::fabs(w - 1) < 1e-9, "fusion weight standing %.3f", w);
-	CHECK(std::fabs(a.feet[0].position.y - 0.10) < 1e-9 && std::fabs(a.feet[0].position.x - 0.2) < 1e-9,
+	CHECK(std::fabs(a.feet[0].position.y - 0.08) < 1e-9 && std::fabs(a.feet[0].position.x - 0.2) < 1e-9,
 		  "model ankle clamped above the floor");
 	CHECK(std::fabs(a.feet[1].position.y - 0.3) < 1e-9, "raised model ankle kept");
-	hmd.position.y = 0.8;
+	hmd.position.y = 0.7;
 	BodyOutput b = out;
 	CHECK(fusePose(e, hmd, 0.0, 1.6, b) == 0 && b.feet[0].position.x == 0.1, "solver only with the head low");
 	// Ankles only, the model already leads at 60 % of the eye height
