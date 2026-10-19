@@ -1,8 +1,11 @@
 // Slime Motion Tracker dashboard overlay.
 //
-// One Dear ImGui UI is rendered into an offscreen D3D11 texture (1024x768). That texture
-// is both submitted to a SteamVR dashboard overlay and copied into the back buffer of a
-// regular desktop window, so the same UI works with and without a headset.
+// One Dear ImGui UI is rendered into an offscreen D3D11 texture, submitted to a SteamVR
+// dashboard overlay and copied into the back buffer of a regular desktop window, so the
+// same UI works with and without a headset. While the dashboard shows it, the UI renders
+// at the fixed overlay size (1024x768, stretched in the desktop window); otherwise at the
+// desktop window's client size (resizable, the layout adapts). Nothing is rendered while
+// neither is visible (window minimized or hidden in the notification area).
 //
 // Input: the desktop window feeds ImGui through the Win32 backend; SteamVR laser-pointer
 // events (mouse move / buttons / scroll) are injected into the same ImGui IO.
@@ -10,6 +13,8 @@
 #include "driver_link.h"  // includes winsock2.h, which must come before windows.h
 
 #include <windows.h>
+#include <windowsx.h>
+#include <shellapi.h>
 #include <d3d11.h>
 #include <dxgi1_2.h>
 #include <tlhelp32.h>
@@ -28,6 +33,7 @@
 #include "imgui.h"
 #include "imgui_impl_dx11.h"
 #include "imgui_impl_win32.h"
+#include "app_prefs.h"
 #include "ui.h"
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -43,6 +49,11 @@ constexpr wchar_t kWindowTitle[] = L"Slime Motion Tracker";
 constexpr wchar_t kMutexName[] = L"SlimeVRLiteOverlay";
 constexpr DXGI_FORMAT kFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
 constexpr auto kFramePeriod = std::chrono::microseconds(16667);  // ~60 Hz
+constexpr auto kIdlePeriod = std::chrono::milliseconds(100);  // nothing visible: link, sounds, VR events
+constexpr UINT WM_APP_TRAY = WM_APP + 1;  // notification area icon events
+constexpr UINT WM_APP_SHOW = WM_APP + 2;  // another instance asks us to show the window
+constexpr UINT kMenuOpen = 1001;
+constexpr UINT kMenuQuit = 1002;
 constexpr auto kVrRetryPeriod = std::chrono::seconds(2);
 constexpr auto kFloorPeriod = std::chrono::seconds(1);
 
@@ -55,6 +66,8 @@ struct Gpu {
     ComPtr<ID3D11Texture2D> uiTexture;  // offscreen UI render target, shared by desktop + VR
     ComPtr<ID3D11RenderTargetView> uiRtv;
     LUID adapterLuid{};
+    int uiWidth = 0, uiHeight = 0;  // UI texture size
+    int scWidth = 0, scHeight = 0;  // swap chain buffers size
 
     void reset() { *this = Gpu{}; }
 };
@@ -67,6 +80,39 @@ ComPtr<IDXGIAdapter1> adapterByIndex(int32_t index) {
     ComPtr<IDXGIAdapter1> adapter;
     if (FAILED(factory->EnumAdapters1(static_cast<UINT>(index), &adapter))) return nullptr;
     return adapter;
+}
+
+// (Re)creates the offscreen UI texture at the given size.
+bool createUiTarget(Gpu& gpu, int width, int height) {
+    gpu.uiRtv.Reset();
+    gpu.uiTexture.Reset();
+    gpu.uiWidth = gpu.uiHeight = 0;
+    D3D11_TEXTURE2D_DESC td{};
+    td.Width = static_cast<UINT>(width);
+    td.Height = static_cast<UINT>(height);
+    td.MipLevels = 1;
+    td.ArraySize = 1;
+    td.Format = kFormat;
+    td.SampleDesc.Count = 1;
+    td.Usage = D3D11_USAGE_DEFAULT;
+    td.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+    if (FAILED(gpu.device->CreateTexture2D(&td, nullptr, &gpu.uiTexture))) return false;
+    if (FAILED(gpu.device->CreateRenderTargetView(gpu.uiTexture.Get(), nullptr, &gpu.uiRtv))) return false;
+    gpu.uiWidth = width;
+    gpu.uiHeight = height;
+    return true;
+}
+
+// Swap chain buffers of the UI size (the back buffer receives a CopyResource of the UI
+// texture; DXGI stretches it to the window when the sizes differ).
+bool resizeSwapChain(Gpu& gpu, int width, int height) {
+    if (gpu.scWidth == width && gpu.scHeight == height) return true;
+    if (FAILED(gpu.swapChain->ResizeBuffers(0, static_cast<UINT>(width), static_cast<UINT>(height), DXGI_FORMAT_UNKNOWN,
+                                            0)))
+        return false;
+    gpu.scWidth = width;
+    gpu.scHeight = height;
+    return true;
 }
 
 bool createGpu(HWND hwnd, int32_t adapterIndex, Gpu& gpu) {
@@ -100,7 +146,7 @@ bool createGpu(HWND hwnd, int32_t adapterIndex, Gpu& gpu) {
     DXGI_SWAP_CHAIN_DESC1 sc{};
     sc.Width = ui::kWidth;
     sc.Height = ui::kHeight;
-    sc.Format = kFormat;  // same size and format as the UI texture -> CopyResource
+    sc.Format = kFormat;  // same format as the UI texture -> CopyResource (sizes follow it)
     sc.SampleDesc.Count = 1;
     sc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
     sc.BufferCount = 2;
@@ -110,19 +156,9 @@ bool createGpu(HWND hwnd, int32_t adapterIndex, Gpu& gpu) {
     if (FAILED(factory->CreateSwapChainForHwnd(gpu.device.Get(), hwnd, &sc, nullptr, nullptr, &gpu.swapChain)))
         return false;
     factory->MakeWindowAssociation(hwnd, DXGI_MWA_NO_ALT_ENTER);
-
-    D3D11_TEXTURE2D_DESC td{};
-    td.Width = ui::kWidth;
-    td.Height = ui::kHeight;
-    td.MipLevels = 1;
-    td.ArraySize = 1;
-    td.Format = kFormat;
-    td.SampleDesc.Count = 1;
-    td.Usage = D3D11_USAGE_DEFAULT;
-    td.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
-    if (FAILED(gpu.device->CreateTexture2D(&td, nullptr, &gpu.uiTexture))) return false;
-    if (FAILED(gpu.device->CreateRenderTargetView(gpu.uiTexture.Get(), nullptr, &gpu.uiRtv))) return false;
-    return true;
+    gpu.scWidth = ui::kWidth;
+    gpu.scHeight = ui::kHeight;
+    return createUiTarget(gpu, ui::kWidth, ui::kHeight);
 }
 
 bool sameLuid(const LUID& a, const LUID& b) { return a.LowPart == b.LowPart && a.HighPart == b.HighPart; }
@@ -381,13 +417,16 @@ public:
         link.sendFloor(valid, -m.m[1][3]);
     }
 
-    // Submits the UI texture while the dashboard tab is visible (and once after creation).
+    // The dashboard tab is shown
+    [[nodiscard]] bool visible() const { return active_ && vr::VROverlay()->IsOverlayVisible(handle_); }
+    // No texture submitted yet since the overlay was created
+    [[nodiscard]] bool needsTexture() const { return active_ && !submitted_; }
+
+    // Submits the UI texture (overlay size), while visible and once after creation.
     void submit(ID3D11Texture2D* texture) {
         if (!active_) return;
-        vr::IVROverlay* ov = vr::VROverlay();
-        if (submitted_ && !ov->IsOverlayVisible(handle_)) return;
         vr::Texture_t tex{texture, vr::TextureType_DirectX, vr::ColorSpace_Gamma};
-        submitted_ = ov->SetOverlayTexture(handle_, &tex) == vr::VROverlayError_None;
+        submitted_ = vr::VROverlay()->SetOverlayTexture(handle_, &tex) == vr::VROverlayError_None;
     }
 
 private:
@@ -415,13 +454,120 @@ private:
 
 // ------------------------------------------------------------------ Win32
 
+constexpr DWORD kWindowStyle = WS_OVERLAPPEDWINDOW;
+
+struct WindowState {
+    HWND hwnd = nullptr;
+    bool inTray = false;  // hidden, with an icon in the notification area
+    UINT taskbarCreated = 0;  // Explorer restarted: the tray icon must be added again
+    // UI pixels per client pixel (the UI renders at the VR size while the dashboard shows it)
+    float mouseScaleX = 1.0f, mouseScaleY = 1.0f;
+};
+WindowState g_win;
+
+void addTrayIcon() {
+    NOTIFYICONDATAW nid{};
+    nid.cbSize = sizeof(nid);
+    nid.hWnd = g_win.hwnd;
+    nid.uID = 1;
+    nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+    nid.uCallbackMessage = WM_APP_TRAY;
+    // Icon resource 1 (overlay/resources/overlay.rc)
+    nid.hIcon = static_cast<HICON>(LoadImageW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1), IMAGE_ICON,
+                                              GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0));
+    wcscpy_s(nid.szTip, kWindowTitle);
+    Shell_NotifyIconW(NIM_ADD, &nid);
+    if (nid.hIcon) DestroyIcon(nid.hIcon);
+}
+
+void removeTrayIcon() {
+    NOTIFYICONDATAW nid{};
+    nid.cbSize = sizeof(nid);
+    nid.hWnd = g_win.hwnd;
+    nid.uID = 1;
+    Shell_NotifyIconW(NIM_DELETE, &nid);
+}
+
+void hideToTray() {
+    if (!g_win.inTray) addTrayIcon();
+    g_win.inTray = true;
+    ShowWindow(g_win.hwnd, SW_HIDE);
+}
+
+void showWindow() {
+    if (g_win.inTray) removeTrayIcon();
+    g_win.inTray = false;
+    ShowWindow(g_win.hwnd, SW_SHOW);
+    if (IsIconic(g_win.hwnd)) ShowWindow(g_win.hwnd, SW_RESTORE);
+    SetForegroundWindow(g_win.hwnd);
+}
+
+void showTrayMenu() {
+    HMENU menu = CreatePopupMenu();
+    if (!menu) return;
+    AppendMenuW(menu, MF_STRING, kMenuOpen, L"Open");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, kMenuQuit, L"Quit");
+    SetMenuDefaultItem(menu, kMenuOpen, FALSE);
+    POINT pt{};
+    GetCursorPos(&pt);
+    SetForegroundWindow(g_win.hwnd);  // so the menu closes when clicking elsewhere
+    TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_BOTTOMALIGN, pt.x, pt.y, 0, g_win.hwnd, nullptr);
+    PostMessageW(g_win.hwnd, WM_NULL, 0, 0);
+    DestroyMenu(menu);
+}
+
 LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    // The UI may render at another size than the client area (VR size): scale the mouse
+    if (msg == WM_MOUSEMOVE && (g_win.mouseScaleX != 1.0f || g_win.mouseScaleY != 1.0f)) {
+        const int x = static_cast<int>(static_cast<float>(GET_X_LPARAM(lParam)) * g_win.mouseScaleX);
+        const int y = static_cast<int>(static_cast<float>(GET_Y_LPARAM(lParam)) * g_win.mouseScaleY);
+        lParam = MAKELPARAM(x, y);
+    }
     if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wParam, lParam)) return true;
+    if (g_win.taskbarCreated != 0 && msg == g_win.taskbarCreated) {
+        if (g_win.inTray) addTrayIcon();
+        return 0;
+    }
     switch (msg) {
     case WM_SYSCOMMAND:
         if ((wParam & 0xfff0) == SC_KEYMENU) return 0;  // no ALT application menu
+        if ((wParam & 0xfff0) == SC_MINIMIZE && appPrefs().minimizeToTray) {
+            hideToTray();
+            return 0;
+        }
         break;
+    case WM_GETMINMAXINFO: {
+        RECT r{0, 0, ui::kMinWidth, ui::kMinHeight};
+        AdjustWindowRect(&r, kWindowStyle, FALSE);
+        auto* info = reinterpret_cast<MINMAXINFO*>(lParam);
+        info->ptMinTrackSize = POINT{r.right - r.left, r.bottom - r.top};
+        return 0;
+    }
+    case WM_APP_TRAY:
+        switch (LOWORD(lParam)) {
+        case WM_LBUTTONUP:
+        case WM_LBUTTONDBLCLK:
+            showWindow();
+            break;
+        case WM_RBUTTONUP:
+        case WM_CONTEXTMENU:
+            showTrayMenu();
+            break;
+        default:
+            break;
+        }
+        return 0;
+    case WM_APP_SHOW:
+        showWindow();
+        return 0;
+    case WM_COMMAND:
+        if (LOWORD(wParam) == kMenuOpen) showWindow();
+        if (LOWORD(wParam) == kMenuQuit) DestroyWindow(hwnd);
+        return 0;
     case WM_DESTROY:
+        if (g_win.inTray) removeTrayIcon();
+        g_win.inTray = false;
         PostQuitMessage(0);
         return 0;
     default:
@@ -444,11 +590,10 @@ HWND createMainWindow(HINSTANCE instance) {
     wc.lpszClassName = kWindowClass;
     if (!RegisterClassExW(&wc)) return nullptr;
 
-    // Fixed client area of exactly kWidth x kHeight (no resize, no maximize).
-    const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+    // Resizable; starts with the client area of the VR overlay size
     RECT rect{0, 0, ui::kWidth, ui::kHeight};
-    AdjustWindowRect(&rect, style, FALSE);
-    return CreateWindowExW(0, kWindowClass, kWindowTitle, style, CW_USEDEFAULT, CW_USEDEFAULT,
+    AdjustWindowRect(&rect, kWindowStyle, FALSE);
+    return CreateWindowExW(0, kWindowClass, kWindowTitle, kWindowStyle, CW_USEDEFAULT, CW_USEDEFAULT,
                            rect.right - rect.left, rect.bottom - rect.top, nullptr, nullptr, instance, nullptr);
 }
 
@@ -482,19 +627,26 @@ bool pumpMessagesUntil(HANDLE timer, Clock::time_point deadline) {
 }  // namespace
 
 int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ PWSTR, _In_ int showCmd) {
-    // Single instance: the driver may start us while the user already started one.
+    // Single instance: the driver may start us while the user already started one. The
+    // running one shows its window (it may be hidden in the notification area).
     HANDLE mutex = CreateMutexW(nullptr, FALSE, kMutexName);
     if (!mutex) return 1;
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        if (HWND other = FindWindowW(kWindowClass, nullptr)) PostMessageW(other, WM_APP_SHOW, 0, 0);
         CloseHandle(mutex);
         return 0;
     }
 
+    AppPrefs& prefs = appPrefs();
+    prefs.load();
+
     DriverLink link;
-    link.start();  // on failure the UI simply shows "Driver not running"
+    link.start();  // on failure the UI simply waits for the engine
 
     HWND hwnd = createMainWindow(instance);
     if (!hwnd) return 1;
+    g_win.hwnd = hwnd;
+    g_win.taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
 
     // Connect to SteamVR first so the D3D device can be created on the HMD's GPU.
     VrOverlay vrOverlay;
@@ -515,8 +667,12 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ PWSTR, _In
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX11_Init(gpu.device.Get(), gpu.context.Get());
 
-    ShowWindow(hwnd, showCmd);
-    UpdateWindow(hwnd);
+    if (prefs.startInTray) {
+        hideToTray();
+    } else {
+        ShowWindow(hwnd, showCmd);
+        UpdateWindow(hwnd);
+    }
 
     HANDLE frameTimer =
         CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
@@ -525,9 +681,6 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ PWSTR, _In
     bool running = true;
     auto nextFrame = Clock::now();
     while (running) {
-        nextFrame += kFramePeriod;
-        if (nextFrame < Clock::now()) nextFrame = Clock::now();  // don't try to catch up after a stall
-
         link.poll();
         standalone.update(link.connected());
 
@@ -543,39 +696,67 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ PWSTR, _In
             }
         }
 
-        ImGui_ImplDX11_NewFrame();
-        ImGui_ImplWin32_NewFrame();
-        // The UI always has the texture's size, even while the window is minimized.
-        io.DisplaySize = ImVec2(static_cast<float>(ui::kWidth), static_cast<float>(ui::kHeight));
-        // VR input is queued after the Win32 backend's so the laser pointer wins.
-        if (!vrOverlay.pollEvents(io)) running = false;
         vrOverlay.updateFloor(link);
 
-        ImGui::NewFrame();
-        ui::draw(link, ui::FrameInfo{.vrActive = vrOverlay.active()});
-        ImGui::Render();
+        // What is visible decides what (and whether) to render
+        RECT client{};
+        GetClientRect(hwnd, &client);
+        const int clientW = client.right - client.left, clientH = client.bottom - client.top;
+        const bool desktopVisible = IsWindowVisible(hwnd) && !IsIconic(hwnd) && clientW > 0 && clientH > 0;
+        const bool vrVisible = vrOverlay.visible();
+        const bool vrNeedsTexture = vrOverlay.needsTexture();
+        const bool vrSize = vrVisible || (vrNeedsTexture && !desktopVisible);
+        const bool render = desktopVisible || vrVisible || vrNeedsTexture;
+        ui::update(link, render);
 
-        // Render the UI offscreen.
-        ID3D11RenderTargetView* rtv = gpu.uiRtv.Get();
-        const float clear[4] = {0.09f, 0.09f, 0.12f, 1.0f};
-        gpu.context->OMSetRenderTargets(1, &rtv, nullptr);
-        gpu.context->ClearRenderTargetView(rtv, clear);
-        ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-        gpu.context->OMSetRenderTargets(0, nullptr, nullptr);
+        if (render) {
+            const int width = vrSize ? ui::kWidth : clientW;
+            const int height = vrSize ? ui::kHeight : clientH;
+            if ((width != gpu.uiWidth || height != gpu.uiHeight) && !createUiTarget(gpu, width, height)) break;
+            if (desktopVisible && !resizeSwapChain(gpu, width, height)) break;
+            g_win.mouseScaleX = desktopVisible ? static_cast<float>(width) / static_cast<float>(clientW) : 1.0f;
+            g_win.mouseScaleY = desktopVisible ? static_cast<float>(height) / static_cast<float>(clientH) : 1.0f;
 
-        // Desktop window: copy the texture into the back buffer.
-        ComPtr<ID3D11Texture2D> backBuffer;
-        if (SUCCEEDED(gpu.swapChain->GetBuffer(0, IID_PPV_ARGS(&backBuffer))))
-            gpu.context->CopyResource(backBuffer.Get(), gpu.uiTexture.Get());
-        const HRESULT hr = gpu.swapChain->Present(0, 0);
-        if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) break;
+            ImGui_ImplDX11_NewFrame();
+            ImGui_ImplWin32_NewFrame();
+            // VR input is queued after the Win32 backend's so the laser pointer wins.
+            if (!vrOverlay.pollEvents(io)) running = false;
+            io.DisplaySize = ImVec2(static_cast<float>(width), static_cast<float>(height));
+            ImGui::NewFrame();
+            ui::draw(link, ui::FrameInfo{.vrActive = vrOverlay.active(), .standalone = standalone.running()});
+            ImGui::Render();
 
-        // SteamVR dashboard.
-        if (running) vrOverlay.submit(gpu.uiTexture.Get());
+            // Render the UI offscreen.
+            ID3D11RenderTargetView* rtv = gpu.uiRtv.Get();
+            const float clear[4] = {0.063f, 0.063f, 0.086f, 1.0f};
+            gpu.context->OMSetRenderTargets(1, &rtv, nullptr);
+            gpu.context->ClearRenderTargetView(rtv, clear);
+            ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+            gpu.context->OMSetRenderTargets(0, nullptr, nullptr);
 
+            // Desktop window: copy the texture into the back buffer.
+            if (desktopVisible) {
+                ComPtr<ID3D11Texture2D> backBuffer;
+                if (SUCCEEDED(gpu.swapChain->GetBuffer(0, IID_PPV_ARGS(&backBuffer))))
+                    gpu.context->CopyResource(backBuffer.Get(), gpu.uiTexture.Get());
+                const HRESULT hr = gpu.swapChain->Present(0, 0);
+                if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) break;
+            }
+
+            // SteamVR dashboard (always the overlay size).
+            if (running && vrSize) vrOverlay.submit(gpu.uiTexture.Get());
+        } else {
+            g_win.mouseScaleX = g_win.mouseScaleY = 1.0f;
+            if (!vrOverlay.pollEvents(io)) running = false;  // SteamVR quit
+        }
+
+        nextFrame += render ? std::chrono::duration_cast<Clock::duration>(kFramePeriod)
+                            : std::chrono::duration_cast<Clock::duration>(kIdlePeriod);
+        if (nextFrame < Clock::now()) nextFrame = Clock::now();  // don't try to catch up after a stall
         if (running && !pumpMessagesUntil(frameTimer, nextFrame)) running = false;
     }
 
+    ui::shutdown();
     vrOverlay.shutdown();
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();
@@ -584,6 +765,7 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ PWSTR, _In
     link.stop();
     if (frameTimer) CloseHandle(frameTimer);
     if (IsWindow(hwnd)) DestroyWindow(hwnd);
+    if (g_win.inTray) removeTrayIcon();
     CloseHandle(mutex);
     return 0;
 }

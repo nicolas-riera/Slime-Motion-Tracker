@@ -3,6 +3,7 @@
 #include <ws2tcpip.h>
 #include <mswsock.h>  // SIO_UDP_CONNRESET
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 
@@ -72,6 +73,123 @@ TrackerInfo parseTracker(const json& j) {
     return t;
 }
 
+bool isVec3(const json& a) {
+    return a.is_array() && a.size() == 3 && a[0].is_number() && a[1].is_number() && a[2].is_number();
+}
+
+Vec3f toVec3(const json& a) {
+    if (!isVec3(a)) return {};
+    return {a[0].get<float>(), a[1].get<float>(), a[2].get<float>()};
+}
+
+Vec3f getVec3(const json& j, const char* key) {
+    auto it = j.find(key);
+    return it != j.end() ? toVec3(*it) : Vec3f{};
+}
+
+Quatf toQuat(const json& a) {
+    if (!a.is_array() || a.size() != 4 || !a[0].is_number() || !a[1].is_number() || !a[2].is_number() ||
+        !a[3].is_number())
+        return {};
+    return {a[0].get<float>(), a[1].get<float>(), a[2].get<float>(), a[3].get<float>()};
+}
+
+Quatf getQuat(const json& j, const char* key) {
+    auto it = j.find(key);
+    return it != j.end() ? toQuat(*it) : Quatf{};
+}
+
+PoseInfo parsePose(const json& j) {
+    PoseInfo p;
+    p.valid = getBool(j, "valid", false);
+    p.ready = getBool(j, "ready", false);
+    p.floor = getFloat(j, "floor", 0.0f);
+    p.floorKnown = getBool(j, "floorKnown", false);
+    const json& head = getObject(j, "head");
+    p.headValid = getBool(head, "valid", false);
+    p.head = getVec3(head, "p");
+    p.headQ = getQuat(head, "q");
+    const json& jt = getObject(j, "joints");
+    p.neck = getVec3(jt, "neck");
+    p.pelvis = getVec3(jt, "pelvis");
+    p.hip0 = getVec3(jt, "hip0");
+    p.hipL = getVec3(jt, "hipL");
+    p.hipR = getVec3(jt, "hipR");
+    p.kneeL = getVec3(jt, "kneeL");
+    p.kneeR = getVec3(jt, "kneeR");
+    p.ankleL = getVec3(jt, "ankleL");
+    p.ankleR = getVec3(jt, "ankleR");
+    p.pelvisQ = getQuat(j, "pelvisQ");
+    if (auto it = j.find("feetQ"); it != j.end() && it->is_array() && it->size() == 2)
+        for (size_t i = 0; i < 2; ++i) p.footQ[i] = toQuat((*it)[i]);
+    if (auto it = j.find("planted"); it != j.end() && it->is_array() && it->size() == 2)
+        for (size_t i = 0; i < 2; ++i) p.planted[i] = (*it)[i].is_boolean() && (*it)[i].get<bool>();
+    if (auto it = j.find("hands"); it != j.end() && it->is_array() && it->size() == 2) {
+        for (size_t i = 0; i < 2; ++i) {
+            const json& h = (*it)[i];
+            if (!h.is_object()) continue;
+            p.handValid[i] = getBool(h, "valid", false);
+            p.hand[i] = getVec3(h, "p");
+            p.handQ[i] = getQuat(h, "q");
+        }
+    }
+    return p;
+}
+
+TrackerDetail parseDetail(const json& j) {
+    TrackerDetail d;
+    d.mac = getString(j, "mac", "");
+    d.connected = getBool(j, "connected", false);
+    d.firmware = getString(j, "firmware", "");
+    d.board = getInt(j, "board", 0);
+    d.imuType = getInt(j, "imuType", 0);
+    d.mcu = getInt(j, "mcu", 0);
+    d.protocolVersion = getInt(j, "protocolVersion", 0);
+    d.bootCount = getInt(j, "bootCount", 0);
+    d.hasRotation = getBool(j, "hasRotation", false);
+    d.q = getQuat(j, "q");
+    d.qRaw = getQuat(j, "qRaw");
+    d.gyro = getVec3(j, "gyro");
+    d.accel = getVec3(j, "accel");
+    d.hasMag = getBool(j, "hasMag", false);
+    const Vec3f raw = getVec3(j, "magRaw");
+    d.magRaw[0] = static_cast<int>(raw.x);
+    d.magRaw[1] = static_cast<int>(raw.y);
+    d.magRaw[2] = static_cast<int>(raw.z);
+    if (auto it = j.find("magField"); it != j.end() && isVec3(*it)) {
+        d.hasMagField = true;
+        d.magField = toVec3(*it);
+    }
+    const json& mag = getObject(j, "mag");
+    d.magState = getString(mag, "state", "absent");
+    d.magProgress = getFloat(mag, "progress", 0.0f);
+    d.magValid = getBool(mag, "valid", false);
+    d.magResidual = getFloat(mag, "residual", 1.0f);
+    d.magDip = getFloat(mag, "dip", 0.0f);
+    d.magNorm = getFloat(mag, "norm", 0.0f);
+    d.magFieldDip = getFloat(mag, "fieldDip", 0.0f);
+    d.hasHeading = getBool(mag, "hasHeading", false);
+    d.heading = getFloat(mag, "heading", 0.0f);
+    if (auto it = j.find("magView"); it != j.end() && it->is_object()) {
+        const json& v = *it;
+        d.hasMagView = true;
+        if (auto s = v.find("samples"); s != v.end() && s->is_array()) {
+            d.magView.samples.reserve(s->size());
+            for (const json& p : *s)
+                if (isVec3(p)) d.magView.samples.push_back(toVec3(p));
+        }
+        if (auto b = v.find("bins"); b != v.end() && b->is_array())
+            for (const json& n : *b) d.magView.bins.push_back(n.is_number() ? static_cast<int>(n.get<double>()) : 0);
+        if (auto b = v.find("binDirs"); b != v.end() && b->is_array())
+            for (const json& p : *b)
+                if (isVec3(p)) d.magView.binDirs.push_back(toVec3(p));
+        d.magView.target = std::max(1, getInt(v, "target", 3));
+        d.magView.guided = getBool(v, "guided", false);
+        d.magView.progress = getFloat(v, "progress", 0.0f);
+    }
+    return d;
+}
+
 DriverState parseState(const json& j) {
     DriverState s;
     s.version = getInt(j, "version", 0);
@@ -95,9 +213,11 @@ DriverState parseState(const json& j) {
         s.measuredEyeHeight = it->get<float>();
     s.floorKnown = getBool(j, "floorKnown", false);
     s.calibrated = getBool(j, "calibrated", false);
+    s.ready = getBool(j, "ready", false);
 
     const json& cal = getObject(j, "calibration");
     s.calibration.phase = getString(cal, "phase", "idle");
+    s.calibration.quick = getBool(cal, "quick", false);
     s.calibration.countdown = getFloat(cal, "countdown", 0.0f);
     s.calibration.message = getString(cal, "message", "");
     const json& last = getObject(j, "lastCalibration");
@@ -214,10 +334,28 @@ void DriverLink::poll() {
 void DriverLink::handleDatagram(std::string_view data) {
     const json msg = json::parse(data, nullptr, /*allow_exceptions=*/false);
     if (!msg.is_object()) return;
-    if (getString(msg, "type", "") != "state") return;
-    state_ = parseState(msg);
-    hasState_ = true;
-    lastState_ = Clock::now();
+    const std::string type = getString(msg, "type", "");
+    if (type == "state") {
+        state_ = parseState(msg);
+        hasState_ = true;
+        lastState_ = Clock::now();
+    } else if (type == "pose") {
+        pose_ = parsePose(msg);
+        lastPose_ = Clock::now();
+    } else if (type == "detail") {
+        detail_ = parseDetail(msg);
+        lastDetail_ = Clock::now();
+    }
+}
+
+double DriverLink::poseAge() const {
+    if (lastPose_ == Clock::time_point{}) return 1e9;
+    return std::chrono::duration<double>(Clock::now() - lastPose_).count();
+}
+
+double DriverLink::detailAge() const {
+    if (lastDetail_ == Clock::time_point{}) return 1e9;
+    return std::chrono::duration<double>(Clock::now() - lastDetail_).count();
 }
 
 bool DriverLink::connected() const {
@@ -235,8 +373,6 @@ void DriverLink::sendHello() {
     lastHello_ = Clock::now();
     send({{"type", "hello"}});
 }
-
-void DriverLink::setMode(std::string_view mode) { send({{"type", "setMode"}, {"mode", mode}}); }
 
 void DriverLink::setHeight(float meters) { send({{"type", "setHeight"}, {"meters", round4(meters)}}); }
 
@@ -268,6 +404,12 @@ void DriverLink::magReset(std::string_view mac) { send({{"type", "magReset"}, {"
 
 void DriverLink::sendFloor(bool valid, float y) {
     send({{"type", "floor"}, {"valid", valid}, {"y", round4(y)}});
+}
+
+void DriverLink::resetSettings() { send({{"type", "resetSettings"}}); }
+
+void DriverLink::sendView(bool visible, std::string_view tracker, bool magView) {
+    send({{"type", "view"}, {"visible", visible}, {"tracker", tracker}, {"magView", magView}});
 }
 
 }  // namespace smt

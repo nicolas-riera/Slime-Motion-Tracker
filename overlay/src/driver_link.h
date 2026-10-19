@@ -46,6 +46,7 @@ struct TrackerInfo {
 
 struct CalibrationInfo {
     std::string phase = "idle";  // idle|stand|ski|done|error
+    bool quick = false;  // quick reset (stand only) rather than the full calibration
     float countdown = 0.0f;
     std::string message;
     // Unix seconds of the last successful full calibration / quick reset
@@ -60,7 +61,7 @@ struct DriverSettings {
     float footPlantStrength = 0.7f;
     float inertialWeight = 0.5f;
     bool velocityPrediction = false;
-    bool recording = true;
+    bool recording = false;
 };
 
 struct RecordingInfo {
@@ -83,6 +84,66 @@ struct OutputsInfo {
     bool rightFoot = false;
 };
 
+struct Vec3f {
+    float x = 0, y = 0, z = 0;
+};
+struct Quatf {
+    float w = 1, x = 0, y = 0, z = 0;
+};
+
+// `pose` stream (docs/IPC.md): the solved body in the SteamVR raw tracking space
+// (Y up, meters), sent while the overlay shows the skeleton.
+struct PoseInfo {
+    bool valid = false;
+    bool ready = false;
+    float floor = 0.0f;
+    bool floorKnown = false;
+    bool headValid = false;
+    Vec3f head;
+    Quatf headQ;
+    Vec3f neck, pelvis, hip0, hipL, hipR, kneeL, kneeR, ankleL, ankleR;
+    Quatf pelvisQ;
+    Quatf footQ[2];
+    bool planted[2] = {false, false};
+    bool handValid[2] = {false, false};
+    Vec3f hand[2];
+    Quatf handQ[2];
+};
+
+struct MagViewInfo {
+    std::vector<Vec3f> samples;  // raw counts, sensor frame
+    std::vector<int> bins;  // samples per orientation bin
+    std::vector<Vec3f> binDirs;  // where "up" is in the sensor frame for each bin
+    int target = 3;  // samples that fill a bin
+    bool guided = false;
+    float progress = 0.0f;
+};
+
+// `detail` stream: everything about the tracker selected in the UI.
+struct TrackerDetail {
+    std::string mac;
+    bool connected = false;
+    std::string firmware;
+    int board = 0, imuType = 0, mcu = 0, protocolVersion = 0;
+    int bootCount = 0;
+    bool hasRotation = false;
+    Quatf q, qRaw;  // mag-corrected / device fusion, sensor -> world
+    Vec3f gyro;  // rad/s, sensor frame
+    Vec3f accel;  // linear, m/s^2, sensor frame
+    bool hasMag = false;
+    int magRaw[3] = {0, 0, 0};
+    bool hasMagField = false;
+    Vec3f magField;  // calibrated, sensor frame, units of the field norm
+    std::string magState = "absent";
+    float magProgress = 0.0f;
+    bool magValid = false;
+    float magResidual = 1.0f, magDip = 0.0f, magNorm = 0.0f, magFieldDip = 0.0f;
+    bool hasHeading = false;
+    float heading = 0.0f;
+    bool hasMagView = false;
+    MagViewInfo magView;
+};
+
 // Last `state` message received from the driver.
 struct DriverState {
     int version = 0;
@@ -95,6 +156,7 @@ struct DriverState {
     std::optional<float> measuredEyeHeight;
     bool floorKnown = false;
     bool calibrated = false;
+    bool ready = false;  // all mapped trackers connected and calibrated, both ankles mapped
     CalibrationInfo calibration;
     DriverSettings settings;
     std::vector<TrackerInfo> trackers;
@@ -121,10 +183,14 @@ public:
     // True once at least one valid `state` was received (state() holds real data).
     [[nodiscard]] bool hasState() const { return hasState_; }
     [[nodiscard]] const DriverState& state() const { return state_; }
+    // Latest `pose` / `detail` (see sendView) and how old they are, in seconds
+    [[nodiscard]] const PoseInfo& pose() const { return pose_; }
+    [[nodiscard]] double poseAge() const;
+    [[nodiscard]] const TrackerDetail& detail() const { return detail_; }
+    [[nodiscard]] double detailAge() const;
 
     // Commands (docs/IPC.md, "Overlay -> driver").
     void sendHello();
-    void setMode(std::string_view mode);
     void setHeight(float meters);
     void setRole(std::string_view mac, std::string_view role);
     void setSetting(std::string_view key, float value);
@@ -136,6 +202,10 @@ public:
     void magCancel(std::string_view mac);
     void magReset(std::string_view mac);
     void sendFloor(bool valid, float y);
+    void resetSettings();
+    // What the UI shows: the driver streams `pose` (and `detail` for `tracker`) while
+    // visible. Re-send about every 0.5 s; it expires after 2 s.
+    void sendView(bool visible, std::string_view tracker, bool magView);
 
 private:
     using Clock = std::chrono::steady_clock;
@@ -150,6 +220,10 @@ private:
     Clock::time_point lastState_{};
     bool hasState_ = false;
     DriverState state_;
+    PoseInfo pose_;
+    Clock::time_point lastPose_{};
+    TrackerDetail detail_;
+    Clock::time_point lastDetail_{};
 };
 
 }  // namespace smt

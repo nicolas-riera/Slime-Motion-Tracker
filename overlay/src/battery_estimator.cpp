@@ -12,8 +12,11 @@ namespace {
 
 constexpr double kWindow = 40 * 60;     // s of history used for the rate
 constexpr double kMaxGap = 10 * 60;     // s without readings: start over
-constexpr double kChargeJump = 0.02;    // level rise in a minute that means charging
-constexpr double kChargeRise = 0.003;   // still rising: still charging
+constexpr double kChargeJump = 0.02;    // level rise in a minute: a new baseline (not charging by itself)
+constexpr double kChargeRise = 0.003;   // rise per minute that counts toward charging / keeps it
+constexpr int kChargeMinutes = 3;       // consecutive rising minutes that mean charging
+constexpr double kMinLevel = 0.01;      // at or below: no battery reading (USB powered)
+constexpr double kMinVoltage = 3.0;     // below (and > 0): no battery reading
 constexpr double kSwapDrop = 0.06;      // level drop in a minute: another battery
 constexpr int kSettleMinutes = 5;       // after a charge, the voltage relaxes
 constexpr size_t kMinMinutes = 8;       // before the first estimate
@@ -32,8 +35,9 @@ void BatteryEstimator::load(const std::string& path) {
         History h;
         h.transport = hj.value("transport", "");
         h.lastReading = hj.value("last", 0.0);
-        h.charging = hj.value("charging", false);
-        h.settle = hj.value("settle", 0);
+        // Charging is re-detected from fresh readings (an older version flagged single jumps)
+        h.charging = false;
+        h.settle = 0;
         if (hj.contains("minutes") && hj["minutes"].is_array())
             for (const auto& m : hj["minutes"])
                 if (m.is_array() && m.size() == 2 && m[0].is_number() && m[1].is_number())
@@ -65,9 +69,22 @@ void BatteryEstimator::save() {
     std::rename(tmp.c_str(), m_path.c_str());
 }
 
-void BatteryEstimator::add(const std::string& mac, const std::string& transport, double level, double now) {
+void BatteryEstimator::add(const std::string& mac, const std::string& transport, double level, double voltage,
+                           double now) {
     History& h = m_history[mac];
     if (now - h.lastReading < 1.0) return;  // one reading a second is plenty
+    if (!plausible(level, voltage)) {
+        // USB powered or no battery sense: not a reading. The next real reading starts
+        // a new history (the jump from 0 % is not a charge)
+        if (!h.minutes.empty() || !h.pending.empty() || h.charging) {
+            h = History{};
+            h.transport = transport;
+            m_dirty = true;
+        }
+        h.lastReading = now;
+        h.minuteStart = 0;
+        return;
+    }
     if (now - h.lastReading > kMaxGap || transport != h.transport) {
         h = History{};
         h.transport = transport;
@@ -89,9 +106,16 @@ void BatteryEstimator::closeMinute(History& h, double now, double level) {
     const Minute cur{now, level};
     if (!h.minutes.empty()) {
         const double rise = level - h.minutes.back().level;
-        if (rise > kChargeJump || (h.charging && rise > kChargeRise)) {
+        h.riseStreak = rise > kChargeRise ? h.riseStreak + 1 : 0;
+        // Charging: a sustained rise, never a single jump
+        if (h.riseStreak >= kChargeMinutes || (h.charging && rise > kChargeRise)) {
             h.charging = true;
             h.settle = kSettleMinutes;
+            h.minutes = {cur};
+            return;
+        }
+        if (rise > kChargeJump) {
+            // One jump (another battery, the reading recovering): new baseline
             h.minutes = {cur};
             return;
         }
@@ -111,6 +135,10 @@ void BatteryEstimator::closeMinute(History& h, double now, double level) {
     h.minutes.erase(std::remove_if(h.minutes.begin(), h.minutes.end(),
                                    [&](const Minute& m) { return now - m.t > kWindow; }),
                     h.minutes.end());
+}
+
+bool BatteryEstimator::plausible(double level, double voltage) {
+    return level > kMinLevel && !(voltage > 0.0 && voltage < kMinVoltage);
 }
 
 BatteryEstimator::Estimate BatteryEstimator::estimate(const std::string& mac) const {

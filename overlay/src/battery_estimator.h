@@ -26,8 +26,11 @@ public:
 
     void load(const std::string& path);
     void save();
-    // level 0..1; now: wall-clock seconds, so the saved history stays valid
-    void add(const std::string& mac, const std::string& transport, double level, double now);
+    // level 0..1, voltage in V (0 = unknown); now: wall-clock seconds, so the saved
+    // history stays valid. Implausible readings (USB powered: ~0 %, < 3 V) are ignored.
+    void add(const std::string& mac, const std::string& transport, double level, double voltage, double now);
+    // A real battery reading (not USB power / no battery sense)
+    [[nodiscard]] static bool plausible(double level, double voltage);
     [[nodiscard]] Estimate estimate(const std::string& mac) const;
 
 private:
@@ -43,6 +46,7 @@ private:
         double lastReading = 0;
         bool charging = false;
         int settle = 0;  // minutes still discarded after a charge
+        int riseStreak = 0;  // consecutive minutes with a rising level
     };
     void closeMinute(History& h, double now, double level);
 

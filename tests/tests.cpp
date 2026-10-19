@@ -3,6 +3,7 @@
 #include <cstring>
 #include <random>
 
+#include "battery_estimator.h"
 #include "smt/body_solver.h"
 #include "smt/dongle_bridge.h"
 #include "smt/pose_model.h"
@@ -427,7 +428,28 @@ static void testBodySolver() {
 		  "ankles-only standing ankle %.3f", out.feet[1].position.y);
 }
 
+// Overlay battery estimator: USB power readings and single jumps are not charging
+static void testBatteryEstimator() {
+	using smt::ui::BatteryEstimator;
+	const std::string mac = "AA:BB:CC:DD:EE:FF";
+	double t = 1000;
+	BatteryEstimator e;
+	// USB powered: reads 0 % (ignored), then on battery at 41 %, slowly discharging
+	for (int i = 0; i < 300; i++, t += 1) e.add(mac, "espnow", 0.0, 0.0, t);
+	for (int i = 0; i < 20 * 60; i++, t += 1) e.add(mac, "espnow", 0.41 - (t - 1300) * 1e-6, 3.66, t);
+	CHECK(e.estimate(mac).state != BatteryEstimator::State::Charging, "battery: 0 -> 41 %% jump taken as charging");
+	CHECK(e.estimate(mac).state == BatteryEstimator::State::Ok, "battery: no estimate after 20 min of discharge");
+	// A sustained rise (1 %/min for 5 min) is charging
+	const double base = 0.40;
+	for (int i = 0; i < 5 * 60; i++, t += 1) e.add(mac, "espnow", base + i / 6000.0, 3.9, t);
+	CHECK(e.estimate(mac).state == BatteryEstimator::State::Charging, "battery: sustained rise not seen as charging");
+	CHECK(!BatteryEstimator::plausible(0.0, 4.1) && !BatteryEstimator::plausible(0.5, 2.5) &&
+			  BatteryEstimator::plausible(0.5, 0.0),
+		  "battery: plausibility");
+}
+
 int main() {
+	testBatteryEstimator();
 	testProtocol();
 	testMagCalibration();
 	testHeadingFilter();

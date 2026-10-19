@@ -93,7 +93,8 @@ target_link_libraries(smt_heading_replay PRIVATE smt_core)
 add_executable(smt_monitor tools/monitor/monitor.cpp)
 target_link_libraries(smt_monitor PRIVATE smt_core)
 
-add_executable(smt_tests tests/tests.cpp)
+add_executable(smt_tests tests/tests.cpp overlay/src/battery_estimator.cpp)
+target_include_directories(smt_tests PRIVATE overlay/src)
 target_link_libraries(smt_tests PRIVATE smt_core)
 enable_testing()
 add_test(NAME core COMMAND smt_tests)
@@ -137,6 +138,12 @@ endif()
 add_executable(SlimeMotionTracker WIN32
   overlay/src/main.cpp
   overlay/src/ui.cpp
+  overlay/src/ui_skeleton.cpp
+  overlay/src/ui_tracker.cpp
+  overlay/src/widgets.cpp
+  overlay/src/view3d.cpp
+  overlay/src/app_prefs.cpp
+  overlay/src/sounds.cpp
   overlay/src/driver_link.cpp
   overlay/src/battery_estimator.cpp
   overlay/resources/overlay.rc
@@ -149,7 +156,7 @@ add_executable(SlimeMotionTracker WIN32
 target_include_directories(SlimeMotionTracker PRIVATE
   ${OPENVR_INCLUDE} ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
 target_link_libraries(SlimeMotionTracker PRIVATE
-  ${OPENVR_LIB} nlohmann_json::nlohmann_json d3d11 dxgi ws2_32)
+  ${OPENVR_LIB} nlohmann_json::nlohmann_json d3d11 dxgi ws2_32 winmm shell32)
 
 add_custom_command(TARGET SlimeMotionTracker POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy ${OPENVR_DLL} $<TARGET_FILE_DIR:SlimeMotionTracker>)

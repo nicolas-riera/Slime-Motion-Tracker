@@ -4,654 +4,1054 @@
 
 #include <algorithm>
 #include <chrono>
+#include <climits>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <ctime>
-#include <map>
 #include <string>
-#include <type_traits>
 
-#include "battery_estimator.h"
+#include "app_prefs.h"
 #include "imgui.h"
+#include "sounds.h"
+#include "ui_internal.h"
 
 namespace smt::ui {
 
+UiState g;
+
 namespace {
-
-using Clock = std::chrono::steady_clock;
-
-const ImVec4 kGreen{0.35f, 0.85f, 0.40f, 1.0f};
-const ImVec4 kOrange{1.00f, 0.65f, 0.20f, 1.0f};
-const ImVec4 kRed{1.00f, 0.35f, 0.35f, 1.0f};
-const ImVec4 kGrey{0.60f, 0.60f, 0.62f, 1.0f};
-const ImVec4 kAccent{0.47f, 0.40f, 0.95f, 1.0f};
 
 constexpr int kMinHeightCm = 120;
 constexpr int kMaxHeightCm = 220;
+constexpr float kRowHeight = 44.0f;
 
-// A value the user just sent to the driver. It is displayed instead of the driver's
-// value until the driver echoes it back (or a timeout expires), so a widget does not
-// jump back to the old value during the round trip.
-template <typename T>
-class PendingValues {
-public:
-    void set(const std::string& key, T value) { entries_[key] = {std::move(value), Clock::now()}; }
+bool isRunning(const std::string& phase) { return phase == "stand" || phase == "ski"; }
 
-    T resolve(const std::string& key, const T& remote) {
-        auto it = entries_.find(key);
-        if (it == entries_.end()) return remote;
-        if (matches(it->second.value, remote) ||
-            Clock::now() - it->second.since > std::chrono::seconds(2)) {
-            entries_.erase(it);
-            return remote;
-        }
-        return it->second.value;
-    }
+// ---------------------------------------------------------------- generic pieces
 
-    void clear() { entries_.clear(); }
-
-private:
-    static bool matches(const T& a, const T& b) {
-        if constexpr (std::is_floating_point_v<T>)
-            return std::abs(a - b) < 1e-3;
-        else
-            return a == b;
-    }
-
-    struct Entry {
-        T value;
-        Clock::time_point since;
-    };
-    std::map<std::string, Entry> entries_;
-};
-
-struct UiState {
-    ImFont* bodyFont = nullptr;
-    ImFont* mediumFont = nullptr;  // big button labels
-    ImFont* largeFont = nullptr;   // countdown, height value
-
-    PendingValues<double> pendingNumbers;
-    PendingValues<std::string> pendingStrings;
-
-    // Slider currently dragged: its value is kept locally and only sent on release.
-    std::string activeSlider;
-    float activeSliderValue = 0.0f;
-
-    std::string prevPhase = "idle";
-
-    BatteryEstimator battery;
-    Clock::time_point lastBatterySave = Clock::now();
-};
-
-UiState g;
-
-// ---------------------------------------------------------------- small widgets
-
-bool isCalibrationRunning(const std::string& phase) { return phase == "stand" || phase == "ski"; }
-
-// Full-width colored box with wrapped text.
-void banner(const char* text, const ImVec4& bg, const ImVec4& fg = ImVec4(1, 1, 1, 1)) {
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, bg);
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 6.0f);
-    ImGui::PushID(text);
-    ImGui::BeginChild("##banner", ImVec2(0, 0),
-                      ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
-    ImGui::PushStyleColor(ImGuiCol_Text, fg);
-    ImGui::TextWrapped("%s", text);
-    ImGui::PopStyleColor();
-    ImGui::EndChild();
-    ImGui::PopID();
-    ImGui::PopStyleVar();
-    ImGui::PopStyleColor();
+// Full-width colored banner: icon, bold title and wrapped text
+void banner(IconFn iconFn, ImU32 tint, ImU32 bg, const char* title, const char* body) {
+    const float width = ImGui::GetContentRegionAvail().x;
+    const float pad = 14.0f, iconBox = 34.0f;
+    const float textX = pad + iconBox + 12.0f;
+    const float wrap = width - textX - pad;
+    const ImVec2 titleSize = textSize(fonts.bold, title);
+    const ImVec2 bodySize =
+        body && *body ? fonts.small->CalcTextSizeA(fonts.small->FontSize, FLT_MAX, wrap, body) : ImVec2(0, 0);
+    const float contentH = titleSize.y + (bodySize.y > 0 ? bodySize.y + 2.0f : 0.0f);
+    const float h = std::max(iconBox, contentH) + 2 * pad;
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(ImVec2(width, h));
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(p, ImVec2(p.x + width, p.y + h), sty(bg), 12.0f);
+    dl->AddRect(p, ImVec2(p.x + width, p.y + h), sty(alpha(tint, 0.45f)), 12.0f, 0, 1.2f);
+    const ImVec2 ic(p.x + pad + iconBox * 0.5f, p.y + h * 0.5f);
+    dl->AddCircleFilled(ic, iconBox * 0.5f, sty(alpha(tint, 0.18f)), 24);
+    iconFn(dl, ic, 20.0f, tint);
+    const float ty = p.y + (h - contentH) * 0.5f;
+    textAt(dl, fonts.bold, ImVec2(p.x + textX, ty), col::text, title);
+    if (bodySize.y > 0)
+        dl->AddText(fonts.small, fonts.small->FontSize, ImVec2(p.x + textX, ty + titleSize.y + 2.0f), sty(col::textDim),
+                    body, nullptr, wrap);
 }
 
-void helpText(const char* text) {
-    ImGui::PushStyleColor(ImGuiCol_Text, kGrey);
-    ImGui::TextWrapped("%s", text);
-    ImGui::PopStyleColor();
-}
-
-void centeredText(const char* text, const ImVec4& color) {
-    const float w = ImGui::CalcTextSize(text).x;
-    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (ImGui::GetContentRegionAvail().x - w) * 0.5f));
-    ImGui::TextColored(color, "%s", text);
-}
-
-// Slider that sends its value only when released (not every frame while dragging).
-// Returns true and fills `sent` when a new value must be sent.
-bool sliderOnRelease(const char* label, const std::string& key, float remote, float vMin, float vMax,
-                     const char* format, float& sent) {
-    float v = (g.activeSlider == key) ? g.activeSliderValue
-                                      : static_cast<float>(g.pendingNumbers.resolve(key, remote));
-    ImGui::SliderFloat(label, &v, vMin, vMax, format, ImGuiSliderFlags_AlwaysClamp);
+// Slider sending its value only when released
+bool sliderOnRelease(const char* id, const std::string& key, float remote, float vMin, float vMax, float& sent) {
+    float v = (g.activeSlider == key) ? g.activeSliderValue : static_cast<float>(g.pendingNumbers.resolve(key, remote));
+    bool released = false;
+    const bool changed = slider(id, &v, vMin, vMax, &released);
     if (ImGui::IsItemActive()) {
         g.activeSlider = key;
         g.activeSliderValue = v;
+        if (changed) g.sliderEdited = true;
     } else if (g.activeSlider == key) {
         g.activeSlider.clear();
     }
-    if (ImGui::IsItemDeactivatedAfterEdit()) {
-        g.pendingNumbers.set(key, v);
-        sent = v;
-        return true;
+    if (released) {
+        const bool edited = g.sliderEdited;
+        g.sliderEdited = false;
+        if (edited) {
+            g.pendingNumbers.set(key, v);
+            sent = v;
+            return true;
+        }
     }
     return false;
 }
 
-// Checkbox bound to a boolean driver setting; sends immediately on click.
-void settingCheckbox(DriverLink& link, const char* label, const char* key, bool remote) {
+// Label (+ value on the right), slider, help
+void settingSlider(DriverLink& link, const char* label, const char* key, float remote, const char* help,
+                   const char* format = "%.2f") {
+    ImGui::PushID(key);
+    const float shown = g.activeSlider == key ? g.activeSliderValue
+                                              : static_cast<float>(g.pendingNumbers.resolve(key, remote));
+    const float avail = ImGui::GetContentRegionAvail().x;
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    char value[32];
+    std::snprintf(value, sizeof(value), format, shown);
+    text(fonts.bold, col::text, "%s", label);
+    const ImVec2 vs = textSize(fonts.body, value);
+    textAt(ImGui::GetWindowDrawList(), fonts.body, ImVec2(p.x + avail - vs.x, p.y + 1), col::accentSoft, value);
+    float sent = 0.0f;
+    if (sliderOnRelease("##slider", key, remote, 0.0f, 1.0f, sent)) link.setSetting(key, sent);
+    if (help) helpText(help);
+    ImGui::PopID();
+}
+
+void settingToggle(DriverLink& link, const char* label, const char* help, const char* key, bool remote) {
     bool v = g.pendingNumbers.resolve(key, remote ? 1.0 : 0.0) > 0.5;
-    if (ImGui::Checkbox(label, &v)) {
+    if (toggleRow(label, help, &v)) {
         g.pendingNumbers.set(key, v ? 1.0 : 0.0);
         link.setSetting(key, v);
     }
 }
 
-void settingSlider(DriverLink& link, const char* label, const char* key, float remote) {
-    float sent = 0.0f;
-    ImGui::SetNextItemWidth(-FLT_MIN);
-    if (sliderOnRelease(label, key, remote, 0.0f, 1.0f, "%.2f", sent)) link.setSetting(key, sent);
-}
-
-std::string shortMac(const std::string& mac) {
-    // "B4:E6:2D:36:36:94" -> "36:36:94"
-    return mac.size() >= 8 ? mac.substr(mac.size() - 8) : mac;
-}
-
-// ---------------------------------------------------------------- sections
-
-void drawHeader(const DriverLink& link, const DriverState& s, bool connected) {
-    ImGui::TextColored(kAccent, "Slime Motion Tracker");
-    ImGui::SameLine();
-    if (connected) {
-        if (s.driverVersion.empty())
-            ImGui::TextColored(kGreen, "Driver connected");
-        else
-            ImGui::TextColored(kGreen, "Driver connected (v%s)", s.driverVersion.c_str());
-        if (s.version != 1) {
-            ImGui::SameLine();
-            ImGui::TextColored(kOrange, "[protocol v%d, expected v1]", s.version);
-        }
-    } else {
-        // The overlay runs the engine itself without SteamVR and hands over to the
-        // driver when SteamVR starts: only the few seconds of a switch end up here
-        ImGui::TextColored(kGrey, "Starting the engine...");
+void pageTitle(const char* title, const char* subtitle) {
+    text(fonts.title, col::text, "%s", title);
+    if (subtitle) {
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 8.0f);
+        text(fonts.small, col::textDim, "%s", subtitle);
     }
-
-    if (connected && !s.portError.empty()) {
-        banner(s.portError.c_str(), ImVec4(0.55f, 0.12f, 0.12f, 1.0f));
-    }
+    ImGui::Dummy(ImVec2(0, 4));
 }
 
-void drawSetup(DriverLink& link, const DriverState& s) {
-    ImGui::SeparatorText("Tracker setup");
-    const std::string mode = g.pendingStrings.resolve("mode", s.mode);
-    struct ModeOption {
+// ---------------------------------------------------------------- sidebar
+
+void drawSidebar(const DriverState& s, const FrameInfo& info, float width, float height) {
+    // Compact rail: logo, icon + short label entries, engine status at the bottom
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, col::sidebar);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 16));
+    ImGui::BeginChild("##sidebar", ImVec2(width, height), ImGuiChildFlags_AlwaysUseWindowPadding,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::PopStyleVar();
+    const bool collapsed = width < 76.0f;
+    const float inner = ImGui::GetContentRegionAvail().x;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float logo = 38.0f;
+    icon::logo(dl, ImVec2(p.x + (inner - logo) * 0.5f, p.y), logo);
+    ImGui::Dummy(ImVec2(inner, logo));
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Slime Motion Tracker");
+    ImGui::Dummy(ImVec2(0, 10));
+
+    struct Item {
         const char* label;
-        const char* value;
+        IconFn icon;
+        UiState::Page page;
     };
-    for (const ModeOption& opt : {ModeOption{"Ankles + waist (3 trackers)", "three"},
-                                  ModeOption{"Ankles only (like Pico)", "ankles"}}) {
-        if (ImGui::RadioButton(opt.label, mode == opt.value) && mode != opt.value) {
-            g.pendingStrings.set("mode", opt.value);
-            link.setMode(opt.value);
+    const Item items[] = {{"Home", icon::home, UiState::Page::Home},
+                          {"Body", icon::body, UiState::Page::Body},
+                          {"Settings", icon::gear, UiState::Page::Settings}};
+    for (const Item& it : items) {
+        if (navItem(it.label, it.icon, g.page == it.page, collapsed, inner)) {
+            if (g.page == it.page && it.page == UiState::Page::Home) g.trackerPage.clear();  // back to the list
+            g.page = it.page;
         }
+        ImGui::Dummy(ImVec2(0, -4));
     }
 
-    ImGui::SeparatorText("User height");
+    // Engine status at the bottom: a dot and a short word, details in the tooltip
+    ImU32 dot = col::orange;
+    const char* label = "Starting";
+    const char* tip = "The engine is starting or switching between SteamVR and the standalone host.";
+    if (g.connected && info.standalone) {
+        dot = col::cyan;
+        label = "Local";
+        tip = "Standalone: SteamVR is not running, the app runs the tracking engine itself so the trackers can be "
+              "checked without a headset.";
+    } else if (g.connected) {
+        dot = col::green;
+        label = "SteamVR";
+        tip = "The tracking engine runs in the SteamVR driver.";
+    }
+    const float blockH = collapsed ? 30.0f : 46.0f;
+    ImGui::SetCursorPosY(std::max(ImGui::GetCursorPosY(), ImGui::GetWindowHeight() - 16.0f - blockH));
+    const ImVec2 b = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(ImVec2(inner, blockH));
+    if (ImGui::IsItemHovered()) {
+        if (!s.driverVersion.empty())
+            ImGui::SetTooltip("%s\nEngine v%s%s", tip, s.driverVersion.c_str(),
+                              s.version != 1 ? " (unexpected protocol version)" : "");
+        else
+            ImGui::SetTooltip("%s", tip);
+    }
+    const ImVec2 dc(b.x + inner * 0.5f, b.y + 12);
+    dl->AddCircleFilled(dc, 5.0f, dot, 16);
+    dl->AddCircle(dc, 9.0f, alpha(dot, 0.30f), 20, 2.0f);
+    if (!collapsed) {
+        const ImVec2 ts = textSize(fonts.small, label);
+        textAt(dl, fonts.small, ImVec2(b.x + (inner - ts.x) * 0.5f, b.y + 26), col::textDim, label);
+    }
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+}
+
+// ---------------------------------------------------------------- home: calibration
+
+float displayedCountdown(const CalibrationInfo& cal) {
+    const double now = steadyNow();
+    if (cal.phase != g.cdPhase) {
+        g.cdPhase = cal.phase;
+        g.cdDuration = std::max(3.0f, std::ceil(cal.countdown - 1e-3f));
+        g.cdValue = cal.countdown;
+        g.cdAt = now;
+    } else if (std::fabs(cal.countdown - g.cdValue) > 1e-4f) {
+        g.cdValue = cal.countdown;
+        g.cdAt = now;
+    }
+    return std::max(0.0f, g.cdValue - static_cast<float>(now - g.cdAt));
+}
+
+bool calibrationButton(const char* id, IconFn iconFn, const char* title, const std::string& sub, ImVec2 size,
+                       bool running, float progress, bool split, const char* runTitle, float countdown) {
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const ImVec2 q(p.x + size.x, p.y + size.y);
+    const bool clicked = ImGui::InvisibleButton(id, size);
+    const bool hovered = ImGui::IsItemHovered();
+    const float hov = animate(ImGui::GetItemID(), hovered ? 1.0f : 0.0f, 16.0f);
+    const float run = animate(ImGui::GetItemID() + 1, running ? 1.0f : 0.0f, 10.0f);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float rounding = 14.0f;
+    dl->AddRectFilled(p, q, sty(mix(col::card, col::cardHover, hov)), rounding);
+    if (running) {
+        // The countdown fills the button
+        const float w = size.x * std::clamp(progress, 0.0f, 1.0f);
+        dl->PushClipRect(p, ImVec2(p.x + w, q.y), true);
+        dl->AddRectFilled(p, q, sty(col::accent), rounding);
+        dl->AddRectFilled(ImVec2(p.x + w - 3.0f, p.y), ImVec2(p.x + w, q.y), sty(alpha(col::white, 0.25f)));
+        dl->PopClipRect();
+        if (split)
+            dl->AddLine(ImVec2(p.x + size.x * 0.5f, p.y + 12), ImVec2(p.x + size.x * 0.5f, q.y - 12),
+                        sty(alpha(col::white, 0.30f)), 1.5f);
+    }
+    const ImU32 border = running ? alpha(col::accentSoft, 0.9f) : alpha(col::accentSoft, 0.55f * hov);
+    if (border & IM_COL32_A_MASK) dl->AddRect(p, q, sty(border), rounding, 0, 1.5f);
+
+    const float box = 46.0f;
+    const ImVec2 ic(p.x + 18 + box * 0.5f, p.y + size.y * 0.5f);
+    dl->AddRectFilled(ImVec2(ic.x - box * 0.5f, ic.y - box * 0.5f), ImVec2(ic.x + box * 0.5f, ic.y + box * 0.5f),
+                      sty(mix(col::accentDeep, alpha(col::white, 0.16f), run)), 12.0f);
+    iconFn(dl, ic, 26.0f, mix(col::accentSoft, col::white, run));
+    const float tx = p.x + 18 + box + 14;
+    const char* t1 = running ? runTitle : title;
+    const char* t2 = running ? "Click to cancel" : sub.c_str();
+    float right = q.x - 14;
+    if (running) {
+        char digits[8];
+        std::snprintf(digits, sizeof(digits), "%d", static_cast<int>(std::ceil(countdown - 1e-3f)));
+        const ImVec2 ds = textSize(fonts.big, digits);
+        textAt(dl, fonts.big, ImVec2(q.x - 20 - ds.x, p.y + (size.y - ds.y) * 0.5f - 1), col::white, digits);
+        right = q.x - 30 - ds.x;
+    }
+    dl->PushClipRect(ImVec2(tx, p.y), ImVec2(right, q.y), true);
+    const float ty = p.y + size.y * 0.5f - fonts.bold->FontSize;
+    textAt(dl, fonts.bold, ImVec2(tx, ty), running ? col::white : col::text, t1);
+    textAt(dl, fonts.small, ImVec2(tx, ty + fonts.bold->FontSize + 3), running ? alpha(col::white, 0.8f) : col::textDim,
+           t2);
+    dl->PopClipRect();
+    return clicked;
+}
+
+void drawCalibration(DriverLink& link, const DriverState& s) {
+    const CalibrationInfo& cal = s.calibration;
+    const bool running = isRunning(cal.phase);
+    const float countdown = displayedCountdown(cal);
+    const float frac = running ? 1.0f - countdown / std::max(0.1f, g.cdDuration) : 0.0f;
+
+    const float avail = ImGui::GetContentRegionAvail().x;
+    const float gap = 12.0f;
+    const bool stacked = avail < 420.0f;
+    const ImVec2 size(stacked ? avail : (avail - gap) * 0.5f, 84.0f);
+
+    // Full calibration
+    {
+        const bool mine = running && !cal.quick;
+        std::string sub = cal.lastFull ? "Last: " + agoText(cal.lastFull) : std::string("Never done");
+        if (!s.calibrated && !mine) sub = "Required once after strapping";
+        const float progress = cal.phase == "stand" ? 0.5f * frac : 0.5f + 0.5f * frac;
+        ImGui::BeginDisabled(running && !mine);
+        if (calibrationButton("##full", icon::calibrate, "Full calibration", sub, size, mine, progress, true,
+                              cal.phase == "stand" ? "Stand straight" : "Ski pose", countdown)) {
+            if (mine) {
+                link.cancelCalibration();
+            } else {
+                link.calibrate();
+                g.resultDismissed = true;
+            }
+        }
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered() && !running)
+            ImGui::SetTooltip("Stand straight, then ski pose (3 s each).\nFinds how each tracker is mounted.");
+    }
+    if (!stacked) ImGui::SameLine(0, gap);
+    // Quick reset
+    {
+        const bool mine = running && cal.quick;
+        std::string sub = cal.lastReset ? "Last: " + agoText(cal.lastReset) : std::string("Never done");
+        ImGui::BeginDisabled(running && !mine);
+        if (calibrationButton("##quick", icon::reset, "Quick reset", sub, size, mine, frac, false, "Stand straight",
+                              countdown)) {
+            if (mine) {
+                link.cancelCalibration();
+            } else {
+                link.quickReset();
+                g.resultDismissed = true;
+            }
+        }
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered() && !running)
+            ImGui::SetTooltip("Stand straight and look ahead (3 s).\nRe-aligns the heading, keeps the mounting.");
+    }
+
+    // Instructions while running, then the result
+    if (running) {
+        banner(icon::info, col::accentSoft, alpha(col::accent, 0.16f), cal.phase == "stand" ? "Stand straight" : "Ski pose",
+               cal.message.empty() ? nullptr : cal.message.c_str());
+    } else if (!g.resultDismissed) {
+        const bool ok = g.resultPhase == "done";
+        if (ok && steadyNow() - g.resultAt > 6.0) {
+            g.resultDismissed = true;
+        } else {
+            const ImVec2 before = ImGui::GetCursorScreenPos();
+            if (ok)
+                banner(icon::check, col::green, alpha(col::green, 0.10f),
+                       g.resultMessage.empty() ? "Calibration done" : g.resultMessage.c_str(), nullptr);
+            else
+                banner(icon::warning, col::red, alpha(col::red, 0.10f), "Calibration failed", g.resultMessage.c_str());
+            // Click to dismiss
+            const ImVec2 after = ImGui::GetItemRectMax();
+            if (ImGui::IsMouseHoveringRect(before, after) && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+                g.resultDismissed = true;
+        }
+    }
+}
+
+// ---------------------------------------------------------------- home: dongle + trackers
+
+void drawDongle(const DongleInfo& d) {
+    const float width = ImGui::GetContentRegionAvail().x;
+    const float h = 66.0f;
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(ImVec2(width, h));
+    const bool hovered = ImGui::IsItemHovered();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 q(p.x + width, p.y + h);
+    // Distinct background: deep accent gradient (clipped to the rounded shape)
+    dl->AddRectFilled(p, q, sty(IM_COL32(34, 30, 76, 255)), 12.0f);
+    dl->PushClipRect(ImVec2(p.x + width * 0.45f, p.y), q, true);
+    dl->AddRectFilled(p, q, sty(IM_COL32(28, 26, 56, 255)), 12.0f);
+    dl->PopClipRect();
+    dl->AddRectFilledMultiColor(ImVec2(p.x + width * 0.25f, p.y + 1), ImVec2(p.x + width * 0.45f, q.y - 1),
+                                sty(IM_COL32(34, 30, 76, 255)), sty(IM_COL32(28, 26, 56, 255)),
+                                sty(IM_COL32(28, 26, 56, 255)), sty(IM_COL32(34, 30, 76, 255)));
+    dl->AddRect(p, q, sty(alpha(col::accentSoft, 0.45f)), 12.0f, 0, 1.2f);
+    const ImVec2 ic(p.x + 14 + 20, p.y + h * 0.5f);
+    dl->AddCircleFilled(ic, 20.0f, sty(alpha(col::accentSoft, 0.20f)), 24);
+    icon::dongle(dl, ic, 24.0f, col::white);
+    const float tx = p.x + 14 + 40 + 14;
+    textAt(dl, fonts.bold, ImVec2(tx, p.y + 11), col::white, "USB dongle");
+    char line[192];
+    std::snprintf(line, sizeof(line), "%s  \xC2\xB7  Channel %d  \xC2\xB7  %d tracker%s", d.port.c_str(), d.channel,
+                  d.trackers, d.trackers == 1 ? "" : "s");
+    textAt(dl, fonts.small, ImVec2(tx, p.y + 35), alpha(col::white, 0.75f), line);
+    char right[96];
+    std::snprintf(right, sizeof(right), "Firmware v%d", d.version);
+    const ImVec2 rs = textSize(fonts.small, right);
+    const ImVec2 ms = textSize(fonts.small, d.mac.c_str());
+    const float rx = q.x - 16 - std::max(rs.x, ms.x);
+    const ImVec2 bs = textSize(fonts.bold, "USB dongle");
+    if (rx > tx + bs.x + 20 && rx > tx + textSize(fonts.small, line).x + 20) {
+        textAt(dl, fonts.small, ImVec2(q.x - 16 - ms.x, p.y + 13), alpha(col::white, 0.6f), d.mac.c_str());
+        textAt(dl, fonts.small, ImVec2(q.x - 16 - rs.x, p.y + 35), alpha(col::white, 0.6f), right);
+    } else if (hovered) {
+        ImGui::SetTooltip("%s\nFirmware v%d", d.mac.c_str(), d.version);
+    }
+}
+
+void drawTrackerTable(const DriverState& s) {
+    const float width = ImGui::GetContentRegionAvail().x;
+    int online = 0;
+    for (const TrackerInfo& t : s.trackers) online += t.connected ? 1 : 0;
+    {
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        text(fonts.bold, col::text, "Trackers");
+        char count[48];
+        std::snprintf(count, sizeof(count), "%d / %d online", online, static_cast<int>(s.trackers.size()));
+        const ImVec2 cs = textSize(fonts.small, count);
+        textAt(ImGui::GetWindowDrawList(), fonts.small, ImVec2(p.x + width - cs.x, p.y + 3), col::textDim, count);
+    }
+    if (s.trackers.empty()) {
+        banner(icon::info, col::textDim, col::card, g.connected ? "No tracker found yet" : "Waiting for the engine",
+               g.connected ? "Turn the trackers on. WiFi trackers must be on the same network as this PC; "
+                             "ESP-NOW trackers pair with the USB dongle."
+                           : "The tracking engine is starting.");
+        return;
+    }
+
+    // Columns
+    const float x0 = 16.0f;
+    const float cName = x0 + 18.0f;
+    const float cConn = width * 0.38f;
+    const float cBat = width * 0.58f;
+    const float cMag = width * 0.79f;
+    {
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const ImU32 c = col::textFaint;
+        textAt(dl, fonts.smallBold, ImVec2(p.x + cName, p.y), c, "POSITION");
+        textAt(dl, fonts.smallBold, ImVec2(p.x + cConn, p.y), c, "SIGNAL");
+        textAt(dl, fonts.smallBold, ImVec2(p.x + cBat, p.y), c, "BATTERY");
+        textAt(dl, fonts.smallBold, ImVec2(p.x + cMag, p.y), c, "MAG");
+        ImGui::Dummy(ImVec2(width, fonts.smallBold->FontSize));
+    }
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10, 6));
+    for (const TrackerInfo& t : s.trackers) {
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        const ImVec2 q(p.x + width, p.y + kRowHeight);
+        ImGui::PushID(t.mac.c_str());
+        const bool clicked = ImGui::InvisibleButton("##row", ImVec2(width, kRowHeight));
+        const bool hovered = ImGui::IsItemHovered();
+        const float hov = animate(ImGui::GetItemID(), hovered ? 1.0f : 0.0f, 16.0f);
+        ImGui::PopID();
+        if (hovered) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            ImGui::SetTooltip("%s\n%s%s", t.mac.c_str(), t.ip.c_str(), t.transport == "espnow" ? " (USB dongle)" : "");
+        }
+        if (clicked) g.trackerPage = t.mac;
+
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(p, q, sty(mix(col::card, col::cardHover, hov)), 10.0f);
+        drawGlow(dl, p, q, g.glow[t.mac], 10.0f);
+
+        const float cy = p.y + kRowHeight * 0.5f;
+        dl->AddCircleFilled(ImVec2(p.x + x0 + 3, cy), 4.5f, sty(t.connected ? col::green : col::textFaint), 12);
+        const std::string name = trackerName(t);
+        const bool assigned = resolvedRole(t) != "none";
+        const ImU32 nameCol = !t.connected ? col::textDim : (assigned ? col::text : col::textDim);
+        dl->PushClipRect(ImVec2(p.x, p.y), ImVec2(p.x + cConn - 8, q.y), true);
+        textAt(dl, fonts.bold, ImVec2(p.x + cName, cy - fonts.bold->FontSize * 0.5f - 1), nameCol, name.c_str());
+        dl->PopClipRect();
+
+        drawConnection(dl, ImVec2(p.x + cConn, p.y), kRowHeight, t);
+        drawBattery(dl, ImVec2(p.x + cBat, p.y), kRowHeight, t);
+        dl->PushClipRect(ImVec2(p.x + cMag, p.y), ImVec2(q.x - 26, q.y), true);
+        drawMag(dl, ImVec2(p.x + cMag, p.y), kRowHeight, t);
+        dl->PopClipRect();
+        icon::chevronRight(dl, ImVec2(q.x - 16, cy), 16.0f, mix(col::textFaint, col::text, hov));
+    }
+    ImGui::PopStyleVar();
+    ImGui::Dummy(ImVec2(0, 2));
+    text(fonts.small, col::textFaint, "Shake a tracker to find it. Click a tracker for its details.");
+}
+
+void drawHomeMain(DriverLink& link, const DriverState& s) {
+    drawCalibration(link, s);
+    if (!s.portError.empty()) banner(icon::warning, col::red, alpha(col::red, 0.10f), "Tracker port", s.portError.c_str());
+    if (s.dongle.connected) drawDongle(s.dongle);
+    ImGui::Dummy(ImVec2(0, 2));
+    drawTrackerTable(s);
+}
+
+void drawHome(DriverLink& link, const DriverState& s) {
+    if (!g.trackerPage.empty()) {
+        if (const TrackerInfo* t = findTracker(s, g.trackerPage)) {
+            drawTrackerPage(link, s, *t);
+            return;
+        }
+        g.trackerPage.clear();
+    }
+    const ImVec2 avail = ImGui::GetContentRegionAvail();
+    const bool wide = avail.x >= 700.0f;
+    if (wide) {
+        const float gap = 18.0f;
+        const float skelW = std::clamp(avail.x * 0.37f, 270.0f, 520.0f);
+        ImGui::BeginChild("##homeLeft", ImVec2(avail.x - skelW - gap, avail.y), 0, ImGuiWindowFlags_NoBackground);
+        drawHomeMain(link, s);
+        ImGui::EndChild();
+        ImGui::SameLine(0, gap);
+        ImGui::BeginChild("##homeRight", ImVec2(skelW, avail.y), 0,
+                          ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+        drawSkeletonCard(link, s, avail.y);
+        ImGui::EndChild();
+    } else {
+        ImGui::BeginChild("##homeScroll", avail, 0, ImGuiWindowFlags_NoBackground);
+        drawHomeMain(link, s);
+        ImGui::Dummy(ImVec2(0, 4));
+        drawSkeletonCard(link, s, std::clamp(avail.y * 0.8f, 320.0f, 520.0f));
+        ImGui::EndChild();
+    }
+}
+
+// ---------------------------------------------------------------- body
+
+void drawBody(DriverLink& link, const DriverState& s) {
+    pageTitle("Body", "Your height and which tracker is where");
+
+    beginCard("##height");
+    sectionTitle("HEIGHT");
     const int remoteCm = static_cast<int>(std::lround(s.userHeight * 100.0f));
-    int cm = (g.activeSlider == "height")
-                 ? static_cast<int>(g.activeSliderValue)
-                 : static_cast<int>(std::lround(g.pendingNumbers.resolve("height", remoteCm)));
+    int cm = (g.activeSlider == "height") ? static_cast<int>(g.activeSliderValue)
+                                          : static_cast<int>(std::lround(g.pendingNumbers.resolve("height", remoteCm)));
     const auto sendHeight = [&](int newCm) {
         newCm = std::clamp(newCm, kMinHeightCm, kMaxHeightCm);
         g.pendingNumbers.set("height", newCm);
         link.setHeight(static_cast<float>(newCm) / 100.0f);
     };
-
-    const ImVec2 bigSquare(ImGui::GetFrameHeight() * 1.8f, ImGui::GetFrameHeight() * 1.8f);
-    ImGui::PushFont(g.mediumFont);
-    if (ImGui::Button("-", bigSquare)) sendHeight(cm - 1);
-    ImGui::PopFont();
-    ImGui::SameLine();
-    ImGui::PushFont(g.largeFont);
-    ImGui::Text("%d cm", cm);
-    ImGui::PopFont();
-    ImGui::SameLine();
-    ImGui::PushFont(g.mediumFont);
-    if (ImGui::Button("+", bigSquare)) sendHeight(cm + 1);
-    ImGui::PopFont();
-
-    ImGui::SetNextItemWidth(-FLT_MIN);
-    int sliderCm = cm;
-    ImGui::SliderInt("##height", &sliderCm, kMinHeightCm, kMaxHeightCm, "%d cm",
-                     ImGuiSliderFlags_AlwaysClamp);
-    if (ImGui::IsItemActive()) {
-        g.activeSlider = "height";
-        g.activeSliderValue = static_cast<float>(sliderCm);
-    } else if (g.activeSlider == "height") {
-        g.activeSlider.clear();
+    {
+        const ImVec2 bs(44, 44);
+        if (button("\xE2\x88\x92##minus", bs)) sendHeight(cm - 1);
+        ImGui::SameLine(0, 0);
+        char value[16];
+        std::snprintf(value, sizeof(value), "%d cm", cm);
+        const ImVec2 vs = textSize(fonts.big, value);
+        const float mid = 150.0f;
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        ImGui::Dummy(ImVec2(mid, bs.y));
+        textAt(ImGui::GetWindowDrawList(), fonts.big, ImVec2(p.x + (mid - vs.x) * 0.5f, p.y + (bs.y - vs.y) * 0.5f - 2),
+               col::text, value);
+        ImGui::SameLine(0, 0);
+        if (button("+##plus", bs)) sendHeight(cm + 1);
     }
-    if (ImGui::IsItemDeactivatedAfterEdit()) sendHeight(sliderCm);
-    helpText("Your real standing height (barefoot). Used to size the body model.");
-
-    if (s.measuredEyeHeight)
-        ImGui::Text("Measured eye height (last calibration): %.0f cm", *s.measuredEyeHeight * 100.0f);
-    else
-        ImGui::TextColored(kGrey, "Measured eye height: not measured yet (run a calibration)");
-
-    if (s.floorKnown)
-        ImGui::TextColored(kGreen, "Floor height: known");
-    else
-        ImGui::TextColored(kOrange, "Floor height: unknown (set up the SteamVR play area)");
-}
-
-// "Label: 23:41 (38 min ago)", local time
-void lastCalibrationLine(const char* label, const std::optional<double>& when) {
-    if (!when) {
-        ImGui::TextColored(kGrey, "%s: never", label);
-        return;
-    }
-    std::time_t t = static_cast<std::time_t>(*when);
-    std::tm local{};
-    localtime_s(&local, &t);
-    char clock[16];
-    std::strftime(clock, sizeof(clock), "%H:%M", &local);
-    double now = std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
-    int minutes = static_cast<int>(std::max(0.0, now - *when) / 60.0);
-    char ago[32];
-    if (minutes < 1)
-        std::snprintf(ago, sizeof(ago), "just now");
-    else if (minutes < 60)
-        std::snprintf(ago, sizeof(ago), "%d min ago", minutes);
-    else if (minutes < 48 * 60)
-        std::snprintf(ago, sizeof(ago), "%dh%02d ago", minutes / 60, minutes % 60);
-    else
-        std::snprintf(ago, sizeof(ago), "%d days ago", minutes / (24 * 60));
-    ImGui::TextColored(kGrey, "%s: %s (%s)", label, clock, ago);
-}
-
-void drawCalibration(DriverLink& link, const DriverState& s) {
-    const CalibrationInfo& cal = s.calibration;
-    const bool running = isCalibrationRunning(cal.phase);
-
-    if (s.calibrated)
-        ImGui::TextColored(kGreen, "Status: calibrated");
-    else
-        ImGui::TextColored(kOrange, "Status: not calibrated - run a full calibration");
-    if (!s.floorKnown) ImGui::TextColored(kOrange, "Floor height unknown: heights may be off.");
-    lastCalibrationLine("Last full calibration", cal.lastFull);
-    lastCalibrationLine("Last quick reset", cal.lastReset);
-
-    const float bigButtonH = ImGui::GetFrameHeight() * 2.2f;
-    if (running) {
-        ImGui::Spacing();
-        centeredText(cal.phase == "stand" ? "Stand straight, look ahead" : "Ski pose", kAccent);
-        ImGui::PushFont(g.largeFont);
-        char countdown[16];
-        std::snprintf(countdown, sizeof(countdown), "%d", static_cast<int>(std::ceil(std::max(0.0f, cal.countdown))));
-        centeredText(countdown, ImVec4(1, 1, 1, 1));
-        ImGui::PopFont();
-        if (!cal.message.empty()) centeredText(cal.message.c_str(), ImVec4(1, 1, 1, 1));
-        ImGui::Spacing();
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.15f, 0.15f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.70f, 0.20f, 0.20f, 1.0f));
-        if (ImGui::Button("Cancel", ImVec2(-FLT_MIN, bigButtonH))) link.cancelCalibration();
-        ImGui::PopStyleColor(2);
-    } else {
-        ImGui::Spacing();
-        if (ImGui::Button("Full calibration (stand + ski pose)", ImVec2(-FLT_MIN, bigButtonH)))
-            link.calibrate();
-        helpText("Needed once after strapping the trackers: finds how each tracker is mounted.");
-        ImGui::Spacing();
-        if (ImGui::Button("Quick reset (stand)", ImVec2(-FLT_MIN, bigButtonH))) link.quickReset();
-        helpText("Stand straight and look ahead: re-aligns the heading, keeps the mounting.");
-
-        if (cal.phase == "done")
-            ImGui::TextColored(kGreen, "%s", cal.message.empty() ? "Calibration done." : cal.message.c_str());
-        else if (cal.phase == "error")
-            ImGui::TextColored(kRed, "Calibration failed: %s", cal.message.c_str());
-        else if (!cal.message.empty())
-            ImGui::TextWrapped("%s", cal.message.c_str());
-    }
-
-    ImGui::Spacing();
-    ImGui::SeparatorText("Ski pose");
-    ImGui::TextWrapped("Ski pose: bend your knees and lean forward, arms down, look ahead");
-}
-
-void drawMagCell(DriverLink& link, const TrackerInfo& t) {
-    const MagInfo& m = t.mag;
-    if (m.state == "ok") {
-        ImGui::TextColored(kGreen, "OK");
-        ImGui::SameLine();
-        ImGui::TextColored(m.residual < 0.08f ? kGrey : kOrange, "fit %.3f", m.residual);
-    } else if (m.state == "disturbed") {
-        ImGui::TextColored(kOrange, "Disturbed (gyro only)");
-    } else if (m.state == "calibrating") {
-        ImGui::TextColored(kAccent, "Calibrating...");
-        ImGui::ProgressBar(std::clamp(m.progress, 0.0f, 1.0f), ImVec2(-FLT_MIN, 0));
-    } else if (m.state == "uncalibrated") {
-        ImGui::TextColored(kGrey, "Not calibrated");
-    } else if (m.state == "disabled") {
-        ImGui::TextColored(kGrey, "Disabled in settings");
-    } else {
-        ImGui::TextColored(kGrey, "No magnetometer");
-    }
-
-    const bool hasMag = m.state != "absent" && m.state != "disabled";
-    if (m.state == "calibrating") {
-        if (ImGui::Button("Cancel")) link.magCancel(t.mac);
-    } else {
-        ImGui::BeginDisabled(!hasMag || !t.connected);
-        if (ImGui::Button("Calibrate mag")) link.magCalibrate(t.mac);
-        ImGui::EndDisabled();
-    }
-    ImGui::SameLine();
-    ImGui::BeginDisabled(!hasMag || m.state == "uncalibrated");
-    if (ImGui::Button("Reset")) link.magReset(t.mac);
-    ImGui::EndDisabled();
-}
-
-void drawTrackers(DriverLink& link, const DriverState& s, bool connected) {
-    // USB dongle (ESP-NOW trackers)
-    if (s.dongle.connected) {
-        ImGui::TextColored(kGreen, "USB dongle on %s", s.dongle.port.c_str());
-        ImGui::SameLine();
-        ImGui::Text("- channel %d, %d tracker%s", s.dongle.channel, s.dongle.trackers, s.dongle.trackers == 1 ? "" : "s");
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s, firmware v%d", s.dongle.mac.c_str(), s.dongle.version);
-    } else if (connected) {
-        ImGui::TextColored(kGrey, "USB dongle: not detected (trackers use WiFi)");
-    }
-    if (s.trackers.empty()) {
-        ImGui::TextColored(kGrey, connected ? "No tracker found yet. Turn the trackers on and check they "
-                                              "are on the same network as this PC."
-                                            : "Starting the engine...");
-    } else if (ImGui::BeginTable("trackers", 4,
-                                 ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
-                                     ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_PadOuterX)) {
-        ImGui::TableSetupColumn("Tracker", ImGuiTableColumnFlags_WidthStretch, 2.2f);
-        ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthStretch, 2.4f);
-        ImGui::TableSetupColumn("Activity", ImGuiTableColumnFlags_WidthStretch, 1.6f);
-        ImGui::TableSetupColumn("Magnetometer", ImGuiTableColumnFlags_WidthStretch, 3.0f);
-        ImGui::TableHeadersRow();
-
-        struct RoleOption {
-            const char* value;
-            const char* label;
-        };
-        static constexpr RoleOption kRoles[] = {
-            {"none", "None"}, {"waist", "Waist"}, {"left_ankle", "Left ankle"}, {"right_ankle", "Right ankle"}};
-
-        for (const TrackerInfo& t : s.trackers) {
-            ImGui::PushID(t.mac.c_str());
-            ImGui::TableNextRow();
-
-            // Identity + role
-            ImGui::TableNextColumn();
-            ImGui::Text("%s", shortMac(t.mac).c_str());
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%s", t.mac.c_str(), t.ip.c_str());
-            const std::string roleKey = "role:" + t.mac;
-            const std::string role = g.pendingStrings.resolve(roleKey, t.role);
-            const char* roleLabel = role.c_str();
-            for (const RoleOption& r : kRoles)
-                if (role == r.value) roleLabel = r.label;
-            ImGui::SetNextItemWidth(-FLT_MIN);
-            if (ImGui::BeginCombo("##role", roleLabel)) {
-                for (const RoleOption& r : kRoles) {
-                    if (ImGui::Selectable(r.label, role == r.value) && role != r.value) {
-                        g.pendingStrings.set(roleKey, r.value);
-                        link.setRole(t.mac, r.value);
-                    }
-                }
-                ImGui::EndCombo();
-            }
-
-            // Link status
-            ImGui::TableNextColumn();
-            if (t.connected)
-                ImGui::TextColored(kGreen, t.transport == "espnow" ? "Connected (ESP-NOW)" : "Connected (WiFi)");
-            else
-                ImGui::TextColored(kRed, "Disconnected");
-            ImGui::Text("%.0f Hz / mag %.0f Hz", t.rotationHz, t.magHz);
-            if (t.battery >= 0.0f) {
-                ImGui::TextColored(t.battery < 0.15f ? kOrange : ImVec4(1, 1, 1, 1), "Battery %.0f%%",
-                                   t.battery * 100.0f);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%.2f V", t.batteryVoltage);
-                ImGui::SameLine();
-                const BatteryEstimator::Estimate e = g.battery.estimate(t.mac);
-                if (e.state == BatteryEstimator::State::Charging)
-                    ImGui::TextColored(kGreen, "charging");
-                else if (e.state == BatteryEstimator::State::Estimating)
-                    ImGui::TextColored(kGrey, "~...");
-                else if (e.hours >= 24)
-                    ImGui::TextColored(kGrey, ">24h");
-                else {
-                    const int minutes = int(e.hours * 60 + 0.5);
-                    ImGui::TextColored(e.hours < 0.5 ? kOrange : kGrey, "~%dh%02d", minutes / 60, minutes % 60);
-                }
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Remaining time, from the discharge rate of the last 40 minutes\n"
-                                      "(first estimate after 8 minutes). Restarts after a charge, when\n"
-                                      "the tracker was off and when it switches between WiFi and the\n"
-                                      "USB dongle.");
-            } else
-                ImGui::TextColored(kGrey, "Battery --");
-            if (t.rssi < 0)
-                ImGui::Text("%d dBm", t.rssi);
-            else
-                ImGui::TextColored(kGrey, "-- dBm");
-            ImGui::SameLine();
-            if (t.connected && t.latencyMs >= 0)
-                ImGui::TextColored(t.latencyMs > 50 ? kOrange : ImVec4(1, 1, 1, 1), " %.0f ms", t.latencyMs);
-            else
-                ImGui::TextColored(kGrey, " -- ms");
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Round trip PC -> tracker -> PC (median of the last 5 pings)");
-            ImGui::SameLine();
-            ImGui::Text(" %.1f \xC2\xB0""C", t.temperature);
-
-            // Activity + foot plant
-            ImGui::TableNextColumn();
-            ImGui::PushStyleColor(ImGuiCol_PlotHistogram, kAccent);
-            ImGui::ProgressBar(std::clamp(t.activity, 0.0f, 1.0f), ImVec2(-FLT_MIN, 0), "");
-            ImGui::PopStyleColor();
-            if (t.planted)
-                ImGui::TextColored(kGreen, "Planted");
-            else
-                ImGui::TextColored(kGrey, "Moving");
-
-            // Magnetometer
-            ImGui::TableNextColumn();
-            drawMagCell(link, t);
-
-            ImGui::PopID();
+    {
+        float sliderCm = static_cast<float>(cm);
+        bool released = false;
+        slider("##height", &sliderCm, static_cast<float>(kMinHeightCm), static_cast<float>(kMaxHeightCm), &released);
+        sliderCm = std::round(sliderCm);
+        if (ImGui::IsItemActive()) {
+            g.activeSlider = "height";
+            g.activeSliderValue = sliderCm;
+        } else if (g.activeSlider == "height") {
+            g.activeSlider.clear();
         }
-        ImGui::EndTable();
+        if (released && static_cast<int>(sliderCm) != remoteCm) sendHeight(static_cast<int>(sliderCm));
     }
-    ImGui::Spacing();
-    helpText("Shake a tracker to find it: its activity bar fills up.");
-    helpText("Mag calibration: before strapping the tracker, slowly rotate it in every direction "
-             "(figure eights, upside down, on each side) until the bar is full.");
+    helpText("Your real standing height, barefoot. Sizes the body model.");
+    separator(12.0f);
+    if (s.measuredEyeHeight)
+        infoRow("Eye height (last calibration)", col::text, "%.0f cm", *s.measuredEyeHeight * 100.0f);
+    else
+        infoRow("Eye height", col::textDim, "Measured at the next calibration");
+    infoRow("Floor height", s.floorKnown ? col::green : col::orange, "%s",
+            s.floorKnown ? "Known" : "Unknown (set up the play area)");
+    infoRow("Tracking mode", col::text, "%s", s.mode == "ankles" ? "Ankles only (waist estimated)" : "Ankles + waist");
+    endCard();
+    ImGui::Dummy(ImVec2(0, 4));
+
+    beginCard("##mapping");
+    sectionTitle("TRACKER ASSIGNMENT");
+    helpText("Shake a tracker: its row lights up. The mode (ankles only, or ankles + waist) follows the trackers "
+             "assigned and connected.");
+    ImGui::Dummy(ImVec2(0, 4));
+    if (s.trackers.empty()) text(fonts.body, col::textDim, "No tracker yet.");
+    for (const TrackerInfo& t : s.trackers) {
+        const float width = ImGui::GetContentRegionAvail().x;
+        const float h = 50.0f;
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        const ImVec2 q(p.x + width, p.y + h);
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(p, q, sty(IM_COL32(32, 32, 43, 255)), 10.0f);
+        drawGlow(dl, p, q, g.glow[t.mac], 10.0f);
+        const float cy = p.y + h * 0.5f;
+        dl->AddCircleFilled(ImVec2(p.x + 16, cy), 4.5f, sty(t.connected ? col::green : col::textFaint), 12);
+        if (t.transport == "espnow")
+            icon::dongle(dl, ImVec2(p.x + 40, cy), 20.0f, col::textDim);
+        else
+            icon::wifi(dl, ImVec2(p.x + 40, cy), 18.0f, t.connected ? 3 : -1, col::textDim, alpha(col::textFaint, 0.5f));
+        textAt(dl, fonts.body, ImVec2(p.x + 62, cy - fonts.body->FontSize * 0.5f - 1),
+               t.connected ? col::text : col::textDim, t.mac.c_str());
+        const float comboW = std::min(180.0f, width * 0.42f);
+        ImGui::SetCursorScreenPos(ImVec2(q.x - comboW - 8, cy - ImGui::GetFrameHeight() * 0.5f));
+        ImGui::PushID(t.mac.c_str());
+        roleSelector(link, t, comboW);
+        ImGui::PopID();
+        ImGui::SetCursorScreenPos(ImVec2(p.x, q.y + 6));
+        ImGui::Dummy(ImVec2(0, 0));
+    }
+    endCard();
 }
+
+// ---------------------------------------------------------------- settings
 
 void drawSettings(DriverLink& link, const DriverState& s) {
+    pageTitle("Settings", nullptr);
     const DriverSettings& st = s.settings;
+    AppPrefs& prefs = appPrefs();
 
-    ImGui::SeparatorText("Magnetometer");
-    settingCheckbox(link, "Use magnetometer (prevents heading drift)", "magEnabled", st.magEnabled);
-    ImGui::Text("Anti-mag sensitivity");
-    settingSlider(link, "##magSensitivity", "magSensitivity", st.magSensitivity);
-    helpText("Higher rejects magnetic disturbances (metal, speakers) more aggressively.");
+    beginCard("##mag");
+    sectionTitle("MAGNETOMETER");
+    settingToggle(link, "Use the magnetometer", "Keeps the heading from drifting (needs a mag calibration per tracker).",
+                  "magEnabled", st.magEnabled);
+    ImGui::Dummy(ImVec2(0, 4));
+    settingSlider(link, "Anti-disturbance sensitivity", "magSensitivity", st.magSensitivity,
+                  "Higher rejects magnetic disturbances (metal furniture, speakers) more aggressively.");
+    endCard();
+    ImGui::Dummy(ImVec2(0, 4));
 
-    ImGui::SeparatorText("Motion");
-    ImGui::Text("Smoothing");
-    settingSlider(link, "##smoothing", "smoothing", st.smoothing);
-    ImGui::Text("Foot plant strength");
-    settingSlider(link, "##footPlantStrength", "footPlantStrength", st.footPlantStrength);
-    ImGui::Text("Inertial weight");
-    settingSlider(link, "##inertialWeight", "inertialWeight", st.inertialWeight);
-    settingCheckbox(link, "Velocity prediction", "velocityPrediction", st.velocityPrediction);
+    beginCard("##motion");
+    sectionTitle("MOTION");
+    settingSlider(link, "Smoothing", "smoothing", st.smoothing, nullptr);
+    ImGui::Dummy(ImVec2(0, 2));
+    settingSlider(link, "Foot plant strength", "footPlantStrength", st.footPlantStrength,
+                  "How firmly a resting foot stays planted.");
+    ImGui::Dummy(ImVec2(0, 2));
+    settingSlider(link, "Inertial weight", "inertialWeight", st.inertialWeight,
+                  "Weight of the accelerometers in the foot motion.");
+    ImGui::Dummy(ImVec2(0, 4));
+    settingToggle(link, "Velocity prediction", "Sends the tracker velocities to SteamVR (smoother, may overshoot).",
+                  "velocityPrediction", st.velocityPrediction);
+    endCard();
+    ImGui::Dummy(ImVec2(0, 4));
 
-    ImGui::SeparatorText("Recording");
-    settingCheckbox(link, "Record sessions (trackers, headset, controllers)", "recording", st.recording);
-    if (s.recording.active)
-        ImGui::TextColored(kGreen, "Recording: %.0f MB", s.recording.megabytes);
-    else
-        ImGui::TextColored(kGrey, "Not recording");
-    if (!s.recording.file.empty()) helpText(s.recording.file.c_str());
-    helpText("Used to replay sessions offline and tune the tracking. About 400 MB per hour.");
+    beginCard("##recording");
+    sectionTitle("RECORDING");
+    settingToggle(link, "Record sessions",
+                  "Trackers, headset and controllers, to replay and tune the tracking offline. About 400 MB per hour.",
+                  "recording", st.recording);
+    if (s.recording.active) {
+        infoRow("Recording", col::green, "%.0f MB", s.recording.megabytes);
+        if (!s.recording.file.empty()) helpText(s.recording.file.c_str());
+    }
+    endCard();
+    ImGui::Dummy(ImVec2(0, 4));
+
+    beginCard("##app");
+    sectionTitle("APPLICATION");
+    if (toggleRow("Minimize to tray", "The minimize button hides the window in the notification area.",
+                  &prefs.minimizeToTray))
+        prefs.save();
+    ImGui::Dummy(ImVec2(0, 4));
+    if (toggleRow("Start in tray", "Start hidden in the notification area (click its icon to open).", &prefs.startInTray))
+        prefs.save();
+    endCard();
+    ImGui::Dummy(ImVec2(0, 4));
+
+    beginCard("##sounds");
+    sectionTitle("SOUNDS");
+    bool enabled = !prefs.soundMuted;
+    if (toggleRow("Countdown sounds",
+                  "A beep every second of a calibration countdown, and a chime when the pose is captured.", &enabled)) {
+        prefs.soundMuted = !enabled;
+        prefs.save();
+    }
+    ImGui::Dummy(ImVec2(0, 4));
+    ImGui::BeginDisabled(prefs.soundMuted);
+    {
+        const float avail = ImGui::GetContentRegionAvail().x;
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        text(fonts.bold, col::text, "Volume");
+        char value[16];
+        std::snprintf(value, sizeof(value), "%d %%", static_cast<int>(std::lround(prefs.soundVolume * 100.0f)));
+        const ImVec2 vs = textSize(fonts.body, value);
+        textAt(ImGui::GetWindowDrawList(), fonts.body, ImVec2(p.x + avail - vs.x, p.y + 1), col::accentSoft, value);
+        const float testW = 92.0f;
+        const ImVec2 row = ImGui::GetCursorPos();
+        ImGui::BeginChild("##volume", ImVec2(avail - testW - 16.0f, 36.0f), 0,
+                          ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+        ImGui::SetCursorPosY(5.0f);
+        float v = prefs.soundVolume;
+        bool released = false;
+        if (slider("##volumeSlider", &v, 0.0f, 1.0f, &released)) prefs.soundVolume = v;
+        if (released) {
+            prefs.save();
+            sounds::play(sounds::Sound::Tick, prefs.soundVolume);
+        }
+        ImGui::EndChild();
+        ImGui::SetCursorPos(ImVec2(row.x + avail - testW, row.y + 1.0f));
+        if (button("Test", ImVec2(testW, 34.0f), ButtonStyle::Secondary, icon::speaker))
+            sounds::play(sounds::Sound::Done, prefs.soundVolume);
+    }
+    ImGui::EndDisabled();
+    endCard();
+    ImGui::Dummy(ImVec2(0, 8));
+
+    if (button("Reset settings", ImVec2(0, 40), ButtonStyle::Danger)) g.confirmReset = true;
+    helpText("Restores the default tracking settings above. Tracker roles, calibrations and the app "
+             "preferences are kept.");
+    ImGui::Dummy(ImVec2(0, 8));
+
+    if (g.confirmReset) {
+        ImGui::OpenPopup("Reset settings?");
+        g.confirmReset = false;
+    }
+    const ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(420, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(22, 20));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 14.0f);
+    if (ImGui::BeginPopupModal("Reset settings?", nullptr,
+                               ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove)) {
+        text(fonts.title, col::text, "Reset settings?");
+        textWrapped(fonts.body, col::textDim,
+                    "The tracking settings go back to their defaults. Tracker roles, calibrations and the app "
+                    "preferences are kept.");
+        ImGui::Dummy(ImVec2(0, 6));
+        const float w = (ImGui::GetContentRegionAvail().x - 10.0f) * 0.5f;
+        if (button("Cancel", ImVec2(w, 40))) ImGui::CloseCurrentPopup();
+        ImGui::SameLine(0, 10.0f);
+        if (button("Reset", ImVec2(w, 40), ButtonStyle::Primary)) {
+            link.resetSettings();
+            g.pendingNumbers.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+    ImGui::PopStyleVar(2);
 }
 
-void drawFooter(const DriverState& s, bool connected, const FrameInfo& info) {
-    ImGui::Separator();
-    ImGui::Text("Outputs:");
-    const auto output = [&](const char* name, bool on) {
-        ImGui::SameLine();
-        ImGui::TextColored(connected && on ? kGreen : kGrey, "%s %s", name, connected && on ? "ON" : "off");
-    };
-    output("Waist", s.outputs.waist);
-    output(" Left foot", s.outputs.leftFoot);
-    output(" Right foot", s.outputs.rightFoot);
-
-    char right[96];
-    std::snprintf(right, sizeof(right), "SteamVR: %s", info.vrActive ? "connected" : "not running");
-    ImGui::SameLine(ImGui::GetContentRegionMax().x - ImGui::CalcTextSize(right).x);
-    ImGui::TextColored(info.vrActive ? kGreen : kGrey, "%s", right);
-}
-
-std::string defaultFontPath(const char* file) {
-    char windir[MAX_PATH] = {};
-    const UINT n = GetWindowsDirectoryA(windir, MAX_PATH);
-    if (n == 0 || n >= MAX_PATH) return {};
-    return std::string(windir) + "\\Fonts\\" + file;
-}
-
-bool fileExists(const std::string& path) {
-    const DWORD attr = GetFileAttributesA(path.c_str());
-    return !path.empty() && attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY);
+void updateGlow(const DriverState& s) {
+    const float dt = ImGui::GetIO().DeltaTime;
+    for (const TrackerInfo& t : s.trackers) {
+        const float target = t.connected ? std::clamp((t.activity - 0.04f) / 0.22f, 0.0f, 1.0f) : 0.0f;
+        float& v = g.glow[t.mac];
+        const float rate = target > v ? 18.0f : 2.5f;
+        v += (target - v) * (1.0f - std::exp(-rate * dt));
+    }
 }
 
 }  // namespace
+
+// ---------------------------------------------------------------- shared helpers
+
+double steadyNow() { return std::chrono::duration<double>(Clock::now().time_since_epoch()).count(); }
+
+double wallNow() {
+    return std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+std::string shortMac(const std::string& mac) { return mac.size() >= 8 ? mac.substr(mac.size() - 8) : mac; }
+
+std::string agoText(const std::optional<double>& when) {
+    if (!when) return "never";
+    const int minutes = static_cast<int>(std::max(0.0, wallNow() - *when) / 60.0);
+    char buf[48];
+    if (minutes < 1)
+        std::snprintf(buf, sizeof(buf), "just now");
+    else if (minutes < 60)
+        std::snprintf(buf, sizeof(buf), "%d min ago", minutes);
+    else if (minutes < 24 * 60)
+        std::snprintf(buf, sizeof(buf), "%d h %02d min ago", minutes / 60, minutes % 60);
+    else if (minutes < 48 * 60)
+        std::snprintf(buf, sizeof(buf), "1 day ago");
+    else
+        std::snprintf(buf, sizeof(buf), "%d days ago", minutes / (24 * 60));
+    return buf;
+}
+
+const TrackerInfo* findTracker(const DriverState& s, const std::string& mac) {
+    for (const TrackerInfo& t : s.trackers)
+        if (t.mac == mac) return &t;
+    return nullptr;
+}
+
+std::string resolvedRole(const TrackerInfo& t) { return g.pendingStrings.resolve("role:" + t.mac, t.role); }
+
+void roleSelector(DriverLink& link, const TrackerInfo& t, float width) {
+    std::string role = resolvedRole(t);
+    if (roleCombo("##role", role, width)) {
+        g.pendingStrings.set("role:" + t.mac, role);
+        link.setRole(t.mac, role);
+    }
+}
+
+std::string trackerName(const TrackerInfo& t) {
+    const std::string role = resolvedRole(t);
+    if (role == "none") return "Tracker " + shortMac(t.mac);
+    return roleLabel(role);
+}
+
+int wifiBars(int rssi) {
+    if (rssi >= 0) return 0;
+    if (rssi >= -62) return 3;
+    if (rssi >= -74) return 2;
+    return 1;
+}
+
+int radioBars(int rssi) {
+    if (rssi >= 0) return 0;
+    if (rssi >= -58) return 4;
+    if (rssi >= -68) return 3;
+    if (rssi >= -78) return 2;
+    return 1;
+}
+
+ImU32 magStateColor(const std::string& state) {
+    if (state == "ok") return col::green;
+    if (state == "disturbed") return col::orange;
+    if (state == "calibrating") return col::accentSoft;
+    if (state == "uncalibrated") return col::orange;
+    if (state == "acquiring") return col::cyan;
+    return col::textFaint;
+}
+
+const char* magStateLabel(const std::string& state) {
+    if (state == "ok") return "OK";
+    if (state == "disturbed") return "Disturbed";
+    if (state == "calibrating") return "Calibrating";
+    if (state == "uncalibrated") return "Not calibrated";
+    if (state == "acquiring") return "Acquiring";
+    if (state == "disabled") return "Off";
+    return "None";
+}
+
+const char* transportLabel(const std::string& transport) {
+    return transport == "espnow" ? "ESP-NOW (USB dongle)" : "WiFi";
+}
+
+void drawConnection(ImDrawList* dl, ImVec2 p, float h, const TrackerInfo& t) {
+    const float cy = p.y + h * 0.5f;
+    const ImU32 off = alpha(col::textFaint, 0.45f);
+    float x = p.x;
+    if (!t.connected) {
+        if (t.transport == "espnow")
+            icon::dongle(dl, ImVec2(x + 10, cy), 20.0f, col::textFaint);
+        else
+            icon::wifi(dl, ImVec2(x + 10, cy), 18.0f, -1, col::textFaint, off);
+        textAt(dl, fonts.small, ImVec2(x + 28, cy - fonts.small->FontSize * 0.5f - 1), alpha(col::red, 0.85f), "Offline");
+        return;
+    }
+    if (t.transport == "espnow") {
+        icon::dongle(dl, ImVec2(x + 10, cy), 20.0f, col::textDim);
+        icon::signalBars(dl, ImVec2(x + 31, cy), 14.0f, radioBars(t.rssi), col::text, off);
+        x += 42;
+    } else {
+        icon::wifi(dl, ImVec2(x + 10, cy + 1), 19.0f, wifiBars(t.rssi), col::text, off);
+        x += 26;
+    }
+    char ms[24];
+    if (t.latencyMs >= 0)
+        std::snprintf(ms, sizeof(ms), "%.0f ms", t.latencyMs);
+    else
+        std::snprintf(ms, sizeof(ms), "-- ms");
+    textAt(dl, fonts.small, ImVec2(x, cy - fonts.small->FontSize * 0.5f - 1), t.latencyMs > 50 ? col::orange : col::textDim,
+           ms);
+}
+
+std::string batteryEstimateText(const std::string& mac, ImU32* color) {
+    const BatteryEstimator::Estimate e = g.battery.estimate(mac);
+    if (color) *color = col::textFaint;
+    if (e.state == BatteryEstimator::State::Charging) {
+        if (color) *color = col::green;
+        return "charging";
+    }
+    if (e.state == BatteryEstimator::State::Estimating) return "";
+    if (e.hours >= 24) return ">24 h";
+    const int minutes = static_cast<int>(e.hours * 60 + 0.5);
+    if (color && e.hours < 0.5) *color = col::orange;
+    char buf[24];
+    std::snprintf(buf, sizeof(buf), "%dh%02d", minutes / 60, minutes % 60);
+    return buf;
+}
+
+void drawBattery(ImDrawList* dl, ImVec2 p, float h, const TrackerInfo& t) {
+    const float cy = p.y + h * 0.5f;
+    // ~0 % or < 3 V: USB powered or no battery sense, not a level
+    const bool known = t.connected && t.battery >= 0.0f && BatteryEstimator::plausible(t.battery, t.batteryVoltage);
+    const float level = known ? t.battery : -1.0f;
+    const ImU32 fill = level < 0 ? col::textFaint : level < 0.15f ? col::red : level < 0.35f ? col::orange : col::green;
+    const bool charging = known && g.battery.estimate(t.mac).state == BatteryEstimator::State::Charging;
+    icon::battery(dl, ImVec2(p.x + 13, cy), 26.0f, level, charging, known ? col::textDim : col::textFaint, fill);
+    const float ty = cy - fonts.small->FontSize * 0.5f - 1;
+    if (!known) {
+        textAt(dl, fonts.small, ImVec2(p.x + 32, ty), col::textFaint, "--");
+        return;
+    }
+    char pct[16];
+    std::snprintf(pct, sizeof(pct), "%.0f%%", t.battery * 100.0f);
+    textAt(dl, fonts.small, ImVec2(p.x + 32, ty), level < 0.15f ? col::red : col::text, pct);
+    ImU32 ec = 0;
+    const std::string est = batteryEstimateText(t.mac, &ec);
+    if (!est.empty()) {
+        const float w = textSize(fonts.small, pct).x;
+        textAt(dl, fonts.small, ImVec2(p.x + 32 + w + 6, ty), ec, est.c_str());
+    }
+}
+
+void drawMag(ImDrawList* dl, ImVec2 p, float h, const TrackerInfo& t) {
+    const float cy = p.y + h * 0.5f;
+    std::string state = t.mag.state;
+    // A valid calibration without a heading yet: the filter is acquiring
+    if (state == "uncalibrated" && t.mag.residual < 0.999f) state = "acquiring";
+    const ImU32 c = t.connected ? magStateColor(state) : col::textFaint;
+    icon::compass(dl, ImVec2(p.x + 9, cy), 18.0f, t.connected ? col::textDim : col::textFaint, c);
+    char label[48];
+    if (state == "calibrating")
+        std::snprintf(label, sizeof(label), "%.0f%%", t.mag.progress * 100.0f);
+    else
+        std::snprintf(label, sizeof(label), "%s", magStateLabel(state));
+    textAt(dl, fonts.small, ImVec2(p.x + 24, cy - fonts.small->FontSize * 0.5f - 1), t.connected ? c : col::textFaint,
+           label);
+}
+
+void drawGlow(ImDrawList* dl, ImVec2 min, ImVec2 max, float glow, float rounding) {
+    if (glow <= 0.01f) return;
+    dl->AddRect(ImVec2(min.x - 1.5f, min.y - 1.5f), ImVec2(max.x + 1.5f, max.y + 1.5f),
+                sty(alpha(col::accentSoft, 0.25f * glow)), rounding + 1.5f, 0, 4.0f);
+    dl->AddRect(min, max, sty(alpha(col::accentSoft, glow)), rounding, 0, 1.8f);
+}
+
+const char* boardName(int id) {
+    static const char* const kNames[] = {"Unknown",         "SlimeVR (legacy)", "SlimeVR (dev)",     "NodeMCU",
+                                         "Custom",          "ESP32 WROOM",      "Wemos D1 mini",     "TTGO T-Base",
+                                         "ESP-01",          "SlimeVR v1.0/1.1", "Lolin C3 mini",     "Beetle ESP32-C3",
+                                         "ESP32-C3 DevKitM-1", "owoTrack",      "Wrangler",          "mocopi",
+                                         "Wemos WROOM-02",  "XIAO ESP32-C3",    "Haritora",          "ESP32-C6 DevKitC-1",
+                                         "IMU glove (dev)", "Gestures",         "SlimeVR v1.2",      "ESP32-S3 SuperMini",
+                                         "Generic nRF",     "Butterfly (dev)",  "Butterfly",         "ESP32-C6 SuperMini"};
+    if (id >= 0 && id < static_cast<int>(std::size(kNames))) return kNames[id];
+    return id == 250 ? "Development" : "Unknown";
+}
+
+const char* imuName(int id) {
+    static const char* const kNames[] = {"Unknown",     "MPU9250", "MPU6500", "BNO080",  "BNO085",   "BNO055",
+                                         "MPU6050",     "BNO086",  "BMI160",  "ICM20948", "ICM42688", "BMI270",
+                                         "LSM6DS3TR-C", "LSM6DSV", "LSM6DSO", "LSM6DSR", "ICM45686", "ICM45605"};
+    if (id >= 0 && id < static_cast<int>(std::size(kNames))) return kNames[id];
+    return "Unknown";
+}
+
+const char* mcuName(int id) {
+    static const char* const kNames[] = {"Unknown",        "ESP8266",  "ESP32",  "owoTrack (Android)", "Wrangler",
+                                         "owoTrack (iOS)", "ESP32-C3", "mocopi", "Haritora",           "nRF52",
+                                         "nRF54L"};
+    if (id >= 0 && id < static_cast<int>(std::size(kNames))) return kNames[id];
+    return "Unknown";
+}
+
+// ---------------------------------------------------------------- entry points
 
 void setup() {
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = nullptr;  // no imgui.ini next to the driver binaries
     io.LogFilename = nullptr;
-
+    io.ConfigWindowsMoveFromTitleBarOnly = true;
     if (const char* appData = std::getenv("LOCALAPPDATA"))
         g.battery.load(std::string(appData) + "\\Slime Motion Tracker\\battery_history.json");
-
-    // Large fonts so the UI is readable in the headset. Segoe UI ships with Windows;
-    // fall back to the (scaled) built-in font otherwise.
-    const std::string regular = defaultFontPath("segoeui.ttf");
-    const std::string bold = defaultFontPath("segoeuib.ttf");
-    if (fileExists(regular)) {
-        g.bodyFont = io.Fonts->AddFontFromFileTTF(regular.c_str(), 26.0f);
-        const char* boldPath = fileExists(bold) ? bold.c_str() : regular.c_str();
-        g.mediumFont = io.Fonts->AddFontFromFileTTF(boldPath, 44.0f);
-        g.largeFont = io.Fonts->AddFontFromFileTTF(boldPath, 72.0f);
-    }
-    if (!g.bodyFont || !g.mediumFont || !g.largeFont) {
-        io.Fonts->Clear();
-        ImFontConfig cfg;
-        cfg.SizePixels = 26.0f;
-        g.bodyFont = io.Fonts->AddFontDefault(&cfg);
-        cfg.SizePixels = 39.0f;
-        g.mediumFont = io.Fonts->AddFontDefault(&cfg);
-        cfg.SizePixels = 65.0f;
-        g.largeFont = io.Fonts->AddFontDefault(&cfg);
-    }
-
-    ImGui::StyleColorsDark();
-    ImGuiStyle& style = ImGui::GetStyle();
-    style.WindowRounding = 0.0f;
-    style.WindowBorderSize = 0.0f;
-    style.WindowPadding = ImVec2(16, 12);
-    style.FramePadding = ImVec2(14, 8);
-    style.ItemSpacing = ImVec2(12, 10);
-    style.ItemInnerSpacing = ImVec2(10, 8);
-    style.CellPadding = ImVec2(8, 6);
-    style.FrameRounding = 6.0f;
-    style.GrabRounding = 6.0f;
-    style.TabRounding = 6.0f;
-    style.ScrollbarSize = 26.0f;
-    style.GrabMinSize = 28.0f;
-    style.SeparatorTextBorderSize = 2.0f;
-
-    ImVec4* c = style.Colors;
-    c[ImGuiCol_WindowBg] = ImVec4(0.09f, 0.09f, 0.12f, 1.0f);  // opaque: the VR overlay must not be see-through
-    c[ImGuiCol_Button] = ImVec4(0.30f, 0.26f, 0.62f, 1.0f);
-    c[ImGuiCol_ButtonHovered] = ImVec4(0.40f, 0.35f, 0.80f, 1.0f);
-    c[ImGuiCol_ButtonActive] = ImVec4(0.48f, 0.42f, 0.95f, 1.0f);
-    c[ImGuiCol_Tab] = ImVec4(0.18f, 0.16f, 0.32f, 1.0f);
-    c[ImGuiCol_TabHovered] = ImVec4(0.40f, 0.35f, 0.80f, 1.0f);
-    c[ImGuiCol_TabSelected] = ImVec4(0.32f, 0.28f, 0.66f, 1.0f);
-    c[ImGuiCol_CheckMark] = kAccent;
-    c[ImGuiCol_SliderGrab] = kAccent;
-    c[ImGuiCol_SliderGrabActive] = ImVec4(0.60f, 0.55f, 1.0f, 1.0f);
-    c[ImGuiCol_FrameBg] = ImVec4(0.17f, 0.17f, 0.23f, 1.0f);
-    c[ImGuiCol_FrameBgHovered] = ImVec4(0.24f, 0.23f, 0.34f, 1.0f);
-    c[ImGuiCol_FrameBgActive] = ImVec4(0.30f, 0.28f, 0.44f, 1.0f);
-    c[ImGuiCol_Header] = ImVec4(0.30f, 0.26f, 0.62f, 0.6f);
-    c[ImGuiCol_HeaderHovered] = ImVec4(0.40f, 0.35f, 0.80f, 0.8f);
+    setupTheme();
 }
 
-void draw(DriverLink& link, const FrameInfo& info) {
+void shutdown() { g.battery.save(); }
+
+void update(DriverLink& link, bool rendering) {
     const bool connected = link.connected();
-    // While the engine switches between the driver and the standalone host, the last
-    // state stays on screen (disabled); defaults before the first one.
-    static const DriverState kPlaceholder{};
-    const DriverState& s = link.hasState() ? link.state() : kPlaceholder;
-    if (!connected) {
-        g.pendingNumbers.clear();
-        g.pendingStrings.clear();
-    }
+    const DriverState& s = link.state();
 
     if (connected) {
-        const double wall = std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
+        const double wall = wallNow();
         for (const TrackerInfo& t : s.trackers)
-            if (t.connected && t.battery >= 0.0f) g.battery.add(t.mac, t.transport, t.battery, wall);
+            if (t.connected && t.battery >= 0.0f)
+                g.battery.add(t.mac, t.transport, t.battery, t.batteryVoltage, wall);
     }
     if (Clock::now() - g.lastBatterySave > std::chrono::seconds(60)) {
         g.lastBatterySave = Clock::now();
         g.battery.save();
     }
 
+    // Countdown sounds and the calibration result
+    if (connected) {
+        const CalibrationInfo& cal = s.calibration;
+        const bool running = isRunning(cal.phase);
+        const bool wasRunning = isRunning(g.soundPhase);
+        const AppPrefs& prefs = appPrefs();
+        const auto play = [&](sounds::Sound sound) {
+            if (!prefs.soundMuted && prefs.soundVolume > 0.0f) sounds::play(sound, prefs.soundVolume);
+        };
+        if (running) {
+            const int second = static_cast<int>(std::ceil(std::max(0.0f, cal.countdown) - 1e-3f));
+            if (cal.phase != g.soundPhase) {
+                if (wasRunning) {
+                    play(sounds::Sound::Done);  // stand pose captured, the ski pose starts
+                    g.soundSecond = second;
+                } else {
+                    g.soundSecond = INT_MAX;
+                }
+            }
+            if (second >= 1 && second < g.soundSecond) play(sounds::Sound::Tick);
+            g.soundSecond = second;
+        } else if (wasRunning) {
+            if (cal.phase == "done") play(sounds::Sound::Done);
+            if (cal.phase == "error") play(sounds::Sound::Error);
+            g.resultPhase = cal.phase;
+            g.resultMessage = cal.message;
+            g.resultAt = steadyNow();
+            g.resultDismissed = cal.phase != "done" && cal.phase != "error";
+        }
+        g.soundPhase = cal.phase;
+    }
+
+    // 3D views: the engine streams poses only while they are shown
+    const bool want = rendering && connected && (g.wantSkeleton || !g.wantTracker.empty());
+    const double now = steadyNow();
+    if (want) {
+        const bool changed = !g.viewSent || g.sentTracker != g.wantTracker || g.sentMag != g.wantMag;
+        if (changed || now - g.lastViewSent > 0.5) {
+            link.sendView(true, g.wantTracker, g.wantMag);
+            g.viewSent = true;
+            g.sentTracker = g.wantTracker;
+            g.sentMag = g.wantMag;
+            g.lastViewSent = now;
+        }
+    } else if (g.viewSent) {
+        link.sendView(false, "", false);
+        g.viewSent = false;
+    }
+}
+
+void draw(DriverLink& link, const FrameInfo& info) {
+    g.connected = link.connected();
+    // While the engine switches between the driver and the standalone host, the last
+    // state stays on screen (disabled); defaults before the first one.
+    static const DriverState kPlaceholder{};
+    const DriverState& s = link.hasState() ? link.state() : kPlaceholder;
+    if (!g.connected) {
+        g.pendingNumbers.clear();
+        g.pendingStrings.clear();
+    }
+    updateGlow(s);
+    g.wantSkeleton = false;
+    g.wantTracker.clear();
+    g.wantMag = false;
+
     const ImGuiIO& io = ImGui::GetIO();
     ImGui::SetNextWindowPos(ImVec2(0, 0));
     ImGui::SetNextWindowSize(io.DisplaySize);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     ImGui::Begin("Slime Motion Tracker", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
-                     ImGuiWindowFlags_NoBringToFrontOnFocus);
+                     ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::PopStyleVar();
+    ImGui::PushFont(fonts.body);
 
-    drawHeader(link, s, connected);
-
-    // Jump to the calibration tab when a calibration starts (it may be triggered elsewhere).
-    const bool calibrationStarted = isCalibrationRunning(s.calibration.phase) && !isCalibrationRunning(g.prevPhase);
-    g.prevPhase = s.calibration.phase;
-
-    const float footerHeight = ImGui::GetFrameHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y;
-    if (ImGui::BeginTabBar("tabs")) {
-        const auto tab = [&](const char* name, bool select, auto&& body) {
-            if (ImGui::BeginTabItem(name, nullptr, select ? ImGuiTabItemFlags_SetSelected : 0)) {
-                ImGui::BeginChild("##content", ImVec2(0, -footerHeight));
-                ImGui::BeginDisabled(!connected);
-                body();
-                ImGui::EndDisabled();
-                ImGui::EndChild();
-                ImGui::EndTabItem();
-            }
-        };
-        tab("Setup", false, [&] { drawSetup(link, s); });
-        tab("Calibration", calibrationStarted, [&] { drawCalibration(link, s); });
-        tab("Trackers", false, [&] { drawTrackers(link, s, connected); });
-        tab("Settings", false, [&] { drawSettings(link, s); });
-        ImGui::EndTabBar();
+    if (!g.magPage.empty() && !findTracker(s, g.magPage)) g.magPage.clear();
+    if (!g.magPage.empty()) {
+        ImGui::BeginDisabled(!g.connected);
+        drawMagPage(link, s);
+        ImGui::EndDisabled();
+    } else {
+        const float sidebarW = io.DisplaySize.x < 760.0f ? 64.0f : 84.0f;
+        drawSidebar(s, info, sidebarW, io.DisplaySize.y);
+        ImGui::SameLine(0, 0);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(22, 20));
+        const bool home = g.page == UiState::Page::Home;
+        ImGui::BeginChild("##content", ImVec2(0, 0), ImGuiChildFlags_AlwaysUseWindowPadding,
+                          home ? (ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse) : 0);
+        ImGui::PopStyleVar();
+        ImGui::BeginDisabled(!g.connected);
+        switch (g.page) {
+        case UiState::Page::Home:
+            drawHome(link, s);
+            break;
+        case UiState::Page::Body:
+            drawBody(link, s);
+            break;
+        case UiState::Page::Settings:
+            drawSettings(link, s);
+            break;
+        }
+        ImGui::EndDisabled();
+        ImGui::EndChild();
     }
 
-    drawFooter(s, connected, info);
-
+    ImGui::PopFont();
     ImGui::End();
 }
 
