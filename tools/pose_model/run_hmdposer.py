@@ -62,16 +62,25 @@ def sixd_to_mat(x):
     return np.stack([a, b, np.cross(a, b)], axis=-1)
 
 
-def infer(net, X, chunk=1200, warm=300):
+def infer(net, X, chunk=1200, warm=300, batch=64, device="cpu"):
+    """Chunks of `chunk` frames, each after `warm` warm-up frames (the LSTM restarts):
+    independent, so they run in batches (padded at the end: the LSTM is causal and
+    the transformer works per frame, so the padding changes nothing before it)."""
     out = np.zeros((len(X), 22 * 6), np.float32)
+    windows = []
+    for start in range(0, len(X), chunk):
+        windows.append((max(0, start - warm), start, min(len(X), start + chunk)))
     with torch.no_grad():
-        start = 0
-        while start < len(X):
-            a = max(0, start - warm)
-            b = min(len(X), start + chunk)
-            pose, _ = net(torch.from_numpy(X[a:b][None]))
-            out[start:b] = pose[0, start - a:].numpy()
-            start = b
+        for i in range(0, len(windows), batch):
+            group = windows[i:i + batch]
+            length = max(b - a for a, _, b in group)
+            xb = np.zeros((len(group), length, X.shape[1]), np.float32)
+            for k, (a, _, b) in enumerate(group):
+                xb[k, :b - a] = X[a:b]
+            pose, _ = net(torch.from_numpy(xb).to(device))
+            pose = pose.float().cpu().numpy()
+            for k, (a, start, b) in enumerate(group):
+                out[start:b] = pose[k, start - a:b - a]
     return out
 
 
@@ -86,6 +95,8 @@ def main():
     ap.add_argument("--chunk", type=int, default=1200, help="frames per inference chunk (the LSTM restarts)")
     ap.add_argument("--warm", type=int, default=300, help="warm-up frames before each chunk")
     ap.add_argument("--reuse", help="previous output: recompute the positions from its rotations, no inference")
+    ap.add_argument("--batch", type=int, default=64, help="chunks per forward pass")
+    ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = ap.parse_args()
     sys.path.insert(0, args.repo)
     from model.network import HMD_imu_HME_Universe
@@ -101,9 +112,9 @@ def main():
         net = HMD_imu_HME_Universe(135, 3, 256, 0.05, 8, 2)
         sd = torch.load(os.path.join(args.repo, args.ckpt), map_location="cpu", weights_only=False)
         net.load_state_dict(sd.get("state_dict", sd))
-        net.eval()
+        net.eval().to(args.device)
         X = np.nan_to_num(f["X"])
-        pose = infer(net, X, args.chunk, args.warm).reshape(-1, 22, 6)
+        pose = infer(net, X, args.chunk, args.warm, args.batch, args.device).reshape(-1, 22, 6)
         local = sixd_to_mat(pose.astype(np.float64))  # (N, 22, 3, 3)
         n = len(local)
         G = np.zeros_like(local)
