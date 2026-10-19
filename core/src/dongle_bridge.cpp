@@ -153,7 +153,9 @@ bool DongleBridge::openAndProbe(const std::string& name) {
 	COMMTIMEOUTS to{};
 	to.ReadIntervalTimeout = MAXDWORD;
 	to.ReadTotalTimeoutMultiplier = MAXDWORD;
-	to.ReadTotalTimeoutConstant = 5;
+	// The same loop forwards the hub's packets to the trackers after each read:
+	// a short wait keeps that direction (pings, acks) from waiting behind it
+	to.ReadTotalTimeoutConstant = 1;
 	to.WriteTotalTimeoutConstant = 50;
 	if (!SetCommState(h, &dcb) || !SetCommTimeouts(h, &to)) {
 		CloseHandle(h);

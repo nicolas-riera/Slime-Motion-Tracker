@@ -104,7 +104,15 @@ void begin() {
 	g_lastHop = 0;
 }
 
-void leaveNetwork() { wifi_station_disconnect(); }
+void leaveNetwork() {
+	// The SDK would join the saved network again by itself (at boot and after a
+	// disconnection), moving the radio to the AP's channel: most ESP-NOW frames to
+	// the dongle were lost, the tracker looked connected but sent no data. The
+	// boot-time auto-connect is a flash setting: only written when it changes.
+	wifi_station_set_reconnect_policy(false);
+	if (wifi_station_get_auto_connect()) wifi_station_set_auto_connect(false);
+	wifi_station_disconnect();
+}
 
 bool searchStep() {
 	if (g_paired) return true;

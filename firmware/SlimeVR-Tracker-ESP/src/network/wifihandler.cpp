@@ -66,6 +66,8 @@ void WiFiNetwork::setUp() {
 	wifiHandlerLogger.info("Setting up WiFi");
 	WiFi.persistent(true);
 	WiFi.mode(WIFI_STA);
+	// Slime Motion Tracker: the ESP-NOW mode turns the SDK's reconnection off
+	WiFi.setAutoReconnect(true);
 	WiFi.hostname("SlimeVR FBT Tracker");
 	wifiHandlerLogger.info(
 		"Loaded credentials for SSID '%s' and pass length %d",

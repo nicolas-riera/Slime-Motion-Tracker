@@ -48,6 +48,9 @@ volatile uint8_t g_head = 0, g_tail = 0;
 volatile uint32_t g_dropped = 0;
 // Diagnostics, appended to the info frame: ESP-NOW frames received, searches, answers sent ok
 volatile uint16_t g_rxAll = 0, g_rxSearch = 0;
+// Radio rate code and RSSI of the last frame received (rx_ctrl, 51 bytes before the payload)
+volatile uint8_t g_lastRate = 0;
+volatile int8_t g_lastRssi = 0;
 uint16_t g_answers = 0;
 
 // Trackers searching for the dongle, answered from loop()
@@ -57,6 +60,8 @@ volatile uint8_t g_searchHead = 0, g_searchTail = 0;
 
 void onReceive(uint8_t* mac, uint8_t* data, uint8_t len) {
 	g_rxAll++;
+	g_lastRssi = int8_t(data[-51]);
+	g_lastRate = data[-50] & 0x0F;
 	if (len < kHeader || data[0] != 'S' || data[1] != 'L' || data[2] != kVersion) return;
 	if (data[3] == kSearch) {
 		g_rxSearch++;
@@ -95,9 +100,9 @@ void sendInfo() {
 	uint8_t mac[6];
 	WiFi.macAddress(mac);
 	uint16_t rxAll = g_rxAll, rxSearch = g_rxSearch;
-	uint8_t p[16] = {'S', 'L', 'D', 'O', 'N', 'G', 'L', 'E', kVersion, uint8_t(wifi_get_channel()),
+	uint8_t p[18] = {'S', 'L', 'D', 'O', 'N', 'G', 'L', 'E', kVersion, uint8_t(wifi_get_channel()),
 					 uint8_t(rxAll), uint8_t(rxAll >> 8), uint8_t(rxSearch), uint8_t(rxSearch >> 8),
-					 uint8_t(g_answers), uint8_t(g_answers >> 8)};
+					 uint8_t(g_answers), uint8_t(g_answers >> 8), g_lastRate, uint8_t(g_lastRssi)};
 	writeFrame(1, mac, p, sizeof(p));
 }
 
