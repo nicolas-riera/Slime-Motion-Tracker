@@ -8,6 +8,11 @@ endif()
 get_filename_component(name "${SRC}" NAME)
 if(RESTART_OVERLAY)
   execute_process(COMMAND taskkill /IM "${name}" /F OUTPUT_QUIET ERROR_QUIET RESULT_VARIABLE killed)
+  # taskkill returns before the process is gone: started too soon, the new overlay
+  # finds the old one's single-instance mutex and quits
+  if(killed EQUAL 0)
+    execute_process(COMMAND "${CMAKE_COMMAND}" -E sleep 2)
+  endif()
 endif()
 if(STOP_FIRST)
   execute_process(COMMAND taskkill /IM "${name}" /F OUTPUT_QUIET ERROR_QUIET)
