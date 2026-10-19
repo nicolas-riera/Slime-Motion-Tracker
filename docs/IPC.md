@@ -24,7 +24,7 @@ publishes and sends commands. The driver starts the overlay process when SteamVR
   "floorKnown": true,
   "calibrated": true,
   "ready": true,
-  "calibration": { "phase": "idle", "countdown": 0.0, "message": "" },
+  "calibration": { "phase": "idle", "quick": false, "countdown": 0.0, "message": "" },
   "lastCalibration": { "full": 1792187460.0, "reset": null },
   "settings": {
     "magEnabled": true,
@@ -71,6 +71,7 @@ Field notes:
 - `measuredEyeHeight`: HMD height above the floor captured at the last calibration, or `null`.
 - `calibration.phase`: `idle` | `stand` | `ski` | `done` | `error`.
   During `stand` and `ski`, `countdown` is the time left before the pose is captured.
+  `quick`: the running (or last) calibration is a quick reset.
   `message` is a human-readable instruction or error.
 - `lastCalibration`: wall clock (Unix seconds) of the last successful full calibration
   and quick reset, `null` when never done. Persisted in the config.
