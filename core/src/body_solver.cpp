@@ -172,11 +172,6 @@ const double kSwaySigma = tunable("kSwaySigma", 0.0);  // m, 0 = off (worse in V
 const double kSwayTime = tunable("kSwayTime", 8.0);  // s
 const double kSwayDropStart = tunable("kSwayDropStart", 0.04);  // m of head drop: a bend
 const double kSwayDropEnd = tunable("kSwayDropEnd", 0.08);
-// Leg input guard (guardLegs): acceleration above kGuardAccel with the shin turning
-// slower than kGuardGyro for kGuardTime is a tilt error, not motion
-const double kGuardAccel = tunable("kGuardAccel", 4.0);  // m/s^2
-const double kGuardGyro = tunable("kGuardGyro", 0.5);  // rad/s
-const double kGuardTime = tunable("kGuardTime", 0.5);  // s
 const double kRaisedUse = tunable("kRaisedUse", 0.0);
 const double kRaisedSink = tunable("kRaisedSink", 0.0);
 // Logistic regression on the Kinect sessions (tools/pose_model/raised_features.py):
@@ -346,62 +341,6 @@ void BodySolver::configure(const BodyDimensions& dims, const Settings& settings,
 	m_mode = mode;
 }
 
-// A tracker's orientation can jump while it lies still: a corrupted IMU read (11 g
-// spikes, then a 46 deg step, 2026-10-19 23:09) leaves the firmware's tilt off by
-// tens of degrees for seconds, and its linear acceleration then carries gravity
-// (~9 m/s^2, constant, no rotation). Taken as is, the foot lifted off and the dead
-// reckoning flew it away. A jump of the orientation, an acceleration no leg makes,
-// or a steady push in one direction without rotation for longer than a real
-// movement accelerates (it then brakes): hold that leg's last sane shin
-// orientation, no acceleration, the foot planted where it was, until the tracker
-// settles again.
-void BodySolver::guardLegs(BodyInput& in, double dt) {
-	for (int i = 0; i < 2; i++) {
-		LegGuard& g = m_guard[i];
-		auto& leg = in.legs[i];
-		if (!g.init) {
-			g.init = true;
-			g.goodShin = g.prevShin = leg.shin;
-		}
-		const double step = (g.prevShin.conj() * leg.shin).angle();
-		g.prevShin = leg.shin;
-		const double a = leg.accelWorld.norm();
-		bool odd = a > kGuardAccel && leg.angularSpeed < kGuardGyro;
-		if (odd && g.oddTime > 0 && leg.accelWorld.dot(g.oddAccel) < std::cos(deg2rad(35)) * a * g.oddAccel.norm())
-			g.oddTime = 0;  // the push turned: a movement, start over
-		if (odd && g.oddTime == 0) {
-			const LegState& ls = m_legs[i];
-			g.oddAnchor = ls.planted ? ls.anchor : ls.ankle;
-			g.oddAccel = leg.accelWorld;
-		}
-		g.oddTime = odd ? g.oddTime + dt : 0;
-		if (!g.suspect && (step > deg2rad(30) || a > 60 || g.oddTime > kGuardTime)) {
-			g.suspect = true;
-			g.calmTime = 0;
-			// Back where the foot was before the bad samples
-			LegState& ls = m_legs[i];
-			const Vec3 at = g.oddTime > kGuardTime ? g.oddAnchor : (ls.planted ? ls.anchor : ls.ankle);
-			if (ls.initialized) {
-				ls.planted = true;
-				ls.anchor = ls.insPos = at;
-				ls.insVel = ls.stanceVel = ls.stanceDisp = {};
-				ls.swingTime = 0;
-			}
-		}
-		if (g.suspect) {
-			g.calmTime = a < 1.5 ? g.calmTime + dt : 0;
-			if (g.calmTime > 0.5) g.suspect = false;
-		}
-		if (g.suspect) {
-			leg.shin = g.goodShin;
-			leg.accelWorld = {};
-			leg.angularSpeed = 0;
-		} else if (!odd && a < 2.5) {
-			g.goodShin = leg.shin;
-		}
-	}
-}
-
 void BodySolver::reset() {
 	m_legs = {};
 	m_hipOffset = {};
@@ -412,7 +351,6 @@ void BodySolver::reset() {
 	m_smoothedWaist = {};
 	m_raised = {};
 	m_hmdBounce = 0;
-	m_guard = {};
 	m_swayRef = {};
 	m_swayGate = m_standHeadY = m_bothPlantedTime = 0;
 }
@@ -498,8 +436,7 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 	BodyOutput out;
 	if (!rawIn.hmdValid || !rawIn.legs[0].valid || !rawIn.legs[1].valid) return out;
 	const double dt = std::clamp(rawIn.dt, 1e-4, 0.1);
-	BodyInput in = rawIn;
-	guardLegs(in, dt);
+	const BodyInput& in = rawIn;
 	const auto& d = m_dims;
 	const auto& s = m_settings;
 	const double ankleY = in.floorY + d.ankleHeight;

@@ -178,15 +178,6 @@ private:
 	Mode m_mode = Mode::Three;
 	std::array<LegState, 2> m_legs;
 	Vec3 m_hipOffset;
-	// Leg input guard against firmware orientation jumps (guardLegs)
-	struct LegGuard {
-		bool init = false, suspect = false;
-		Quat goodShin, prevShin;
-		double oddTime = 0, calmTime = 0;
-		Vec3 oddAnchor, oddAccel;  // foot position and push when the odd samples began
-	};
-	std::array<LegGuard, 2> m_guard;
-	void guardLegs(BodyInput& in, double dt);
 	// Standing sway (kSway*): hip offset from the ankle-pivot line, standing head height
 	Vec3 m_swayRef;
 	double m_swayGate = 0;  // 0..1, smoothed
