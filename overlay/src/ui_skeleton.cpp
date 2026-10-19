@@ -165,7 +165,7 @@ void drawSkeletonCard(const DriverLink& link, const DriverState& s, float height
     cam.distance = 0.64f * bodyHeight / std::tan(cam.fov * 0.5f) * g.skeletonOrbit.zoom * std::max(1.0f, 0.62f / aspect);
     cam.target = g.bodyTarget;
 
-    v3::Scene sc;
+    v3::Scene& sc = g.skeletonScene;
     sc.begin(dl, vmin, vmax, cam);
     // Floor: grid snapped to the world (it does not slide with the player), shadows
     const float step = 0.25f;

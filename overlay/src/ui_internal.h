@@ -96,6 +96,8 @@ struct UiState {
     double lastViewSent = -1e9;
 
     v3::Orbit skeletonOrbit, trackerOrbit, cloudOrbit, coverageOrbit;
+    // Kept between frames so their primitive buffers keep their capacity
+    v3::Scene skeletonScene, trackerScene, cloudScene, coverageScene;
     float bodyYaw = 0.0f;
     bool bodyYawValid = false;
     v3::V3 bodyTarget;

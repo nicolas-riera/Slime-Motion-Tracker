@@ -12,8 +12,23 @@ namespace {
 
 using v3::V3;
 
+// Frames. The firmware frame is Z up: a tracker lying flat (case on its large face)
+// reports about the identity, the sensor Z being the thin axis of the case (worn on a
+// shin, sensor Y points up and Z forward). The engine sends q / qRaw already converted to
+// the SteamVR world (Y up, like these scenes): q = Rx(-90 deg) * q_firmware
+// (core/src/protocol.cpp, firmwareToWorld), mapping sensor-frame vectors to the world. So
+// the box is built in the sensor frame (thin along Z) and rotated by q as is: sensor Z
+// goes to world Y and a flat tracker is drawn flat. gyro, accel and the calibrated field
+// are sensor-frame vectors too, rotated by the same q.
+//
 // Tracker body in its sensor frame (meters, half extents): thin along the sensor Z
 const V3 kTrackerHalf{0.028f, 0.020f, 0.009f};
+// Rest pose without data: the identity firmware rotation (lying flat), in the world frame
+const Quatf kFlat{0.70710678f, -0.70710678f, 0.0f, 0.0f};  // Rx(-90 deg)
+constexpr float kGravity = 9.80665f;
+
+// Raw sensor-frame vectors drawn in a Y-up scene: sensor Z (up when lying flat) goes up
+V3 sensorToScene(V3 s) { return {s.x, s.z, -s.y}; }  // = rotate(kFlat, s)
 
 const TrackerDetail* detailFor(const DriverLink& link, const std::string& mac) {
     const TrackerDetail& d = link.detail();
@@ -49,14 +64,14 @@ void drawLiveView(const TrackerDetail* d, float height) {
     g.trackerOrbit.update("##trackerView", ImVec2(vmax.x - vmin.x, vmax.y - vmin.y), 0.4f, 3.0f);
 
     const bool ok = d && d->hasRotation && d->connected;
-    const Quatf q0 = ok ? d->q : Quatf{};
+    const Quatf q0 = ok ? d->q : kFlat;
     v3::Camera cam;
     cam.fov = 0.7f;
     cam.yaw = 0.6f + g.trackerOrbit.yaw;
     cam.pitch = std::clamp(0.50f + g.trackerOrbit.pitch, -1.2f, 1.45f);
     cam.distance = 0.40f * g.trackerOrbit.zoom;
     cam.target = {0, 0, 0};
-    v3::Scene sc;
+    v3::Scene& sc = g.trackerScene;
     sc.begin(dl, vmin, vmax, cam);
     sc.grid({0, -0.075f, 0}, 0.22f, 0.04f, alpha(col::accentSoft, 0.28f));
     sc.box({0, 0, 0}, q0, kTrackerHalf, ok ? IM_COL32(70, 70, 92, 255) : IM_COL32(60, 60, 72, 255),
@@ -70,18 +85,16 @@ void drawLiveView(const TrackerDetail* d, float height) {
         const float wn = v3::length(w);
         gyroDeg = wn * 57.2958f;
         if (wn > 0.02f) sc.arrow({0, 0, 0}, v3::normalized(w) * std::min(0.15f, 0.035f + wn * 0.025f), col::cyan, 3.0f);
-        const V3 a = v3::rotate(q0, d->accel);
+        // What an accelerometer measures: the linear acceleration the tracker sends (gravity
+        // removed) plus the reaction to gravity, so the arrow points up at rest (1 g)
+        const V3 a = v3::rotate(q0, d->accel) + V3{0.0f, kGravity, 0.0f};
         accel = v3::length(a);
         if (accel > 0.05f)
-            sc.arrow({0, 0, 0}, v3::normalized(a) * std::min(0.15f, 0.035f + accel * 0.02f), col::orange, 3.0f);
-        if (d->hasMagField && v3::length(d->magField) > 1e-3f) {
+            sc.arrow({0, 0, 0}, v3::normalized(a) * std::min(0.15f, 0.03f + accel * 0.008f), col::orange, 3.0f);
+        // Calibrated field only: the raw mag axes are the magnetometer chip's, not the
+        // sensor frame (the calibration maps them)
+        if (d->hasMagField && v3::length(d->magField) > 1e-3f)
             sc.arrow({0, 0, 0}, v3::rotate(q0, v3::normalized(d->magField)) * 0.12f, col::green, 3.0f);
-        } else if (d->hasMag) {
-            const V3 raw{static_cast<float>(d->magRaw[0]), static_cast<float>(d->magRaw[1]),
-                         static_cast<float>(d->magRaw[2])};
-            if (v3::length(raw) > 1.0f)
-                sc.arrow({0, 0, 0}, v3::rotate(q0, v3::normalized(raw)) * 0.10f, alpha(col::green, 0.45f), 2.0f);
-        }
     }
     sc.flush();
     if (!ok) {
@@ -105,7 +118,7 @@ void drawLiveView(const TrackerDetail* d, float height) {
     if (d && d->hasMagField)
         std::snprintf(b3, sizeof(b3), "%.2f \xC3\x97", v3::length(d->magField));
     else
-        std::snprintf(b3, sizeof(b3), "%s", d && d->hasMag ? "raw" : "none");
+        std::snprintf(b3, sizeof(b3), "%s", d && d->hasMag ? "uncalibrated" : "none");
     legend(0, col::cyan, "GYRO", b1);
     legend(1, col::orange, "ACCEL", b2);
     legend(2, col::green, "MAG", b3);
@@ -255,15 +268,17 @@ void drawCloudView(const TrackerDetail* d, ImVec2 size) {
     cam.yaw = 0.7f + g.cloudOrbit.yaw;
     cam.pitch = std::clamp(0.35f + g.cloudOrbit.pitch, -1.3f, 1.3f);
     cam.distance = 3.6f * g.cloudOrbit.zoom;
-    v3::Scene sc;
+    v3::Scene& sc = g.cloudScene;
     sc.begin(dl, vmin, vmax, cam);
+    // Sensor axes, drawn with the sensor Z up (as the tracker lying flat)
     const float axis = 1.25f;
-    sc.line({-axis, 0, 0}, {axis, 0, 0}, alpha(col::red, 0.45f), 1.5f);
-    sc.line({0, -axis, 0}, {0, axis, 0}, alpha(col::green, 0.45f), 1.5f);
-    sc.line({0, 0, -axis}, {0, 0, axis}, alpha(col::cyan, 0.45f), 1.5f);
-    sc.label({axis, 0, 0}, "X", alpha(col::red, 0.8f));
-    sc.label({0, axis, 0}, "Y", alpha(col::green, 0.8f));
-    sc.label({0, 0, axis}, "Z", alpha(col::cyan, 0.8f));
+    const V3 ax = sensorToScene({axis, 0, 0}), ay = sensorToScene({0, axis, 0}), az = sensorToScene({0, 0, axis});
+    sc.line(ax * -1.0f, ax, alpha(col::red, 0.45f), 1.5f);
+    sc.line(ay * -1.0f, ay, alpha(col::green, 0.45f), 1.5f);
+    sc.line(az * -1.0f, az, alpha(col::cyan, 0.45f), 1.5f);
+    sc.label(ax, "X", alpha(col::red, 0.8f));
+    sc.label(ay, "Y", alpha(col::green, 0.8f));
+    sc.label(az, "Z", alpha(col::cyan, 0.8f));
     if (any) {
         // Reference sphere: a well calibrated sensor fills it evenly
         const ImU32 ref = alpha(col::white, 0.10f);
@@ -271,14 +286,14 @@ void drawCloudView(const TrackerDetail* d, ImVec2 size) {
         sc.circle({0, 0, 0}, {0, 1, 0}, meanR, ref, 1.0f);
         sc.circle({0, 0, 0}, {0, 0, 1}, meanR, ref, 1.0f);
         for (const Vec3f& s : *samples) {
-            const V3 v = (V3(s) - center) * (1.0f / radius);
+            const V3 v = sensorToScene((V3(s) - center) * (1.0f / radius));
             const float t = std::clamp(v.y * 0.5f + 0.5f, 0.0f, 1.0f);
             sc.point(v, 3.0f, alpha(mix(col::accentSoft, col::pink, t), 0.9f));
         }
-        V3 cur = (V3{static_cast<float>(d->magRaw[0]), static_cast<float>(d->magRaw[1]),
-                     static_cast<float>(d->magRaw[2])} -
-                  center) *
-                 (1.0f / radius);
+        V3 cur = sensorToScene((V3{static_cast<float>(d->magRaw[0]), static_cast<float>(d->magRaw[1]),
+                                   static_cast<float>(d->magRaw[2])} -
+                                center) *
+                               (1.0f / radius));
         // Far outside the cloud (a disturbance): pinned to the edge, in orange
         const bool outside = v3::length(cur) > 1.3f;
         if (outside) cur = v3::normalized(cur) * 1.3f;
@@ -315,13 +330,13 @@ void drawCoverageView(const TrackerDetail* d, ImVec2 size) {
     g.coverageOrbit.update("##coverage", ImVec2(vmax.x - vmin.x, vmax.y - vmin.y), 0.5f, 2.5f);
 
     const bool ok = d && d->hasRotation;
-    const Quatf qr = ok ? d->qRaw : Quatf{};
+    const Quatf qr = ok ? d->qRaw : kFlat;
     v3::Camera cam;
     cam.fov = 0.7f;
     cam.yaw = 0.5f + g.coverageOrbit.yaw;
     cam.pitch = std::clamp(0.30f + g.coverageOrbit.pitch, -1.2f, 1.4f);
     cam.distance = 0.62f * g.coverageOrbit.zoom;
-    v3::Scene sc;
+    v3::Scene& sc = g.coverageScene;
     sc.begin(dl, vmin, vmax, cam);
     const float r = 0.13f;
     sc.circle({0, 0, 0}, {0, 1, 0}, r, alpha(col::white, 0.08f), 1.0f);

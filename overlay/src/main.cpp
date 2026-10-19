@@ -3,9 +3,11 @@
 // One Dear ImGui UI is rendered into an offscreen D3D11 texture, submitted to a SteamVR
 // dashboard overlay and copied into the back buffer of a regular desktop window, so the
 // same UI works with and without a headset. While the dashboard shows it, the UI renders
-// at the fixed overlay size (1280x720, stretched in the desktop window); otherwise at the
-// desktop window's client size (resizable, the layout adapts). Nothing is rendered while
-// neither is visible (window minimized or hidden in the notification area).
+// at the fixed overlay size (1280x720, stretched in the desktop window) and at the full
+// frame rate, whatever the state of the desktop window; otherwise at the desktop window's
+// client size (resizable, the layout adapts), at a lower rate while the window is in the
+// background. Nothing is rendered while neither is visible (window minimized or hidden in
+// the notification area).
 //
 // Input: the desktop window feeds ImGui through the Win32 backend; SteamVR laser-pointer
 // events (mouse move / buttons / scroll) are injected into the same ImGui IO.
@@ -49,6 +51,8 @@ constexpr wchar_t kWindowTitle[] = L"Slime Motion Tracker";
 constexpr wchar_t kMutexName[] = L"SlimeMotionTrackerApp";
 constexpr DXGI_FORMAT kFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
 constexpr auto kFramePeriod = std::chrono::microseconds(16667);  // ~60 Hz
+// Desktop window visible but neither focused nor hovered (and no dashboard): ~20 Hz
+constexpr auto kBackgroundPeriod = std::chrono::milliseconds(50);
 constexpr auto kIdlePeriod = std::chrono::milliseconds(100);  // nothing visible: link, sounds, VR events
 constexpr UINT WM_APP_TRAY = WM_APP + 1;  // notification area icon events
 constexpr UINT WM_APP_SHOW = WM_APP + 2;  // another instance asks us to show the window
@@ -348,6 +352,7 @@ public:
         if (!active_) return;
         vr::VR_Shutdown();  // also destroys the overlays owned by this process
         active_ = false;
+        hover_ = false;
         handle_ = thumbnail_ = vr::k_ulOverlayHandleInvalid;
     }
 
@@ -389,6 +394,7 @@ public:
                 for (int b = 0; b < 3; ++b)
                     if (vrButtons_ & (1u << b)) io.AddMouseButtonEvent(b, false);
                 vrButtons_ = 0;
+                hover_ = false;
                 io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
                 break;
             case vr::VREvent_Quit:
@@ -401,6 +407,15 @@ public:
         // SteamVR is shutting down: tell it we are exiting (extends the kill timeout).
         if (!keepRunning) vr::VRSystem()->AcknowledgeQuit_Exiting();
         return keepRunning;
+    }
+
+    // Call each rendered frame after pollEvents: while the laser is on the overlay, its
+    // last position is queued again so it wins over the Win32 backend's fallback (the
+    // desktop cursor, queued every frame while the window has the focus), also on frames
+    // without a VR mouse event.
+    void holdMouse(ImGuiIO& io, bool overlayVisible) {
+        if (!overlayVisible) hover_ = false;
+        if (hover_) io.AddMousePosEvent(mouse_.x, mouse_.y);
     }
 
     // Sends the floor height to the driver once per second (docs/IPC.md, `floor`).
@@ -418,7 +433,11 @@ public:
     }
 
     // The dashboard tab is shown
-    [[nodiscard]] bool visible() const { return active_ && vr::VROverlay()->IsOverlayVisible(handle_); }
+    [[nodiscard]] bool visible() const {
+        if (!active_) return false;
+        vr::IVROverlay* ov = vr::VROverlay();
+        return ov->IsOverlayVisible(handle_) || (ov->IsDashboardVisible() && ov->IsActiveDashboardOverlay(handle_));
+    }
     // No texture submitted yet since the overlay was created
     [[nodiscard]] bool needsTexture() const { return active_ && !submitted_; }
 
@@ -430,9 +449,11 @@ public:
     }
 
 private:
-    static void addMousePos(ImGuiIO& io, const vr::VREvent_Mouse_t& mouse) {
+    void addMousePos(ImGuiIO& io, const vr::VREvent_Mouse_t& mouse) {
         // OpenVR mouse coordinates are bottom-up, ImGui's are top-down.
-        io.AddMousePosEvent(mouse.x, static_cast<float>(ui::kHeight) - mouse.y);
+        mouse_ = ImVec2(mouse.x, static_cast<float>(ui::kHeight) - mouse.y);
+        hover_ = true;
+        io.AddMousePosEvent(mouse_.x, mouse_.y);
     }
 
     static int imguiButton(uint32_t vrButton) {
@@ -447,6 +468,8 @@ private:
     bool active_ = false;
     bool submitted_ = false;
     uint32_t vrButtons_ = 0;
+    bool hover_ = false;  // the laser is on the overlay
+    ImVec2 mouse_;  // its last position, UI pixels
     vr::VROverlayHandle_t handle_ = vr::k_ulOverlayHandleInvalid;
     vr::VROverlayHandle_t thumbnail_ = vr::k_ulOverlayHandleInvalid;
     Clock::time_point lastFloor_{};
@@ -597,6 +620,29 @@ HWND createMainWindow(HINSTANCE instance) {
                            rect.right - rect.left, rect.bottom - rect.top, nullptr, nullptr, instance, nullptr);
 }
 
+// The desktop window has the focus or the mouse cursor over it.
+bool windowActive(HWND hwnd) {
+    if (GetForegroundWindow() == hwnd) return true;
+    POINT pt{};
+    return GetCursorPos(&pt) && WindowFromPoint(pt) == hwnd;
+}
+
+// While the dashboard shows the overlay the desktop window is usually hidden, minimized
+// or in the background, and Windows may then throttle the process (EcoQoS, coarse
+// timers). allowed = false opts out so the overlay keeps its frame rate; true lets
+// Windows decide again.
+void allowPowerThrottling(bool allowed) {
+    PROCESS_POWER_THROTTLING_STATE state{};
+    state.Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
+    ULONG mask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED;
+#ifdef PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION
+    mask |= PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION;
+#endif
+    state.ControlMask = allowed ? 0 : mask;  // controlled bits...
+    state.StateMask = 0;  // ...all off: never throttled
+    SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &state, sizeof(state));
+}
+
 // Sleeps until `deadline` while still dispatching window messages as they arrive.
 // Returns false if WM_QUIT was received.
 bool pumpMessagesUntil(HANDLE timer, Clock::time_point deadline) {
@@ -679,6 +725,7 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ PWSTR, _In
     if (!frameTimer) frameTimer = CreateWaitableTimerW(nullptr, TRUE, nullptr);
 
     bool running = true;
+    bool throttlingAllowed = true;  // Windows' default
     auto nextFrame = Clock::now();
     while (running) {
         link.poll();
@@ -707,6 +754,10 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ PWSTR, _In
         const bool vrNeedsTexture = vrOverlay.needsTexture();
         const bool vrSize = vrVisible || (vrNeedsTexture && !desktopVisible);
         const bool render = desktopVisible || vrVisible || vrNeedsTexture;
+        if (throttlingAllowed == vrVisible) {
+            throttlingAllowed = !vrVisible;
+            allowPowerThrottling(throttlingAllowed);
+        }
         ui::update(link, render);
 
         if (render) {
@@ -721,6 +772,7 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ PWSTR, _In
             ImGui_ImplWin32_NewFrame();
             // VR input is queued after the Win32 backend's so the laser pointer wins.
             if (!vrOverlay.pollEvents(io)) running = false;
+            vrOverlay.holdMouse(io, vrVisible);
             io.DisplaySize = ImVec2(static_cast<float>(width), static_cast<float>(height));
             ImGui::NewFrame();
             ui::draw(link, ui::FrameInfo{.vrActive = vrOverlay.active(), .standalone = standalone.running()});
@@ -745,13 +797,26 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ PWSTR, _In
 
             // SteamVR dashboard (always the overlay size).
             if (running && vrSize) vrOverlay.submit(gpu.uiTexture.Get());
+            // Without Present (window hidden or minimized) nothing else submits the queued
+            // GPU work: the compositor would only see a new texture when the driver's
+            // command buffer happens to fill up (about once per second).
+            if (!desktopVisible) gpu.context->Flush();
         } else {
             g_win.mouseScaleX = g_win.mouseScaleY = 1.0f;
             if (!vrOverlay.pollEvents(io)) running = false;  // SteamVR quit
         }
 
-        nextFrame += render ? std::chrono::duration_cast<Clock::duration>(kFramePeriod)
-                            : std::chrono::duration_cast<Clock::duration>(kIdlePeriod);
+        // Full rate for the dashboard, for the window while focused or hovered and during a
+        // calibration countdown (the progress fills the button); ~20 Hz in the background.
+        Clock::duration period = std::chrono::duration_cast<Clock::duration>(kIdlePeriod);
+        if (render) {
+            const std::string& phase = link.state().calibration.phase;
+            const bool countdown = link.connected() && (phase == "stand" || phase == "ski");
+            const bool fullRate = vrVisible || vrNeedsTexture || countdown || windowActive(hwnd);
+            period = fullRate ? std::chrono::duration_cast<Clock::duration>(kFramePeriod)
+                              : std::chrono::duration_cast<Clock::duration>(kBackgroundPeriod);
+        }
+        nextFrame += period;
         if (nextFrame < Clock::now()) nextFrame = Clock::now();  // don't try to catch up after a stall
         if (running && !pumpMessagesUntil(frameTimer, nextFrame)) running = false;
     }

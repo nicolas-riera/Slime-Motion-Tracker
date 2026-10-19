@@ -238,7 +238,8 @@ bool calibrationButton(const char* id, IconFn iconFn, const char* title, const s
     float right = q.x - 14;
     if (running) {
         char digits[8];
-        std::snprintf(digits, sizeof(digits), "%d", static_cast<int>(std::ceil(countdown - 1e-3f)));
+        // 3-2-1 for each phase (the title names the pose); never 0 while the capture happens
+        std::snprintf(digits, sizeof(digits), "%d", std::max(1, static_cast<int>(std::ceil(countdown - 1e-3f))));
         const ImVec2 ds = textSize(fonts.big, digits);
         textAt(dl, fonts.big, ImVec2(q.x - 20 - ds.x, p.y + (size.y - ds.y) * 0.5f - 1), col::white, digits);
         right = q.x - 30 - ds.x;
@@ -589,7 +590,7 @@ void drawSettings(DriverLink& link, const DriverState& s) {
     sectionTitle("SOUNDS");
     bool enabled = !prefs.soundMuted;
     if (toggleRow("Countdown sounds",
-                  "A beep every second of a calibration countdown, and a chime when the pose is captured.", &enabled)) {
+                  "A beep every second of a calibration countdown, and a chime when the calibration is done.", &enabled)) {
         prefs.soundMuted = !enabled;
         prefs.save();
     }
@@ -883,7 +884,10 @@ void setup() {
     setupTheme();
 }
 
-void shutdown() { g.battery.save(); }
+void shutdown() {
+    sounds::stop();  // before the static WAV buffer is destroyed
+    g.battery.save();
+}
 
 void update(DriverLink& link, bool rendering) {
     const bool connected = link.connected();
@@ -900,7 +904,8 @@ void update(DriverLink& link, bool rendering) {
         g.battery.save();
     }
 
-    // Countdown sounds and the calibration result
+    // Countdown sounds and the calibration result: a beep every second of each 3 s phase
+    // (the full calibration chains two, so 6 beeps in a row), the chime only at the end.
     if (connected) {
         const CalibrationInfo& cal = s.calibration;
         const bool running = isRunning(cal.phase);
@@ -911,14 +916,8 @@ void update(DriverLink& link, bool rendering) {
         };
         if (running) {
             const int second = static_cast<int>(std::ceil(std::max(0.0f, cal.countdown) - 1e-3f));
-            if (cal.phase != g.soundPhase) {
-                if (wasRunning) {
-                    play(sounds::Sound::Done);  // stand pose captured, the ski pose starts
-                    g.soundSecond = second;
-                } else {
-                    g.soundSecond = INT_MAX;
-                }
-            }
+            // New phase (also stand -> ski): its first second beeps like the others
+            if (cal.phase != g.soundPhase) g.soundSecond = INT_MAX;
             if (second >= 1 && second < g.soundSecond) play(sounds::Sound::Tick);
             g.soundSecond = second;
         } else if (wasRunning) {

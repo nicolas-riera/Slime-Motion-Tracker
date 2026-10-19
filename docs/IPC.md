@@ -113,9 +113,13 @@ at ~30 Hz: positions in the SteamVR raw tracking space (Y up, meters), quaternio
                "target": 3, "guided": true, "progress": 0.4 } }
 ```
 
-`q` is the mag-corrected orientation, `qRaw` the device fusion (both sensor -> world).
-`gyro` (rad/s), `accel` (linear, m/s^2), `magRaw` (counts) and `magField` (calibrated,
-units of the field norm, only with a valid calibration) are in the sensor frame.
+`q` is the mag-corrected orientation, `qRaw` the device fusion (both sensor -> world, the
+world being the SteamVR one, Y up: `Rx(-90 deg) * q_firmware`). The sensor frame is the
+firmware's, Z up: a tracker lying flat on its large face reports about
+`Rx(-90 deg)`, its thin axis (sensor Z) pointing up.
+`gyro` (rad/s), `accel` (linear, gravity removed, m/s^2) and `magField` (calibrated,
+units of the field norm, only with a valid calibration) are in the sensor frame; `magRaw`
+(counts) is in the magnetometer chip's own axes (the calibration maps them).
 `magView` (raw mag samples, at most 600, and the orientation bins: where "up" is in the
 sensor frame) is included while the overlay asks for it or a guided calibration runs.
 

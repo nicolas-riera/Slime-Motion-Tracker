@@ -207,6 +207,7 @@ private:
 
     SOCKET socket_ = INVALID_SOCKET;
     bool wsaStarted_ = false;
+    std::vector<char> buffer_;  // receive buffer, allocated once
     sockaddr_in driverAddr_{};
     Clock::time_point lastHello_{};
     Clock::time_point lastState_{};

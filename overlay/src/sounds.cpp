@@ -105,4 +105,6 @@ void play(Sound sound, float volume) {
     PlaySoundW(reinterpret_cast<LPCWSTR>(g_wav.data()), nullptr, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
 }
 
+void stop() { PlaySoundW(nullptr, nullptr, 0); }
+
 }  // namespace smt::sounds

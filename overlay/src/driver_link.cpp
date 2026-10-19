@@ -4,7 +4,6 @@
 #include <mswsock.h>  // SIO_UDP_CONNRESET
 
 #include <algorithm>
-#include <array>
 #include <cmath>
 
 namespace smt {
@@ -305,11 +304,11 @@ void DriverLink::stop() {
 void DriverLink::poll() {
     if (socket_ == INVALID_SOCKET) return;
 
-    std::array<char, 65536> buffer{};
+    if (buffer_.empty()) buffer_.resize(65536);  // the largest UDP datagram
     for (;;) {
         sockaddr_in from{};
         int fromLen = sizeof(from);
-        const int n = recvfrom(socket_, buffer.data(), static_cast<int>(buffer.size()), 0,
+        const int n = recvfrom(socket_, buffer_.data(), static_cast<int>(buffer_.size()), 0,
                                reinterpret_cast<sockaddr*>(&from), &fromLen);
         if (n == SOCKET_ERROR) {
             const int err = WSAGetLastError();
@@ -320,7 +319,7 @@ void DriverLink::poll() {
         if (from.sin_port != driverAddr_.sin_port ||
             from.sin_addr.s_addr != driverAddr_.sin_addr.s_addr)
             continue;
-        handleDatagram(std::string_view(buffer.data(), static_cast<size_t>(n)));
+        handleDatagram(std::string_view(buffer_.data(), static_cast<size_t>(n)));
     }
 
     if (Clock::now() - lastHello_ >= kHelloInterval) sendHello();
