@@ -380,17 +380,17 @@ int main(int argc, char** argv) {
 	// Fusion sigma of the model (defaults of footMeasurementSigma), tunable offline
 	const double modelFloor = tunable("modelFloor", 0.03), modelScale = tunable("modelScale", 0.6);
 	// Learned pose model (optional): --pose-model path, or SMT_POSE_MODEL; fusion
-	// settings from SMT_POSE_RATIO_LOW / SMT_POSE_RATIO_HIGH / SMT_POSE_MIN_ANKLE
+	// weights from SMT_POSE_CROUCH_W / SMT_POSE_LYING_W
 	PoseModel poseModel;
 	PoseFusionSettings fusion;
+	PoseFuser fuser;
 	std::string poseModelPath = std::getenv("SMT_POSE_MODEL") ? std::getenv("SMT_POSE_MODEL") : "";
 	for (int i = 3; i + 1 < argc; i += 2)
 		if (std::string(argv[i]) == "--pose-model") poseModelPath = argv[i + 1];
 	if (!poseModelPath.empty() && !poseModel.load(poseModelPath))
 		std::printf("cannot load the pose model %s: %s\n", poseModelPath.c_str(), poseModel.error().c_str());
-	if (const char* v = std::getenv("SMT_POSE_RATIO_LOW")) fusion.ratioLow = std::atof(v);
-	if (const char* v = std::getenv("SMT_POSE_RATIO_HIGH")) fusion.ratioHigh = std::atof(v);
-	if (const char* v = std::getenv("SMT_POSE_MIN_ANKLE")) fusion.minAnkleHeight = std::atof(v);
+	if (const char* v = std::getenv("SMT_POSE_CROUCH_W")) fusion.crouchWeight = std::atof(v);
+	if (const char* v = std::getenv("SMT_POSE_LYING_W")) fusion.lyingWeight = std::atof(v);
 	double t0 = -1, lastFrame = -1;
 	int frames = 0;
 	double solveSeconds = 0;
@@ -606,11 +606,8 @@ int main(int argc, char** argv) {
 				pin.waist = bin.waist;
 				pin.waistAccel = waistAccel;
 				poseModel.setHeight(dims.height);
-				PoseFusionSettings fs = PoseFusionSettings::forWaist(bin.hasWaist);
-				if (std::getenv("SMT_POSE_RATIO_LOW")) fs.ratioLow = fusion.ratioLow;
-				if (std::getenv("SMT_POSE_RATIO_HIGH")) fs.ratioHigh = fusion.ratioHigh;
-				if (std::getenv("SMT_POSE_MIN_ANKLE")) fs.minAnkleHeight = fusion.minAnkleHeight;
-				fusePose(poseModel.update(pin, t), hmd, floorY, dims.eyeHeight, o, fs);
+				fuser.update(poseModel.update(pin, t), hmd, floorY, dims.eyeHeight, dims.thigh + dims.shin + 0.06, dt, o,
+							 fusion);
 			}
 			solveSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - solveStart).count();
 

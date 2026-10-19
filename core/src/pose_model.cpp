@@ -523,18 +523,57 @@ void PoseModel::forward(float* pose) {
 	m_pose2.apply(hid.data(), pose);
 }
 
-double fusePose(const PoseEstimate& e, const Pose& hmd, double floorY, double eyeHeight, BodyOutput& out,
-				const PoseFusionSettings& s) {
-	if (!e.valid || !out.valid || e.warmup < s.minWarmup || eyeHeight <= 0) return 0;
-	double ratio = (hmd.position.y - floorY) / eyeHeight;
-	double w = std::clamp((ratio - s.ratioLow) / std::max(s.ratioHigh - s.ratioLow, 1e-6), 0.0, 1.0);
-	if (w <= 0) return 0;
-	for (int i = 0; i < 2; i++) {
-		Vec3 m = e.ankle[i];
-		m.y = std::max(m.y, floorY + s.minAnkleHeight);
-		out.feet[i].position = out.feet[i].position * (1 - w) + m * w;
+namespace {
+
+double smoothRamp(double edge0, double edge1, double x) {
+	double t = std::clamp((x - edge0) / (edge1 - edge0), 0.0, 1.0);
+	return t * t * (3 - 2 * t);
+}
+
+}  // namespace
+
+void PoseFuser::reset() {
+	m_feet = {};
+	m_weight = 0;
+}
+
+double PoseFuser::update(const PoseEstimate& e, const Pose& hmd, double floorY, double eyeHeight, double legReach,
+						 double dt, BodyOutput& out, const PoseFusionSettings& s) {
+	if (!e.valid || !out.valid || e.warmup < s.minWarmup || eyeHeight <= 0) {
+		reset();
+		return 0;
 	}
-	return w;
+	dt = std::clamp(dt, 1e-4, 0.1);
+	// Posture weight: none standing, the most crouched or kneeling, less lying
+	const double ratio = (hmd.position.y - floorY) / eyeHeight;
+	const double target = s.crouchWeight * smoothRamp(s.highRatio, s.lowRatio, ratio) +
+						  (s.lyingWeight - s.crouchWeight) * smoothRamp(s.lyingStart, s.lyingFull, ratio);
+	m_weight += (target - m_weight) * std::min(1.0, dt / s.weightTime);
+
+	double sum = 0;
+	for (int i = 0; i < 2; i++) {
+		Foot& f = m_feet[i];
+		Vec3 m = e.ankle[i];
+		const Vec3 sol = out.feet[i].position;
+		if (f.has) {
+			// The model foot moving faster than the solver's: a glitch, distrust it at once
+			const double diff = ((m - f.model) - (sol - f.solver)).norm() / dt;
+			f.speedDiff += (diff - f.speedDiff) * std::min(1.0, dt / 0.15);
+			const double trust = 1 - smoothRamp(s.glitchSpeed, s.glitchFull, f.speedDiff);
+			f.trust = std::min(trust, f.trust + dt / s.recoverTime);
+		}
+		f.has = true;
+		f.model = m;
+		f.solver = sol;
+		// Within the leg's reach of the hip, above the floor
+		const Vec3 v = m - out.waist.position;
+		if (legReach > 0 && v.norm() > legReach) m = out.waist.position + v * (legReach / v.norm());
+		m.y = std::max(m.y, floorY + s.minAnkleHeight);
+		const double w = m_weight * f.trust;
+		out.feet[i].position = sol * (1 - w) + m * w;
+		sum += w;
+	}
+	return sum / 2;
 }
 
 }  // namespace smt

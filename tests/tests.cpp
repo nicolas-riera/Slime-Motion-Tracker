@@ -94,36 +94,55 @@ static SyntheticMag makeMag() {
 }
 
 static void testPoseFusion() {
-	// Head high: the model ankles win, never below the floor margin; head low: the solver
+	// Standing: the solver alone. Crouched: mostly the model, within the leg's reach and
+	// above the floor. A model foot jumping while the solver's stays: ignored
 	BodyOutput out;
 	out.valid = true;
-	out.feet[0].position = {0.1, 0.10, 0.0};
-	out.feet[1].position = {-0.1, 0.10, 0.0};
+	out.waist.position = {0, 0.9, 0};
+	out.feet[0].position = {0.1, 0.07, 0.0};
+	out.feet[1].position = {-0.1, 0.07, 0.0};
 	PoseEstimate e;
 	e.valid = true;
 	e.warmup = 5;
 	e.ankle[0] = {0.2, 0.0, 0.1};
-	e.ankle[1] = {-0.2, 0.3, 0.1};
+	e.ankle[1] = {-0.1, 0.07, 0.0};
 	Pose hmd;
-	hmd.position = {0, 1.7, 0};
-	BodyOutput a = out;
-	double w = fusePose(e, hmd, 0.0, 1.6, a);
-	CHECK(std::fabs(w - 1) < 1e-9, "fusion weight standing %.3f", w);
-	CHECK(std::fabs(a.feet[0].position.y - 0.08) < 1e-9 && std::fabs(a.feet[0].position.x - 0.2) < 1e-9,
+	hmd.position = {0, 1.6, 0};
+	PoseFuser fuser;
+	auto run = [&](double seconds) {
+		BodyOutput o = out;
+		for (double t = 0; t < seconds; t += 1.0 / 90) {
+			o = out;
+			fuser.update(e, hmd, 0.0, 1.6, 0.95, 1.0 / 90, o);
+		}
+		return o;
+	};
+	BodyOutput a = run(2);
+	CHECK(std::fabs(a.feet[0].position.x - 0.1) < 1e-9, "standing: solver only");
+	hmd.position.y = 0.6 * 1.6;  // kneeling
+	BodyOutput b = run(3);
+	PoseFusionSettings fs;
+	CHECK(std::fabs(b.feet[0].position.x - (0.1 + fs.crouchWeight * 0.1)) < 1e-3, "kneeling: model weight %.3f",
+		  (b.feet[0].position.x - 0.1) / 0.1);
+	CHECK(b.feet[0].position.y > 0.07 + fs.crouchWeight * (fs.minAnkleHeight - 0.07) - 1e-3,
 		  "model ankle clamped above the floor");
-	CHECK(std::fabs(a.feet[1].position.y - 0.3) < 1e-9, "raised model ankle kept");
-	hmd.position.y = 0.7;
-	BodyOutput b = out;
-	CHECK(fusePose(e, hmd, 0.0, 1.6, b) == 0 && b.feet[0].position.x == 0.1, "solver only with the head low");
-	// Ankles only, the model already leads at 60 % of the eye height
-	hmd.position.y = 0.6 * 1.6;
-	BodyOutput b2 = out;
-	CHECK(std::fabs(fusePose(e, hmd, 0.0, 1.6, b2, PoseFusionSettings::forWaist(false)) - 1) < 1e-9,
-		  "ankles only: model weight at 60 %% of the eye height");
+	// Out of reach: brought back to the leg's length
+	e.ankle[0] = {0.2, 0.07, 1.5};
+	BodyOutput r = run(3);
+	CHECK((r.feet[0].position - out.waist.position).norm() < 0.95 + 1e-6, "model ankle within the leg's reach");
+	// The model foot jumps 70 cm in 0.4 s while the solver's does not move
+	e.ankle[0] = {0.2, 0.07, 0.1};
+	run(3);
+	BodyOutput g = out;
+	for (int k = 0; k < 36; k++) {
+		e.ankle[0] = {0.2 + 0.7 * (k + 1) / 36.0, 0.07, 0.1};
+		g = out;
+		fuser.update(e, hmd, 0.0, 1.6, 0.95, 1.0 / 90, g);
+	}
+	CHECK(g.feet[0].position.x < 0.1 + 0.15, "jumping model foot ignored (x %.2f)", g.feet[0].position.x);
 	e.warmup = 0.2;
-	hmd.position.y = 1.6;
 	BodyOutput c = out;
-	CHECK(fusePose(e, hmd, 0.0, 1.6, c) == 0, "no fusion before the warm-up");
+	CHECK(fuser.update(e, hmd, 0.0, 1.6, 0.95, 1.0 / 90, c) == 0, "no fusion before the warm-up");
 	// Wrist calibration round trip through the config
 	Config cfg;
 	cfg.wristCalibration = std::array<Quat, 2>{Quat::yaw(0.3), Quat::fromAxisAngle({1, 0, 0}, 0.2)};

@@ -188,6 +188,7 @@ void Engine::applySettings() {
 	m_hub.setMagSettings(s.magEnabled, hs);
 	BodyDimensions dims = BodyDimensions::fromHeight(m_config.userHeight, m_config.measuredEyeHeight);
 	m_eyeHeight = dims.eyeHeight;
+	m_legReach = dims.thigh + dims.shin + 0.06;  // waist output to ankle, straight leg
 	m_solver.configure(dims, s, m_config.mode);
 }
 
@@ -294,7 +295,7 @@ void Engine::frame(const SmtFrameInput& fin, SmtFrameOutput& fout) {
 		pin.waist = in.waist;
 		pin.waistAccel = waistAccel;
 		m_pose.submit(pin, now, m_config.userHeight);
-		fusePose(m_pose.latest(), hmd, m_floorY, m_eyeHeight, out, PoseFusionSettings::forWaist(in.hasWaist));
+		m_fuser.update(m_pose.latest(), hmd, m_floorY, m_eyeHeight, m_legReach, dt, out);
 	}
 	recordFrame(fin, out, trackers);
 	if (m_calPhase != m_recordedPhase) {

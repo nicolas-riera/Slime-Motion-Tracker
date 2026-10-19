@@ -47,29 +47,44 @@ struct PoseEstimate {
 	double warmup = 0;  // s of network history since the last reset
 };
 
-// Fusion with the body solver (tools/pose_model, Kinect-tuned): the model places
-// the feet better while the head is high (standing, walking, getting up), the
-// solver while it is low (seated, squatting, kneeling: it knows the planted feet).
-// The weight of the model ramps with the head height over the standing eye
-// height; the model ankles never go below minAnkleHeight above the floor.
+// Hybrid with the body solver, from the user's comparison in VR (2026-10-19): the
+// solver is better standing and walking (planted, smooth, stable feet), the model better
+// crouched and kneeling, about even seated and lying. The model only moves the feet:
+// the hip and the emulated chest stay the solver's. Its weight follows the head height
+// over the standing eye height. Per foot, the weight drops at once when the model foot
+// moves while the solver's does not (the model once moved a foot 70 cm with nothing
+// moving) and comes back over recoverTime; the model ankle never goes farther from the
+// hip than the leg reaches, nor below minAnkleHeight above the floor.
 struct PoseFusionSettings {
-	double ratioLow = 0.50, ratioHigh = 0.65;
-	double minAnkleHeight = 0.08;  // m
+	double crouchWeight = 0.65;  // head between lyingStart and lowRatio (crouched, kneeling)
+	double lyingWeight = 0.45;  // head below lyingFull (lying, seated low)
+	double highRatio = 0.88, lowRatio = 0.72;  // standing above highRatio: solver only
+	double lyingStart = 0.40, lyingFull = 0.25;
+	double weightTime = 0.4;  // s, smoothing of the posture weight
+	double minAnkleHeight = 0.06;  // m
 	double minWarmup = 1.0;  // s of network history before it is trusted
-
-	// Tuned on the Kinect sessions (tools/pose_model/fuse_tune.py) for the v4 model
-	// (fine-tuned on those sessions): it takes over from half the eye height, a bit
-	// sooner without the waist tracker
-	static PoseFusionSettings forWaist(bool hasWaist) {
-		PoseFusionSettings s;
-		if (!hasWaist) s.ratioHigh = 0.60;
-		return s;
-	}
+	double glitchSpeed = 0.8, glitchFull = 2.0;  // m/s of model foot speed beyond the solver's
+	double recoverTime = 1.0;  // s
 };
 
-// Blends the estimate into out.feet positions; returns the model weight (0..1)
-double fusePose(const PoseEstimate& e, const Pose& hmd, double floorY, double eyeHeight, BodyOutput& out,
-				const PoseFusionSettings& s = {});
+class PoseFuser {
+public:
+	// Blends the estimate into out.feet positions; legReach: hip (waist output) to ankle.
+	// Returns the mean model weight over the feet (0..1)
+	double update(const PoseEstimate& e, const Pose& hmd, double floorY, double eyeHeight, double legReach,
+				  double dt, BodyOutput& out, const PoseFusionSettings& s = {});
+	void reset();
+
+private:
+	struct Foot {
+		bool has = false;
+		Vec3 model, solver;
+		double speedDiff = 0;  // m/s, smoothed
+		double trust = 1;
+	};
+	std::array<Foot, 2> m_feet;
+	double m_weight = 0;
+};
 
 class PoseModel {
 public:

@@ -77,9 +77,11 @@ private:
 	// the solver as a horizontal ankle measurement; skipped when it cannot load
 	FootModel m_footModel;
 	// Learned pose model (models/pose_model.bin), fused into the solver's feet
-	// (fusePose); skipped when it cannot load or the setting is off
+	// (PoseFuser); skipped when it cannot load or the setting is off
 	PoseWorker m_pose;
 	double m_eyeHeight = 0;  // standing eye height, for the fusion
+	double m_legReach = 0;  // waist output to ankle, for the fusion
+	PoseFuser m_fuser;
 	// Controllers this frame (0 left, 1 right), for the pose model
 	std::array<bool, 2> m_handValid{};
 	std::array<Pose, 2> m_hands;
