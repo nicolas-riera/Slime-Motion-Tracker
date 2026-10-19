@@ -25,6 +25,19 @@ import torch.nn.functional as F
 
 PARENTS = [-1, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 9, 9, 12, 13, 14, 16, 17, 18, 19]
 PAD = 4  # frames of context on each side (velocities, accelerations)
+MIRROR = [0, 2, 1, 3, 5, 4, 6, 8, 7, 9, 11, 10, 12, 14, 13, 15, 17, 16, 19, 18, 21, 20]
+
+
+def mirror(poses, trans, rest, flip):
+    """Left/right mirror (x -> -x) of the samples where flip is set: joints swap sides,
+    axis-angles become (x, -y, -z)."""
+    B, T, _ = poses.shape
+    p = poses.reshape(B, T, 22, 3)[:, :, MIRROR] * torch.tensor([1.0, -1.0, -1.0], device=poses.device)
+    t = trans * torch.tensor([-1.0, 1.0, 1.0], device=poses.device)
+    r = rest[:, MIRROR] * torch.tensor([-1.0, 1.0, 1.0], device=poses.device)
+    f = flip[:, None, None]
+    return (torch.where(f, p.reshape(B, T, 66), poses), torch.where(f, t, trans),
+            torch.where(f, r, rest))
 
 
 def aa2mat(aa):
@@ -99,6 +112,8 @@ class Synth:
         dev = self.device
         B, T, _ = poses.shape
         L = T - 2 * PAD
+        if self.noise:
+            poses, trans, rest = mirror(poses, trans, rest, torch.rand(B, device=dev) < 0.5)
         local = aa2mat(poses.reshape(B, T, 22, 3))
         G = fk_rot(local)
         P = fk_pos(G, rest[:, None]) + trans[..., None, :]

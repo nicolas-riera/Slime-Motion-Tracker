@@ -1,6 +1,7 @@
 // Persistent configuration, stored as JSON in %LOCALAPPDATA%\SlimeVR-lite\config.json
 #pragma once
 
+#include <array>
 #include <filesystem>
 #include <map>
 #include <nlohmann/json.hpp>
@@ -28,6 +29,7 @@ struct Settings {
 	double inertialWeight = 0.5;
 	bool velocityPrediction = false;
 	bool recording = true;  // record sessions for offline tuning
+	bool poseModel = true;  // fuse the learned pose model (models/pose_model.bin) when present
 };
 
 struct TrackerConfig {
@@ -49,6 +51,9 @@ struct Config {
 	// Wall clock (Unix seconds) of the last successful calibrations, 0 = never
 	double lastFullCalibration = 0;
 	double lastQuickReset = 0;
+	// Controller-to-wrist rotations of the pose model (left, right), measured at the
+	// calibration stand pose
+	std::optional<std::array<Quat, 2>> wristCalibration;
 	Settings settings;
 	std::map<std::string, TrackerConfig> trackers;  // by MAC
 

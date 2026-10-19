@@ -66,6 +66,11 @@ Engine::Engine(const SlEngineHost& host, const char* handover)
 		std::string path = (std::filesystem::path(m_moduleDirectory) / "models" / "foot_model.json").string();
 		if (m_footModel.load(path)) log("foot model loaded: %s", path.c_str());
 		else log("no foot model (%s): solver only", path.c_str());
+		std::string posePath = (std::filesystem::path(m_moduleDirectory) / "models" / "pose_model.bin").string();
+		if (!m_config.settings.poseModel) log("pose model disabled in the settings");
+		else if (m_pose.start(posePath)) log("pose model loaded: %s (%s)", posePath.c_str(), m_pose.name().c_str());
+		else log("no pose model (%s): %s", posePath.c_str(), m_pose.error().c_str());
+		if (m_config.wristCalibration) m_pose.setWristCalibration(*m_config.wristCalibration);
 	}
 	for (const auto& [mac, tc] : m_config.trackers)
 		if (tc.mag.valid) m_hub.setStoredMagCalibration(mac, tc.mag);
@@ -179,8 +184,9 @@ void Engine::applySettings() {
 	HeadingFilterSettings hs;
 	hs.sensitivity = s.magSensitivity;
 	m_hub.setMagSettings(s.magEnabled, hs);
-	m_solver.configure(BodyDimensions::fromHeight(m_config.userHeight, m_config.measuredEyeHeight),
-					   s, m_config.mode);
+	BodyDimensions dims = BodyDimensions::fromHeight(m_config.userHeight, m_config.measuredEyeHeight);
+	m_eyeHeight = dims.eyeHeight;
+	m_solver.configure(dims, s, m_config.mode);
 }
 
 bool Engine::trackerOrientation(const TrackerSnapshot& t, const TrackerConfig& tc, Quat& out) const {
@@ -218,6 +224,14 @@ void Engine::frame(const SlFrameInput& fin, SlFrameOutput& fout) {
 	bool hmdValid = fin.hmdValid != 0;
 	Pose hmd = poseFromMatrix(fin.hmd);
 	auto trackers = m_hub.snapshot();
+	m_handValid = {};
+	for (int i = 0; i < fin.deviceCount && i < SL_MAX_DEVICES; i++) {
+		const SlDevicePose& d = fin.devices[i];
+		// vr::TrackedDeviceClass_Controller, TrackedControllerRole_LeftHand / RightHand
+		if (!d.connected || !d.valid || d.deviceClass != 2 || (d.controllerRole != 1 && d.controllerRole != 2)) continue;
+		m_handValid[d.controllerRole - 1] = true;
+		m_hands[d.controllerRole - 1] = poseFromMatrix(d.pose);
+	}
 	updateCalibration(now, hmd, hmdValid, trackers);
 
 	// Gather segment orientations by role
@@ -226,6 +240,7 @@ void Engine::frame(const SlFrameInput& fin, SlFrameOutput& fout) {
 	in.hmdValid = hmdValid && m_floorKnown;
 	in.hmd = hmd;
 	in.floorY = m_floorY;
+	Vec3 waistAccel;
 	for (const auto& t : trackers) {
 		auto it = m_config.trackers.find(t.mac);
 		if (it == m_config.trackers.end()) continue;
@@ -235,6 +250,7 @@ void Engine::frame(const SlFrameInput& fin, SlFrameOutput& fout) {
 		if (tc.role == Role::Waist) {
 			in.hasWaist = true;
 			in.waist = seg;
+			waistAccel = (seg * tc.mounting.conj()).rotate(t.accelLocal);
 		} else if (tc.role == Role::LeftAnkle || tc.role == Role::RightAnkle) {
 			auto& leg = in.legs[tc.role == Role::LeftAnkle ? 0 : 1];
 			leg.valid = true;
@@ -257,6 +273,24 @@ void Engine::frame(const SlFrameInput& fin, SlFrameOutput& fout) {
 		}
 	}
 	BodyOutput out = m_solver.update(in);
+	if (m_pose.running() && m_config.settings.poseModel) {
+		PoseModelInput pin;
+		pin.floorY = m_floorY;
+		pin.hmdValid = in.hmdValid;
+		pin.hmd = hmd;
+		pin.handValid = m_handValid;
+		pin.hands = m_hands;
+		for (int i = 0; i < 2; i++) {
+			pin.legValid[i] = in.legs[i].valid;
+			pin.shin[i] = in.legs[i].shin;
+			pin.legAccel[i] = in.legs[i].accelWorld;
+		}
+		pin.hasWaist = in.hasWaist;
+		pin.waist = in.waist;
+		pin.waistAccel = waistAccel;
+		m_pose.submit(pin, now, m_config.userHeight);
+		fusePose(m_pose.latest(), hmd, m_floorY, m_eyeHeight, out);
+	}
 	recordFrame(fin, out, trackers);
 	if (m_calPhase != m_recordedPhase) {
 		static const char* names[] = {"idle", "stand", "ski", "done", "error"};
@@ -410,6 +444,12 @@ void Engine::updateCalibration(double now, const Pose& hmd, bool hmdValid,
 
 	if (m_calPhase == CalPhase::Stand) {
 		m_standHmd = hmd;
+		// The stand pose (arms hanging, palms in) also calibrates the controllers
+		// to the wrists for the pose model
+		if (m_handValid[0] && m_handValid[1]) {
+			m_config.wristCalibration = PoseModel::wristCalibrationFor(hmd, m_hands);
+			m_pose.setWristCalibration(*m_config.wristCalibration);
+		}
 		m_standCaptures = captures;
 		if (!m_floorFromOverlay) {
 			m_floorY = hmd.position.y - 0.936 * m_config.userHeight;

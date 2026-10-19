@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "overlay_link.h"
+#include "pose_worker.h"
 #include "recorder.h"
 #include "slimelite/body_solver.h"
 #include "slimelite/config.h"
@@ -66,6 +67,13 @@ private:
 	// Learned foot model (models/foot_model.json next to the engine DLL), fused by
 	// the solver as a horizontal ankle measurement; skipped when it cannot load
 	FootModel m_footModel;
+	// Learned pose model (models/pose_model.bin), fused into the solver's feet
+	// (fusePose); skipped when it cannot load or the setting is off
+	PoseWorker m_pose;
+	double m_eyeHeight = 0;  // standing eye height, for the fusion
+	// Controllers this frame (0 left, 1 right), for the pose model
+	std::array<bool, 2> m_handValid{};
+	std::array<Pose, 2> m_hands;
 
 	// Floor height in raw tracking space, from the overlay or the calibration
 	bool m_floorFromOverlay = false;

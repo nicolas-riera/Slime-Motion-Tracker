@@ -63,6 +63,9 @@ bool Config::fromJson(const json& j) {
 		lastQuickReset = j.value("lastQuickReset", 0.0);
 		if (j.contains("measuredEyeHeight") && j["measuredEyeHeight"].is_number())
 			measuredEyeHeight = j["measuredEyeHeight"].get<double>();
+		wristCalibration.reset();
+		if (j.contains("wristCalibration") && j["wristCalibration"].is_array() && j["wristCalibration"].size() == 2)
+			wristCalibration = std::array<Quat, 2>{quatFromJson(j["wristCalibration"][0]), quatFromJson(j["wristCalibration"][1])};
 		if (j.contains("settings")) {
 			const json& s = j["settings"];
 			settings.magEnabled = s.value("magEnabled", settings.magEnabled);
@@ -72,6 +75,7 @@ bool Config::fromJson(const json& j) {
 			settings.inertialWeight = s.value("inertialWeight", settings.inertialWeight);
 			settings.velocityPrediction = s.value("velocityPrediction", settings.velocityPrediction);
 			settings.recording = s.value("recording", settings.recording);
+			settings.poseModel = s.value("poseModel", settings.poseModel);
 		}
 		trackers.clear();
 		const json trackersJson = j.value("trackers", json::object());
@@ -107,13 +111,17 @@ json Config::toJson() const {
 	j["measuredEyeHeight"] = measuredEyeHeight ? json(*measuredEyeHeight) : json(nullptr);
 	j["lastFullCalibration"] = lastFullCalibration;
 	j["lastQuickReset"] = lastQuickReset;
+	j["wristCalibration"] = wristCalibration
+				? json::array({quatToJson((*wristCalibration)[0]), quatToJson((*wristCalibration)[1])})
+				: json(nullptr);
 	j["settings"] = {{"magEnabled", settings.magEnabled},
 					 {"magSensitivity", settings.magSensitivity},
 					 {"smoothing", settings.smoothing},
 					 {"footPlantStrength", settings.footPlantStrength},
 					 {"inertialWeight", settings.inertialWeight},
 					 {"velocityPrediction", settings.velocityPrediction},
-					 {"recording", settings.recording}};
+					 {"recording", settings.recording},
+					 {"poseModel", settings.poseModel}};
 	json ts = json::object();
 	for (const auto& [mac, t] : trackers) {
 		json tj = {{"role", roleName(t.role)},

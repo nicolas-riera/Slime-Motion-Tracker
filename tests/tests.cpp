@@ -5,6 +5,7 @@
 
 #include "slimelite/body_solver.h"
 #include "slimelite/dongle_bridge.h"
+#include "slimelite/pose_model.h"
 #include "slimelite/mag.h"
 #include "slimelite/mounting_calibration.h"
 #include "slimelite/protocol.h"
@@ -121,6 +122,41 @@ static void testDongleFrames() {
 		CHECK(got[1].type == kInfo && got[1].payload == b.payload, "dongle info frame content");
 	}
 	CHECK(macString(mac) == "2C:F4:32:7B:FF:D1", "mac string");
+}
+
+static void testPoseFusion() {
+	// Head high: the model ankles win, never below the floor margin; head low: the solver
+	BodyOutput out;
+	out.valid = true;
+	out.feet[0].position = {0.1, 0.10, 0.0};
+	out.feet[1].position = {-0.1, 0.10, 0.0};
+	PoseEstimate e;
+	e.valid = true;
+	e.warmup = 5;
+	e.ankle[0] = {0.2, 0.0, 0.1};
+	e.ankle[1] = {-0.2, 0.3, 0.1};
+	Pose hmd;
+	hmd.position = {0, 1.6, 0};
+	BodyOutput a = out;
+	double w = fusePose(e, hmd, 0.0, 1.6, a);
+	CHECK(std::fabs(w - 1) < 1e-9, "fusion weight standing %.3f", w);
+	CHECK(std::fabs(a.feet[0].position.y - 0.08) < 1e-9 && std::fabs(a.feet[0].position.x - 0.2) < 1e-9,
+		  "model ankle clamped above the floor");
+	CHECK(std::fabs(a.feet[1].position.y - 0.3) < 1e-9, "raised model ankle kept");
+	hmd.position.y = 0.8;
+	BodyOutput b = out;
+	CHECK(fusePose(e, hmd, 0.0, 1.6, b) == 0 && b.feet[0].position.x == 0.1, "solver only with the head low");
+	e.warmup = 0.2;
+	hmd.position.y = 1.6;
+	BodyOutput c = out;
+	CHECK(fusePose(e, hmd, 0.0, 1.6, c) == 0, "no fusion before the warm-up");
+	// Wrist calibration round trip through the config
+	Config cfg;
+	cfg.wristCalibration = std::array<Quat, 2>{Quat::yaw(0.3), Quat::fromAxisAngle({1, 0, 0}, 0.2)};
+	Config back;
+	back.fromJson(cfg.toJson());
+	CHECK(back.wristCalibration && std::fabs((*back.wristCalibration)[0].dot(Quat::yaw(0.3)) - 1) < 1e-9,
+		  "wrist calibration saved");
 }
 
 static void testMagCalibration() {
@@ -377,6 +413,7 @@ int main() {
 	testMagCalibration();
 	testHeadingFilter();
 	testDongleFrames();
+	testPoseFusion();
 	testMounting();
 	testBodySolver();
 	if (g_failures) {

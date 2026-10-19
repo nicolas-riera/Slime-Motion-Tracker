@@ -1,4 +1,4 @@
-"""Packs AMASS (SMPL+H G, *_poses.npz) into compact training arrays at 60 Hz.
+"""Packs AMASS (SMPL+H G, *_poses.npz or the newer *_stageii.npz) into compact training arrays at 60 Hz.
 
   python tools/pose_model/amass_prep.py AMASS_ROOT BODY_MODELS OUT.npz [--datasets A B ...]
 
@@ -55,14 +55,16 @@ def main():
     poses, trans, seq = [], [], []
     start = 0
     for di, name in enumerate(names):
-        files = sorted(glob.glob(os.path.join(args.root, name, "**", "*_poses.npz"), recursive=True))
+        files = sorted(glob.glob(os.path.join(args.root, name, "**", "*_poses.npz"), recursive=True)
+                       + glob.glob(os.path.join(args.root, name, "**", "*_stageii.npz"), recursive=True))
         kept = 0
         for f in files:
             d = np.load(f, allow_pickle=True)
-            if "mocap_framerate" not in d or "poses" not in d:
+            rate = d["mocap_framerate"] if "mocap_framerate" in d else d.get("mocap_frame_rate")
+            if rate is None or "poses" not in d:
                 continue
             p, t = resample(d["poses"][:, :66].astype(np.float64), d["trans"].astype(np.float64),
-                            float(d["mocap_framerate"]))
+                            float(rate))
             if len(p) < 30:
                 continue
             g = str(d["gender"])

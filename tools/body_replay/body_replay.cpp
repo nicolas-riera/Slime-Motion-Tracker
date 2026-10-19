@@ -35,6 +35,7 @@
 #include "slimelite/config.h"
 #include "slimelite/foot_model.h"
 #include "slimelite/mag.h"
+#include "slimelite/pose_model.h"
 #include "slimelite/protocol.h"
 
 using namespace slimelite;
@@ -378,6 +379,18 @@ int main(int argc, char** argv) {
 	if (!modelPath.empty() && !footModel.load(modelPath)) std::printf("cannot load the foot model %s\n", modelPath.c_str());
 	// Fusion sigma of the model (defaults of footMeasurementSigma), tunable offline
 	const double modelFloor = tunable("modelFloor", 0.03), modelScale = tunable("modelScale", 0.6);
+	// Learned pose model (optional): --pose-model path, or SL_POSE_MODEL; fusion
+	// settings from SL_POSE_RATIO_LOW / SL_POSE_RATIO_HIGH / SL_POSE_MIN_ANKLE
+	PoseModel poseModel;
+	PoseFusionSettings fusion;
+	std::string poseModelPath = std::getenv("SL_POSE_MODEL") ? std::getenv("SL_POSE_MODEL") : "";
+	for (int i = 3; i + 1 < argc; i += 2)
+		if (std::string(argv[i]) == "--pose-model") poseModelPath = argv[i + 1];
+	if (!poseModelPath.empty() && !poseModel.load(poseModelPath))
+		std::printf("cannot load the pose model %s: %s\n", poseModelPath.c_str(), poseModel.error().c_str());
+	if (const char* v = std::getenv("SL_POSE_RATIO_LOW")) fusion.ratioLow = std::atof(v);
+	if (const char* v = std::getenv("SL_POSE_RATIO_HIGH")) fusion.ratioHigh = std::atof(v);
+	if (const char* v = std::getenv("SL_POSE_MIN_ANKLE")) fusion.minAnkleHeight = std::atof(v);
 	double t0 = -1, lastFrame = -1;
 	int frames = 0;
 	double solveSeconds = 0;
@@ -432,7 +445,13 @@ int main(int argc, char** argv) {
 				floorY = std::atof(detail.c_str());
 				floorKnown = true;
 			} else if (what == "calibration") {
-				if (detail.rfind("ski:", 0) == 0 || detail.rfind("done: Reset", 0) == 0) standHmdY = hmd.position.y;
+				if (detail.rfind("ski:", 0) == 0 || detail.rfind("done: Reset", 0) == 0) {
+					standHmdY = hmd.position.y;
+					// Same stand pose as the engine calibrates the controllers to the wrists on
+					if (poseModel.loaded() && hmdValid && controllerValid[0] && controllerValid[1])
+						poseModel.calibrateWrists(hmd, {Pose{controllers[0], controllerRot[0]},
+														Pose{controllers[1], controllerRot[1]}});
+				}
 				// Stand pose capture times, for tools that calibrate other devices on it
 				if (detail.rfind("ski:", 0) == 0 && dump) std::printf("stand_capture %.3f\n", t - t0);
 				if (detail.rfind("done:", 0) == 0) {
@@ -568,6 +587,26 @@ int main(int argc, char** argv) {
 				}
 			}
 			BodyOutput o = solver.update(bin);
+			if (poseModel.loaded()) {
+				if (!poseModel.wristsCalibrated() && config.wristCalibration)
+					poseModel.setWristCalibration(*config.wristCalibration);
+				PoseModelInput pin;
+				pin.floorY = floorY;
+				pin.hmdValid = bin.hmdValid;
+				pin.hmd = hmd;
+				for (int i = 0; i < 2; i++) {
+					pin.handValid[i] = controllerValid[i];
+					pin.hands[i] = {controllers[i], controllerRot[i]};
+					pin.legValid[i] = bin.legs[i].valid;
+					pin.shin[i] = bin.legs[i].shin;
+					pin.legAccel[i] = bin.legs[i].accelWorld;
+				}
+				pin.hasWaist = bin.hasWaist;
+				pin.waist = bin.waist;
+				pin.waistAccel = waistAccel;
+				poseModel.setHeight(dims.height);
+				fusePose(poseModel.update(pin, t), hmd, floorY, dims.eyeHeight, o, fusion);
+			}
 			solveSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - solveStart).count();
 
 			double rel = t - t0;

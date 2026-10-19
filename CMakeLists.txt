@@ -41,6 +41,7 @@ add_library(slimelite_core STATIC
   core/src/heading_filter.cpp
   core/src/body_solver.cpp
   core/src/foot_model.cpp
+  core/src/pose_model.cpp
   core/src/mounting_calibration.cpp
   core/src/protocol.cpp
   core/src/tracker_hub.cpp
@@ -48,6 +49,12 @@ add_library(slimelite_core STATIC
   core/src/config.cpp
   core/src/linalg.cpp)
 target_include_directories(slimelite_core PUBLIC core/include)
+# The pose model network (~70M multiply-adds per step) needs SIMD float math
+if(MSVC)
+  set_source_files_properties(core/src/pose_model.cpp PROPERTIES COMPILE_OPTIONS "/arch:AVX2;/fp:fast")
+else()
+  set_source_files_properties(core/src/pose_model.cpp PROPERTIES COMPILE_OPTIONS "-mavx2;-mfma;-ffast-math")
+endif()
 target_link_libraries(slimelite_core PUBLIC nlohmann_json::nlohmann_json)
 if(WIN32)
   target_link_libraries(slimelite_core PUBLIC ws2_32)
@@ -65,6 +72,9 @@ add_executable(slimelite_ml_dump tools/ml/ml_dump.cpp)
 target_link_libraries(slimelite_ml_dump PRIVATE slimelite_core)
 add_executable(slimelite_foot_model_check tools/ml/foot_model_check.cpp)
 target_link_libraries(slimelite_foot_model_check PRIVATE slimelite_core)
+# Learned pose model: C++/Python consistency and timing (tools/pose_model)
+add_executable(slimelite_pose_model_check tools/pose_model/pose_model_check.cpp)
+target_link_libraries(slimelite_pose_model_check PRIVATE slimelite_core)
 
 # Kinect v2 depth recorder (ground truth), only with the Kinect for Windows SDK 2.0
 if(WIN32 AND DEFINED ENV{KINECTSDK20_DIR})
@@ -89,6 +99,7 @@ add_test(NAME core COMMAND slimelite_tests)
 add_library(slimelite_engine SHARED
   engine/src/engine.cpp
   engine/src/overlay_link.cpp
+  engine/src/pose_worker.cpp
   engine/src/recorder.cpp)
 target_include_directories(slimelite_engine PUBLIC engine/include)
 target_link_libraries(slimelite_engine PRIVATE slimelite_core)
