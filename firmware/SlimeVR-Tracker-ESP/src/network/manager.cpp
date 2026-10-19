@@ -23,84 +23,24 @@
 #include "manager.h"
 
 #include "GlobalVars.h"
-#include "espnowudp.h"
 
 namespace SlimeVR::Network {
 
-// Slime Motion Tracker: the USB dongle (ESP-NOW) is preferred: the WiFi network is then
-// never joined, which saves power. Without a dongle, normal WiFi. A tracker that
-// loses its server (or its dongle) for kResearchMs looks for the dongle again.
-namespace {
-constexpr uint32_t kResearchMs = 15000;
-constexpr uint32_t kDongleLostMs = 1000;
-}
-
-void Manager::setup() { startDongleSearch(); }
-
-void Manager::startDongleSearch(bool resetRadio) {
-	// A failed WiFi connection starts SmartConfig, which hops the radio across the
-	// channels in promiscuous mode: left running, the tracker still caught a dongle
-	// beacon now and then but missed nearly all the server's answers
-	wifiProvisioning.stopProvisioning();
-	// The server not answering through the dongle: start the radio over, whatever
-	// state it is in
-	if (resetRadio) EspNow::end();
-	m_Transport = Transport::SearchingDongle;
-	m_IsConnected = false;
-	EspNow::begin();
-}
+void Manager::setup() { wifiNetwork.setUp(); }
 
 void Manager::update() {
-	if (m_Transport == Transport::SearchingDongle) {
-		if (EspNow::searchStep()) {
-			m_Transport = Transport::EspNow;
-			m_LostSince = 0;
-		} else if (EspNow::searchExhausted()) {
-			EspNow::end();
-			wifiNetwork.setUp();
-			m_Transport = Transport::WiFi;
-			m_LostSince = 0;
-		}
-		return;
-	}
+	wifiNetwork.upkeep();
 
 	auto wasConnected = m_IsConnected;
-	if (m_Transport == Transport::EspNow) {
-		// The dongle beacons every 100 ms: silent for 1 s, it is gone (unplugged).
-		// Search again at once (then WiFi) instead of waiting for the server timeout
-		if (millis() - EspNow::lastReceiveMillis() > kDongleLostMs) {
-			startDongleSearch();
-			return;
-		}
-		m_IsConnected = true;
-		// The signal strength the overlay shows: the dongle's frames instead of the AP
-		if (millis() - m_LastRssiSample >= 2000 && EspNow::rssi() != 0) {
-			m_LastRssiSample = millis();
-			networkConnection.sendSignalStrength(uint8_t(EspNow::rssi()));
-		}
-	} else {
-		wifiNetwork.upkeep();
-		m_IsConnected = wifiNetwork.isConnected();
-	}
 
-	// Server (or dongle) lost for a while: look for the dongle again
-	bool serving = m_IsConnected && networkConnection.isConnected();
-	if (serving) {
-		m_LostSince = 0;
-	} else if (m_LostSince == 0) {
-		m_LostSince = millis();
-	} else if (millis() - m_LostSince > kResearchMs) {
-		if (m_Transport == Transport::WiFi) EspNow::leaveNetwork();
-		startDongleSearch(m_Transport == Transport::EspNow);
-		return;
-	}
+	m_IsConnected = wifiNetwork.isConnected();
 
 	if (!m_IsConnected) {
 		return;
 	}
 
 	if (!wasConnected) {
-		// (Re)connected, rediscover the server and reconnect
+		// WiFi was reconnected, rediscover the server and reconnect
 		networkConnection.reset();
 	}
 

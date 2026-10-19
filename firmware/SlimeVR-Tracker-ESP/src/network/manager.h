@@ -35,17 +35,8 @@ public:
 	void setup();
 	void update();
 
-	// Slime Motion Tracker: transport in use (ESP-NOW to the USB dongle, or WiFi)
-	enum class Transport { SearchingDongle, EspNow, WiFi };
-	Transport transport() const { return m_Transport; }
-
 private:
-	void startDongleSearch(bool resetRadio = false);
-
 	bool m_IsConnected = false;
-	Transport m_Transport = Transport::SearchingDongle;
-	uint32_t m_LastRssiSample = 0;
-	uint32_t m_LostSince = 0;  // millis() since the server (or the dongle) is lost
 };
 
 }  // namespace SlimeVR::Network
