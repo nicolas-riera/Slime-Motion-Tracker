@@ -127,6 +127,10 @@ add_custom_command(TARGET slimelite_engine POST_BUILD
           -P ${CMAKE_SOURCE_DIR}/tools/cmake/hot_deploy.cmake
   COMMAND ${CMAKE_COMMAND} -DSRC=${CMAKE_SOURCE_DIR}/engine/models -DDST=${SLIMELITE_INSTALL_BIN}
           -P ${CMAKE_SOURCE_DIR}/tools/cmake/deploy_models.cmake)
+# The overlay starts the host when SteamVR is not running (standalone mode)
+add_custom_command(TARGET slimelite_engine_host POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -DSRC=$<TARGET_FILE:slimelite_engine_host> -DDST=${SLIMELITE_INSTALL_BIN}
+          -P ${CMAKE_SOURCE_DIR}/tools/cmake/hot_deploy.cmake)
 endif()
 
 # ---- dashboard overlay ----
@@ -164,6 +168,7 @@ add_custom_target(driver_package ALL
   COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:slimelite_engine> ${DRIVER_OUT}/bin/win64/
   COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/engine/models ${DRIVER_OUT}/bin/win64/models
   COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:slimevr_lite_overlay> ${DRIVER_OUT}/bin/win64/
+  COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:slimelite_engine_host> ${DRIVER_OUT}/bin/win64/
   COMMAND ${CMAKE_COMMAND} -E copy ${OPENVR_DLL} ${DRIVER_OUT}/bin/win64/
-  DEPENDS driver_slimevr_lite slimelite_engine slimevr_lite_overlay)
+  DEPENDS driver_slimevr_lite slimelite_engine slimevr_lite_overlay slimelite_engine_host)
 endif()

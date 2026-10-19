@@ -490,7 +490,10 @@ void drawFooter(const DriverState& s, bool connected, const FrameInfo& info) {
     output(" Right foot", s.outputs.rightFoot);
 
     char right[96];
-    std::snprintf(right, sizeof(right), "SteamVR: %s", info.vrActive ? "connected" : "not running");
+    std::snprintf(right, sizeof(right), "SteamVR: %s",
+                  info.vrActive     ? "connected"
+                  : info.standalone ? "not running (standalone engine, fake headset)"
+                                    : "not running");
     ImGui::SameLine(ImGui::GetContentRegionMax().x - ImGui::CalcTextSize(right).x);
     ImGui::TextColored(info.vrActive ? kGreen : kGrey, "%s", right);
 }

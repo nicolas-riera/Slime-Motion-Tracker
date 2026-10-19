@@ -20,6 +20,7 @@
 #include <cfloat>
 #include <chrono>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include <openvr.h>
@@ -153,6 +154,64 @@ bool isProcessRunning(const wchar_t* exeName) {
     CloseHandle(snapshot);
     return found;
 }
+
+// ------------------------------------------------------------------ standalone engine
+
+// Without SteamVR the overlay runs the engine itself (slimelite_engine_host with a
+// fake headset, next to the overlay), so the trackers and the dongle can be checked
+// without a headset. The host exits with the overlay and as soon as SteamVR starts,
+// leaving the tracker port and the dongle to the driver.
+class StandaloneEngine {
+public:
+    ~StandaloneEngine() {
+        if (process_) CloseHandle(process_);
+    }
+
+    void update(bool driverConnected) {
+        const auto now = Clock::now();
+        if (now < nextCheck_) return;
+        nextCheck_ = now + std::chrono::seconds(1);
+        if (process_ && WaitForSingleObject(process_, 0) == WAIT_OBJECT_0) {
+            CloseHandle(process_);
+            process_ = nullptr;
+        }
+        if (process_ || driverConnected || isProcessRunning(L"vrserver.exe")) {
+            missingSince_ = now;
+            return;
+        }
+        if (now - missingSince_ >= std::chrono::seconds(3)) start();
+    }
+
+    [[nodiscard]] bool running() const { return process_ != nullptr; }
+
+private:
+    void start() {
+        wchar_t path[MAX_PATH];
+        const DWORD n = GetModuleFileNameW(nullptr, path, MAX_PATH);
+        if (n == 0 || n == MAX_PATH) return;
+        std::wstring dir(path, n);
+        dir.resize(dir.find_last_of(L'\\') + 1);
+        const std::wstring host = dir + L"slimelite_engine_host.exe";
+        const std::wstring engine = dir + L"slimelite_engine.dll";
+        if (GetFileAttributesW(host.c_str()) == INVALID_FILE_ATTRIBUTES ||
+            GetFileAttributesW(engine.c_str()) == INVALID_FILE_ATTRIBUTES)
+            return;
+        std::wstring cmd = L"\"" + host + L"\" \"" + engine + L"\" --parent " +
+                           std::to_wstring(GetCurrentProcessId()) + L" --until-steamvr";
+        STARTUPINFOW si{};
+        si.cb = sizeof(si);
+        PROCESS_INFORMATION pi{};
+        if (!CreateProcessW(host.c_str(), cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr,
+                            dir.c_str(), &si, &pi))
+            return;
+        CloseHandle(pi.hThread);
+        process_ = pi.hProcess;
+    }
+
+    HANDLE process_ = nullptr;
+    Clock::time_point nextCheck_{};
+    Clock::time_point missingSince_ = Clock::now();
+};
 
 // 128x128 RGBA dashboard thumbnail: a rounded accent square with "SL" in a 5x7 pixel font.
 std::vector<uint8_t> makeThumbnail(int size) {
@@ -425,6 +484,7 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ PWSTR, _In
     VrOverlay vrOverlay;
     vrOverlay.tryInit();
     auto nextVrRetry = Clock::now() + kVrRetryPeriod;
+    StandaloneEngine standalone;
 
     Gpu gpu;
     if (!createGpu(hwnd, vrOverlay.adapterIndex(), gpu)) {
@@ -453,6 +513,7 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ PWSTR, _In
         if (nextFrame < Clock::now()) nextFrame = Clock::now();  // don't try to catch up after a stall
 
         link.poll();
+        standalone.update(link.connected());
 
         if (!vrOverlay.active() && Clock::now() >= nextVrRetry) {
             nextVrRetry = Clock::now() + kVrRetryPeriod;
@@ -475,7 +536,7 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ PWSTR, _In
         vrOverlay.updateFloor(link);
 
         ImGui::NewFrame();
-        ui::draw(link, ui::FrameInfo{.vrActive = vrOverlay.active()});
+        ui::draw(link, ui::FrameInfo{.vrActive = vrOverlay.active(), .standalone = standalone.running()});
         ImGui::Render();
 
         // Render the UI offscreen.
