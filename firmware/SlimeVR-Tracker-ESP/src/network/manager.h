@@ -40,7 +40,7 @@ public:
 	Transport transport() const { return m_Transport; }
 
 private:
-	void startDongleSearch();
+	void startDongleSearch(bool resetRadio = false);
 
 	bool m_IsConnected = false;
 	Transport m_Transport = Transport::SearchingDongle;

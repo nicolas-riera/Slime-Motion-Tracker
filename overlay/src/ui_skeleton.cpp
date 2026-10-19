@@ -237,6 +237,11 @@ void drawSkeletonCard(const DriverLink& link, const DriverState& s, float height
             right = right || role == "right_ankle";
             offline = offline || (role != "none" && !t.connected);
         }
+        for (const TrackerInfo& t : s.mappedOffline) {
+            left = left || t.role == "left_ankle";
+            right = right || t.role == "right_ankle";
+            offline = true;
+        }
         const char* why = !left || !right ? "Assign both ankle trackers (Body tab)"
                           : offline       ? "Every assigned tracker must be connected"
                                           : "Run a full calibration to see your body";

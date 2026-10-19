@@ -397,14 +397,14 @@ void drawTrackerPage(DriverLink& link, const DriverState& s, const TrackerInfo& 
     const ImVec2 avail = ImGui::GetContentRegionAvail();
     if (avail.x >= 700.0f) {
         const float gap = 18.0f;
-        const float rightW = std::clamp(avail.x * 0.46f, 300.0f, 560.0f);
+        const float rightW = std::clamp(avail.x * 0.32f, 260.0f, 400.0f);
         ImGui::BeginChild("##trackerInfo", ImVec2(avail.x - rightW - gap, avail.y), 0, ImGuiWindowFlags_NoBackground);
         drawInfoCards(link, t, d);
         ImGui::EndChild();
         ImGui::SameLine(0, gap);
         ImGui::BeginChild("##trackerView", ImVec2(rightW, avail.y), 0,
                           ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-        drawLiveView(d, avail.y);
+        drawLiveView(d, std::min(avail.y, rightW + 90.0f));
         ImGui::EndChild();
     } else {
         ImGui::BeginChild("##trackerScroll", avail, 0, ImGuiWindowFlags_NoBackground);

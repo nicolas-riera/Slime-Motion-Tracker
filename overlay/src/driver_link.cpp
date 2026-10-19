@@ -243,6 +243,10 @@ DriverState parseState(const json& j) {
         for (const json& t : *it)
             if (t.is_object()) s.trackers.push_back(parseTracker(t));
     }
+    if (auto it = j.find("mappedOffline"); it != j.end() && it->is_array()) {
+        for (const json& t : *it)
+            if (t.is_object()) s.mappedOffline.push_back(parseTracker(t));
+    }
 
     const json& out = getObject(j, "outputs");
     s.outputs.waist = getBool(out, "waist", false);

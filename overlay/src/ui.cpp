@@ -464,7 +464,7 @@ void drawHome(DriverLink& link, const DriverState& s) {
     const bool wide = avail.x >= 700.0f;
     if (wide) {
         const float gap = 18.0f;
-        const float skelW = std::clamp(avail.x * 0.37f, 270.0f, 520.0f);
+        const float skelW = std::clamp(avail.x * 0.28f, 240.0f, 380.0f);
         ImGui::BeginChild("##homeLeft", ImVec2(avail.x - skelW - gap, avail.y), 0, ImGuiWindowFlags_NoBackground);
         drawHomeMain(link, s);
         ImGui::EndChild();
@@ -542,8 +542,13 @@ void drawBody(DriverLink& link, const DriverState& s) {
     helpText("Shake a tracker: its row lights up. The mode (ankles only, or ankles + waist) follows the trackers "
              "assigned and connected.");
     ImGui::Dummy(ImVec2(0, 4));
-    if (s.trackers.empty()) text(fonts.body, col::textDim, "No tracker yet.");
-    for (const TrackerInfo& t : s.trackers) {
+    // The trackers heard since the start, then the assigned ones not heard (offline)
+    std::vector<const TrackerInfo*> rows;
+    for (const TrackerInfo& t : s.trackers) rows.push_back(&t);
+    for (const TrackerInfo& t : s.mappedOffline) rows.push_back(&t);
+    if (rows.empty()) text(fonts.body, col::textDim, "No tracker yet.");
+    for (const TrackerInfo* tp : rows) {
+        const TrackerInfo& t = *tp;
         const float width = ImGui::GetContentRegionAvail().x;
         const float h = 50.0f;
         const ImVec2 p = ImGui::GetCursorScreenPos();

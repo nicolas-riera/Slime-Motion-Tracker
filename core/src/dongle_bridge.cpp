@@ -209,6 +209,7 @@ bool DongleBridge::serve() {
 			Status st;
 			if (parseInfo(f, st)) {
 				m_lastInfo = now();
+				m_lastInfoPayload = f.payload;
 				std::lock_guard lock(m_mutex);
 				m_status.channel = st.channel;
 				m_status.version = st.version;
@@ -254,6 +255,7 @@ bool DongleBridge::serve() {
 		}
 		sendto(SOCKET(it->second.socket), reinterpret_cast<const char*>(f.payload.data()), int(f.payload.size()), 0,
 			   reinterpret_cast<sockaddr*>(&hub), sizeof(hub));
+		m_toHub++;
 	}
 	// Hub -> trackers
 	for (auto& [mac, c] : m_clients) {
@@ -265,10 +267,37 @@ bool DongleBridge::serve() {
 			f.type = dongle::kData;
 			std::copy(c.mac, c.mac + 6, f.mac);
 			f.payload.assign(pkt, pkt + std::min(r, 246));
-			if (!writeAll(h, dongle::encode(f))) return false;
+			if (!writeAll(h, dongle::encode(f))) {
+				m_writeErrors++;
+				return false;
+			}
+			m_toTrackers++;
 		}
 	}
+	if (now() - m_lastStats >= 10.0) {
+		m_lastStats = now();
+		logStats();
+	}
 	return now() - m_lastInfo < 5.0;  // the dongle sends its info every second
+}
+
+void DongleBridge::logStats() {
+	if (!m_log) return;
+	char line[256];
+	std::snprintf(line, sizeof(line), "dongle: %d frames to the hub, %d to the trackers, %d write errors", m_toHub,
+				  m_toTrackers, m_writeErrors);
+	std::string msg = line;
+	// The dongle's counters since its boot: ESP-NOW frames received, searches heard,
+	// answers sent, then the rate code and RSSI of the last frame
+	const auto& p = m_lastInfoPayload;
+	if (p.size() >= 18) {
+		std::snprintf(line, sizeof(line), "; dongle rx %u, searches %u, answers %u, last rate %u rssi %d",
+					  unsigned(p[10] | p[11] << 8), unsigned(p[12] | p[13] << 8), unsigned(p[14] | p[15] << 8),
+					  unsigned(p[16]), int(int8_t(p[17])));
+		msg += line;
+	}
+	m_log(msg);
+	m_toHub = m_toTrackers = 0;
 }
 
 void DongleBridge::loop() {

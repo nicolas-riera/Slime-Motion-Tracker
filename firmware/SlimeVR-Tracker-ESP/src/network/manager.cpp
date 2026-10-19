@@ -37,7 +37,14 @@ constexpr uint32_t kDongleLostMs = 1000;
 
 void Manager::setup() { startDongleSearch(); }
 
-void Manager::startDongleSearch() {
+void Manager::startDongleSearch(bool resetRadio) {
+	// A failed WiFi connection starts SmartConfig, which hops the radio across the
+	// channels in promiscuous mode: left running, the tracker still caught a dongle
+	// beacon now and then but missed nearly all the server's answers
+	wifiProvisioning.stopProvisioning();
+	// The server not answering through the dongle: start the radio over, whatever
+	// state it is in
+	if (resetRadio) EspNow::end();
 	m_Transport = Transport::SearchingDongle;
 	m_IsConnected = false;
 	EspNow::begin();
@@ -84,7 +91,7 @@ void Manager::update() {
 		m_LostSince = millis();
 	} else if (millis() - m_LostSince > kResearchMs) {
 		if (m_Transport == Transport::WiFi) EspNow::leaveNetwork();
-		startDongleSearch();
+		startDongleSearch(m_Transport == Transport::EspNow);
 		return;
 	}
 

@@ -61,6 +61,7 @@ private:
 	void loop();
 	bool openAndProbe(const std::string& port);
 	void closePort();
+	void logStats();
 	bool serve();  // false when the dongle is gone
 
 	std::function<void(const std::string&)> m_log;
@@ -71,6 +72,10 @@ private:
 	Status m_status;
 	void* m_port = nullptr;  // HANDLE
 	double m_lastInfo = 0;
+	// Diagnostics, logged every 10 s: frames each way and the dongle's own counters
+	double m_lastStats = 0;
+	int m_toHub = 0, m_toTrackers = 0, m_writeErrors = 0;
+	std::vector<uint8_t> m_lastInfoPayload;
 	dongle::Decoder m_decoder;
 	std::set<std::string> m_probed;  // ports tried while present (probed once: opening resets an ESP)
 	struct Client {

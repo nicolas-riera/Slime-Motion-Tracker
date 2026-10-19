@@ -607,6 +607,14 @@ void Engine::publishState(const std::vector<TrackerSnapshot>& trackers, const Bo
 						{"residual", t.magCalibration.valid ? t.magCalibration.residual : 1.0},
 						{"dip", rad2deg(t.magCalibration.dip)}}}});
 	}
+	// Assigned trackers the hub has not heard since the start (the Body page lists them)
+	json mappedOffline = json::array();
+	for (const auto& [mac, tc] : m_config.trackers) {
+		if (tc.role == Role::None) continue;
+		if (std::any_of(trackers.begin(), trackers.end(), [&](const TrackerSnapshot& t) { return t.mac == mac; }))
+			continue;
+		mappedOffline.push_back({{"mac", mac}, {"role", roleName(tc.role)}});
+	}
 
 	double countdown = (m_calPhase == CalPhase::Stand || m_calPhase == CalPhase::Ski)
 						 ? std::max(0.0, m_calDeadline - now)
@@ -644,6 +652,7 @@ void Engine::publishState(const std::vector<TrackerSnapshot>& trackers, const Bo
 		  {"file", m_recorder.isOpen() ? m_recorder.path() : std::string()},
 		  {"megabytes", double(m_recorder.bytes()) / 1e6}}},
 		{"trackers", ts},
+		{"mappedOffline", mappedOffline},
 		{"outputs", {{"waist", out.valid}, {"leftFoot", out.valid}, {"rightFoot", out.valid}}},
 	};
 	m_overlay.send(state);

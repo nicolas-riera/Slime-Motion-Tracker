@@ -7,8 +7,8 @@ namespace smt::ui {
 
 // Size of the SteamVR dashboard overlay texture. The desktop window renders at its own
 // (resizable) client size.
-inline constexpr int kWidth = 1024;
-inline constexpr int kHeight = 768;
+inline constexpr int kWidth = 1280;  // 16:9
+inline constexpr int kHeight = 720;
 // Smallest desktop client area
 inline constexpr int kMinWidth = 640;
 inline constexpr int kMinHeight = 500;

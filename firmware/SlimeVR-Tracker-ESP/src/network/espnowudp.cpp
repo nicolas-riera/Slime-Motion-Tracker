@@ -94,6 +94,7 @@ void begin() {
 	WiFi.persistent(false);
 	WiFi.mode(WIFI_STA);
 	leaveNetwork();
+	wifi_promiscuous_enable(0);
 	// The radio must stay on to receive the server's packets
 	wifi_set_sleep_type(NONE_SLEEP_T);
 	wifi_set_channel(g_channel);

@@ -3,7 +3,7 @@
 // One Dear ImGui UI is rendered into an offscreen D3D11 texture, submitted to a SteamVR
 // dashboard overlay and copied into the back buffer of a regular desktop window, so the
 // same UI works with and without a headset. While the dashboard shows it, the UI renders
-// at the fixed overlay size (1024x768, stretched in the desktop window); otherwise at the
+// at the fixed overlay size (1280x720, stretched in the desktop window); otherwise at the
 // desktop window's client size (resizable, the layout adapts). Nothing is rendered while
 // neither is visible (window minimized or hidden in the notification area).
 //

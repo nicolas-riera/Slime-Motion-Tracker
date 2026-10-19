@@ -160,6 +160,8 @@ struct DriverState {
     CalibrationInfo calibration;
     DriverSettings settings;
     std::vector<TrackerInfo> trackers;
+    // Assigned trackers not heard since the engine started (offline, for the Body page)
+    std::vector<TrackerInfo> mappedOffline;
     OutputsInfo outputs;
     RecordingInfo recording;
 };
