@@ -75,7 +75,7 @@ bool Config::fromJson(const json& j) {
 			settings.inertialWeight = s.value("inertialWeight", settings.inertialWeight);
 			settings.velocityPrediction = s.value("velocityPrediction", settings.velocityPrediction);
 			settings.recording = s.value("recording", settings.recording);
-			settings.poseModel = s.value("poseModel", settings.poseModel);
+			settings.poseModel = s.value("poseModelFusion", settings.poseModel);
 		}
 		trackers.clear();
 		const json trackersJson = j.value("trackers", json::object());
@@ -121,7 +121,7 @@ json Config::toJson() const {
 					 {"inertialWeight", settings.inertialWeight},
 					 {"velocityPrediction", settings.velocityPrediction},
 					 {"recording", settings.recording},
-					 {"poseModel", settings.poseModel}};
+					 {"poseModelFusion", settings.poseModel}};
 	json ts = json::object();
 	for (const auto& [mac, t] : trackers) {
 		json tj = {{"role", roleName(t.role)},

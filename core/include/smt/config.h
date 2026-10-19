@@ -29,7 +29,11 @@ struct Settings {
 	double inertialWeight = 0.5;
 	bool velocityPrediction = false;
 	bool recording = false;  // record sessions for offline tuning
-	bool poseModel = true;  // fuse the learned pose model (models/pose_model.bin) when present
+	// Fuse the learned pose model (models/pose_model.bin) when present. Off: in VR the v4
+	// model moved a foot 70 cm while nothing moved and broke the leg lengths (session
+	// 2026-10-19 23:09); the solver alone until that is fixed. Saved as "poseModelFusion"
+	// (the old "poseModel" key, true everywhere, is ignored).
+	bool poseModel = false;
 };
 
 struct TrackerConfig {
