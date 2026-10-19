@@ -27,6 +27,8 @@ public:
 	void frame(const SmtFrameInput& in, SmtFrameOutput& out);
 	// Battery of the tracker behind each virtual tracker slot
 	void batteries(SmtBattery out[SMT_DEVICE_COUNT]) const;
+	// Whether the trackers behind each virtual tracker slot are there (as of the last frame)
+	void deviceStatus(SmtDeviceStatus out[SMT_DEVICE_COUNT]) const;
 	// State passed to the next engine on hot reload
 	nlohmann::json handover() const;
 
@@ -55,6 +57,7 @@ private:
 	void applySettings();
 	void markDirty() { m_dirty = true; }
 	bool trackerOrientation(const TrackerSnapshot& t, const TrackerConfig& tc, Quat& out) const;
+	void updateDeviceStatus(const std::vector<TrackerSnapshot>& trackers);
 	void recordFrame(const SmtFrameInput& in, const BodyOutput& out,
 					 const std::vector<TrackerSnapshot>& trackers);
 	void recordEvent(const char* what, const std::string& detail = {});
@@ -104,6 +107,9 @@ private:
 
 	// Automatic mode hysteresis: since when the waist tracker is usable / missing
 	double m_waistSeenSince = -1, m_waistLostSince = -1;
+
+	// For the host (sl_engine_device_status), refreshed every frame
+	std::array<SmtDeviceStatus, SMT_DEVICE_COUNT> m_deviceStatus{};
 
 	// What the overlay currently shows (re-sent every ~0.5 s, expires after 2 s)
 	double m_viewUntil = -1;

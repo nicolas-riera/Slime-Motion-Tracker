@@ -1,4 +1,5 @@
-# Copies SRC into DST if DST exists (the installed SteamVR driver folder).
+# Copies SRC (a file, or a folder: its changed files) into DST if DST exists (the
+# installed SteamVR driver folder).
 # With RESTART_OVERLAY, stops the running overlay first and starts the new one.
 # With STOP_FIRST, stops the running program first (the overlay restarts the
 # standalone engine host by itself).
@@ -18,8 +19,13 @@ if(STOP_FIRST)
   execute_process(COMMAND taskkill /IM "${name}" /F OUTPUT_QUIET ERROR_QUIET)
   execute_process(COMMAND "${CMAKE_COMMAND}" -E sleep 1)
 endif()
-execute_process(COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${SRC}" "${DST}/${name}"
-                RESULT_VARIABLE res)
+if(IS_DIRECTORY "${SRC}")
+  execute_process(COMMAND "${CMAKE_COMMAND}" -E copy_directory_if_different "${SRC}" "${DST}/${name}"
+                  RESULT_VARIABLE res)
+else()
+  execute_process(COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${SRC}" "${DST}/${name}"
+                  RESULT_VARIABLE res)
+endif()
 if(NOT res EQUAL 0)
   message(WARNING "hot deploy: could not copy ${name} to ${DST}")
   return()

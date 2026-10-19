@@ -307,6 +307,7 @@ void Engine::frame(const SmtFrameInput& fin, SmtFrameOutput& fout) {
 			markDirty();
 		}
 	}
+	updateDeviceStatus(trackers);
 	bool waistOk = out.valid && (m_config.mode == Mode::Ankles || in.hasWaist);
 	toSlPose(waistOk, out.waist, out.waistVelocity, fout.devices[SMT_DEVICE_WAIST]);
 	toSlPose(out.valid, out.feet[0], out.footVelocity[0], fout.devices[SMT_DEVICE_LEFT_FOOT]);
@@ -537,6 +538,35 @@ void Engine::batteries(SmtBattery out[SMT_DEVICE_COUNT]) const {
 		// The trackers do not report charging
 		out[slot] = SmtBattery{1, std::clamp(t.batteryLevel, 0.0f, 1.0f), 0};
 	}
+}
+
+void Engine::updateDeviceStatus(const std::vector<TrackerSnapshot>& trackers) {
+	// The solver needs both ankles for any output; the waist tracker is optional
+	// (the waist is estimated from the ankles without it, see updateMode)
+	bool connected[2] = {}, aligned[2] = {};
+	for (const auto& t : trackers) {
+		auto it = m_config.trackers.find(t.mac);
+		if (it == m_config.trackers.end() || !t.connected) continue;
+		const TrackerConfig& tc = it->second;
+		if (tc.role != Role::LeftAnkle && tc.role != Role::RightAnkle) continue;
+		int i = tc.role == Role::LeftAnkle ? 0 : 1;
+		connected[i] = true;
+		// Same conditions as trackerOrientation, minus the transient ones (rotation, heading)
+		bool ok = tc.mountingValid;
+		if (ok && !tc.yawInMagFrame) {
+			auto boot = m_bootAtCalibration.find(t.mac);
+			ok = boot == m_bootAtCalibration.end() || boot->second == t.bootCount;
+		}
+		aligned[i] = aligned[i] || ok;
+	}
+	SmtDeviceStatus s{};
+	s.connected = connected[0] && connected[1] ? 1 : 0;
+	s.calibrated = s.connected && aligned[0] && aligned[1] ? 1 : 0;
+	m_deviceStatus.fill(s);
+}
+
+void Engine::deviceStatus(SmtDeviceStatus out[SMT_DEVICE_COUNT]) const {
+	for (int i = 0; i < SMT_DEVICE_COUNT; i++) out[i] = m_deviceStatus[i];
 }
 
 void Engine::finishCalibration(const Pose& hmd) {
@@ -809,6 +839,10 @@ extern "C" __declspec(dllexport) void* sl_engine_create(const SmtEngineHost* hos
 
 extern "C" __declspec(dllexport) void sl_engine_batteries(void* engine, SmtBattery* out) {
 	static_cast<const smt::Engine*>(engine)->batteries(out);
+}
+
+extern "C" __declspec(dllexport) void sl_engine_device_status(void* engine, SmtDeviceStatus* out) {
+	static_cast<const smt::Engine*>(engine)->deviceStatus(out);
 }
 
 extern "C" __declspec(dllexport) void sl_engine_frame(void* engine, const SmtFrameInput* in, SmtFrameOutput* out) {

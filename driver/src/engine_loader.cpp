@@ -75,6 +75,7 @@ bool EngineLoader::loadModule(Module& m) {
 	m.frame = reinterpret_cast<SmtEngineFrameFn>(GetProcAddress(dll, "sl_engine_frame"));
 	m.destroy = reinterpret_cast<SmtEngineDestroyFn>(GetProcAddress(dll, "sl_engine_destroy"));
 	m.batteries = reinterpret_cast<SmtEngineBatteriesFn>(GetProcAddress(dll, "sl_engine_batteries"));
+	m.deviceStatus = reinterpret_cast<SmtEngineDeviceStatusFn>(GetProcAddress(dll, "sl_engine_device_status"));
 	m.dll = dll;
 	if (!version || !m.create || !m.frame || !m.destroy) {
 		m_log("engine is missing exports");
@@ -152,6 +153,16 @@ void EngineLoader::poll(double now) {
 bool EngineLoader::batteries(SmtBattery out[SMT_DEVICE_COUNT]) {
 	if (!m_engine || !m_module.batteries) return false;
 	m_module.batteries(m_engine, out);
+	return true;
+}
+
+bool EngineLoader::deviceStatus(SmtDeviceStatus out[SMT_DEVICE_COUNT]) {
+	if (!m_engine) {
+		for (int i = 0; i < SMT_DEVICE_COUNT; i++) out[i] = SmtDeviceStatus{};
+		return true;
+	}
+	if (!m_module.deviceStatus) return false;
+	m_module.deviceStatus(m_engine, out);
 	return true;
 }
 

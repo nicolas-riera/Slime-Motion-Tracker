@@ -23,6 +23,9 @@ public:
 	void frame(const SmtFrameInput& in, SmtFrameOutput& out);
 	// False when the engine does not export it (older engine)
 	bool batteries(SmtBattery out[SMT_DEVICE_COUNT]);
+	// All disconnected when no engine is loaded; false when the engine does not
+	// export it (older engine)
+	bool deviceStatus(SmtDeviceStatus out[SMT_DEVICE_COUNT]);
 	void unload();
 
 private:
@@ -33,6 +36,7 @@ private:
 		SmtEngineFrameFn frame = nullptr;
 		SmtEngineDestroyFn destroy = nullptr;
 		SmtEngineBatteriesFn batteries = nullptr;  // optional
+		SmtEngineDeviceStatusFn deviceStatus = nullptr;  // optional
 	};
 	bool loadModule(Module& m);
 	void freeModule(Module& m);

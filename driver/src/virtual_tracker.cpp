@@ -37,6 +37,24 @@ vr::EVRInitError VirtualTracker::Activate(uint32_t unObjectId) {
 	props->SetBoolProperty(c, vr::Prop_WillDriftInYaw_Bool, false);
 	props->SetBoolProperty(c, vr::Prop_NeverTracked_Bool, false);
 	props->SetBoolProperty(c, vr::Prop_Identifiable_Bool, false);
+	// Status icons, drawn by tools/icon/make_tracker_icons.py
+	const struct {
+		vr::ETrackedDeviceProperty prop;
+		const char* path;
+	} icons[] = {
+		{vr::Prop_NamedIconPathDeviceOff_String, "{slime_motion_tracker}/icons/tracker_off.png"},
+		{vr::Prop_NamedIconPathDeviceSearching_String, "{slime_motion_tracker}/icons/tracker_searching.png"},
+		{vr::Prop_NamedIconPathDeviceSearchingAlert_String,
+		 "{slime_motion_tracker}/icons/tracker_searching_alert.png"},
+		{vr::Prop_NamedIconPathDeviceReady_String, "{slime_motion_tracker}/icons/tracker_ready.png"},
+		{vr::Prop_NamedIconPathDeviceReadyAlert_String, "{slime_motion_tracker}/icons/tracker_ready_alert.png"},
+		{vr::Prop_NamedIconPathDeviceNotReady_String, "{slime_motion_tracker}/icons/tracker_not_ready.png"},
+		{vr::Prop_NamedIconPathDeviceStandby_String, "{slime_motion_tracker}/icons/tracker_standby.png"},
+		{vr::Prop_NamedIconPathDeviceStandbyAlert_String,
+		 "{slime_motion_tracker}/icons/tracker_standby_alert.png"},
+		{vr::Prop_NamedIconPathDeviceAlertLow_String, "{slime_motion_tracker}/icons/tracker_alert_low.png"},
+	};
+	for (const auto& icon : icons) props->SetStringProperty(c, icon.prop, icon.path);
 	return vr::VRInitError_None;
 }
 
@@ -52,10 +70,10 @@ void VirtualTracker::updateBattery(const SmtBattery& battery) {
 	props->SetBoolProperty(c, vr::Prop_DeviceIsCharging_Bool, battery.charging != 0);
 }
 
-void VirtualTracker::updatePose(const SmtPose& pose, bool sendVelocity) {
+void VirtualTracker::updatePose(const SmtPose& pose, const SmtDeviceStatus& status, bool sendVelocity) {
 	if (!isActive()) return;
 	vr::DriverPose_t p = emptyPose();
-	if (pose.valid) {
+	if (status.connected && pose.valid) {
 		p.poseIsValid = true;
 		p.result = vr::TrackingResult_Running_OK;
 		for (int i = 0; i < 3; i++) p.vecPosition[i] = pose.position[i];
@@ -65,8 +83,15 @@ void VirtualTracker::updatePose(const SmtPose& pose, bool sendVelocity) {
 	} else {
 		// Keep the last position so SteamVR does not snap the tracker to the origin
 		p = m_pose;
+		for (int i = 0; i < 3; i++) p.vecVelocity[i] = 0;
 		p.poseIsValid = false;
-		p.result = vr::TrackingResult_Running_OutOfRange;
+		p.deviceIsConnected = status.connected != 0;
+		if (!status.connected)
+			p.result = vr::TrackingResult_Uninitialized;  // shown off
+		else if (!status.calibrated)
+			p.result = vr::TrackingResult_Calibrating_OutOfRange;  // waiting for a calibration
+		else
+			p.result = vr::TrackingResult_Running_OutOfRange;  // briefly: heading, HMD lost...
 	}
 	m_pose = p;
 	vr::VRServerDriverHost()->TrackedDevicePoseUpdated(m_id, m_pose, sizeof(m_pose));

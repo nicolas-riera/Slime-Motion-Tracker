@@ -81,6 +81,17 @@ typedef struct SmtBattery {
 } SmtBattery;
 typedef void (*SmtEngineBatteriesFn)(void* engine, SmtBattery out[SMT_DEVICE_COUNT]);
 
+/* Optional export "sl_engine_device_status": whether the physical trackers behind
+ * each virtual tracker slot (SMT_DEVICE_*) are there, as of the last frame. The host
+ * registers a virtual tracker with SteamVR only once it is connected, and reports it
+ * disconnected (not "searching") while it is not. */
+typedef struct SmtDeviceStatus {
+	int connected;  /* every tracker this slot needs is assigned and connected */
+	int calibrated; /* ... and aligned (mounting calibrated, no reboot since the last
+	                   reset without the mag): the pose is then only briefly invalid */
+} SmtDeviceStatus;
+typedef void (*SmtEngineDeviceStatusFn)(void* engine, SmtDeviceStatus out[SMT_DEVICE_COUNT]);
+
 #ifdef __cplusplus
 }
 #endif

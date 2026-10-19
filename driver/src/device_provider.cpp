@@ -36,20 +36,28 @@ double nowSeconds() {
 vr::EVRInitError DeviceProvider::Init(vr::IVRDriverContext* ctx) {
 	VR_INIT_SERVER_DRIVER_CONTEXT(ctx);
 
-	for (int i = 0; i < SMT_DEVICE_COUNT; i++) {
+	// Registered with SteamVR in RunFrame, once the trackers behind them connect
+	for (int i = 0; i < SMT_DEVICE_COUNT; i++)
 		m_devices[i] = std::make_unique<VirtualTracker>(kSerials[i], kRoles[i]);
-		// Assign the SteamVR tracker role so games pick them up without manual setup
-		std::string key = std::string("/devices/slime_motion_tracker/") + kSerials[i];
-		vr::VRSettings()->SetString("trackers", key.c_str(), kRoles[i]);
-		vr::VRServerDriverHost()->TrackedDeviceAdded(kSerials[i], vr::TrackedDeviceClass_GenericTracker,
-													  m_devices[i].get());
-	}
 
 	auto dir = moduleDirectory();
 	std::u8string u8 = dir.u8string();
 	std::string dirUtf8(u8.begin(), u8.end());
 	m_engine = std::make_unique<EngineLoader>(dir / "smt_engine.dll", dirUtf8, driverLog);
 	return vr::VRInitError_None;
+}
+
+void DeviceProvider::addDevice(int slot) {
+	auto& dev = *m_devices[slot];
+	dev.setAdded();  // even on failure: do not retry every frame
+	// Assign the SteamVR tracker role so games pick them up without manual setup
+	std::string key = "/devices/slime_motion_tracker/" + dev.serial();
+	vr::VRSettings()->SetString("trackers", key.c_str(), dev.role().c_str());
+	if (vr::VRServerDriverHost()->TrackedDeviceAdded(dev.serial().c_str(), vr::TrackedDeviceClass_GenericTracker,
+													  &dev))
+		driverLog(dev.serial() + " added");
+	else
+		driverLog(dev.serial() + ": TrackedDeviceAdded failed");
 }
 
 void DeviceProvider::Cleanup() {
@@ -109,7 +117,24 @@ void DeviceProvider::RunFrame() {
 
 	SmtFrameOutput out{};
 	m_engine->frame(in, out);
-	for (int i = 0; i < SMT_DEVICE_COUNT; i++) m_devices[i]->updatePose(out.devices[i], out.sendVelocity != 0);
+	SmtDeviceStatus status[SMT_DEVICE_COUNT] = {};
+	bool haveStatus = m_engine->deviceStatus(status);
+	for (int i = 0; i < SMT_DEVICE_COUNT; i++) {
+		auto& dev = *m_devices[i];
+		SmtDeviceStatus s = status[i];
+		// Older engine without the status: register on the first valid pose, then
+		// never report it disconnected
+		if (!haveStatus) s.connected = s.calibrated = (out.devices[i].valid || dev.isAdded()) ? 1 : 0;
+		if (!dev.isAdded()) {
+			if (!s.connected) continue;
+			addDevice(i);
+		}
+		if ((s.connected != 0) != m_connected[i]) {
+			m_connected[i] = s.connected != 0;
+			driverLog(dev.serial() + (m_connected[i] ? " connected" : " disconnected"));
+		}
+		dev.updatePose(out.devices[i], s, out.sendVelocity != 0);
+	}
 }
 
 }  // namespace smt

@@ -121,7 +121,8 @@ target_include_directories(smt_engine_host PRIVATE engine/include)
 # Hot deploy: after a build, copy the engine (and the overlay) into the installed
 # driver folder when it exists. The running driver reloads the engine by itself.
 file(TO_CMAKE_PATH "$ENV{LOCALAPPDATA}" SMT_LOCALAPPDATA)
-set(SMT_INSTALL_BIN "${SMT_LOCALAPPDATA}/Slime Motion Tracker/driver/slime_motion_tracker/bin/win64")
+set(SMT_INSTALL_DRIVER "${SMT_LOCALAPPDATA}/Slime Motion Tracker/driver/slime_motion_tracker")
+set(SMT_INSTALL_BIN "${SMT_INSTALL_DRIVER}/bin/win64")
 add_custom_command(TARGET smt_engine POST_BUILD
   COMMAND ${CMAKE_COMMAND} -DSRC=$<TARGET_FILE:smt_engine> -DDST=${SMT_INSTALL_BIN}
           -P ${CMAKE_SOURCE_DIR}/tools/cmake/hot_deploy.cmake
@@ -177,5 +178,9 @@ add_custom_target(driver_package ALL
   COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:SlimeMotionTracker> ${DRIVER_OUT}/bin/win64/
   COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:smt_engine_host> ${DRIVER_OUT}/bin/win64/
   COMMAND ${CMAKE_COMMAND} -E copy ${OPENVR_DLL} ${DRIVER_OUT}/bin/win64/
+  # Driver resources (icons, input profile) are not locked by SteamVR: hot deploy them
+  # too. The driver DLL itself needs tools/install.ps1 with SteamVR closed.
+  COMMAND ${CMAKE_COMMAND} -DSRC=${CMAKE_SOURCE_DIR}/driver/package/resources -DDST=${SMT_INSTALL_DRIVER}
+          -P ${CMAKE_SOURCE_DIR}/tools/cmake/hot_deploy.cmake
   DEPENDS driver_slime_motion_tracker smt_engine SlimeMotionTracker smt_engine_host)
 endif()

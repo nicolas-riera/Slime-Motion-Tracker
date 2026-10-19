@@ -17,8 +17,13 @@ public:
 	const std::string& serial() const { return m_serial; }
 	const std::string& role() const { return m_role; }
 	bool isActive() const { return m_id != vr::k_unTrackedDeviceIndexInvalid; }
+	// Registered with SteamVR (TrackedDeviceAdded), which cannot be undone
+	bool isAdded() const { return m_added; }
+	void setAdded() { m_added = true; }
 
-	void updatePose(const SmtPose& pose, bool sendVelocity);
+	// status: whether the physical trackers behind it are there. Not connected: SteamVR
+	// shows the device off; connected without a valid pose: searching
+	void updatePose(const SmtPose& pose, const SmtDeviceStatus& status, bool sendVelocity);
 	void updateBattery(const SmtBattery& battery);
 
 	vr::EVRInitError Activate(uint32_t unObjectId) override;
@@ -33,6 +38,7 @@ public:
 private:
 	std::string m_serial;
 	std::string m_role;
+	bool m_added = false;
 	uint32_t m_id = vr::k_unTrackedDeviceIndexInvalid;
 	vr::DriverPose_t m_pose{};
 };

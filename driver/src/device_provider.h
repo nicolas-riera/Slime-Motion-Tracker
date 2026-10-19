@@ -1,6 +1,7 @@
-// SteamVR server driver host. Registers the virtual trackers and forwards every
-// frame to the hot-reloadable engine (see engine_api.h). Kept minimal on purpose:
-// changing this file requires restarting SteamVR, changing the engine does not.
+// SteamVR server driver host. Registers the virtual trackers (once the trackers
+// behind them connect) and forwards every frame to the hot-reloadable engine (see
+// engine_api.h). Kept minimal on purpose: changing this file requires restarting
+// SteamVR, changing the engine does not.
 #pragma once
 
 #include <openvr_driver.h>
@@ -24,7 +25,10 @@ public:
 	void LeaveStandby() override {}
 
 private:
+	void addDevice(int slot);
+
 	std::array<std::unique_ptr<VirtualTracker>, SMT_DEVICE_COUNT> m_devices;
+	std::array<bool, SMT_DEVICE_COUNT> m_connected{};  // last state reported, for the log
 	std::unique_ptr<EngineLoader> m_engine;
 	// Device class/role/serial, refreshed every few seconds (property reads are not free)
 	struct DeviceInfo {
