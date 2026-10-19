@@ -54,7 +54,10 @@ void onReceive(uint8_t* mac, uint8_t* data, uint8_t len) {
 	// The ESP8266 callback has no RSSI, but the frame sits in the receive buffer
 	// after the radio's rx_ctrl (12 bytes, RSSI first), the 802.11 header (24) and
 	// the ESP-NOW action header and vendor element (15): 51 bytes before the payload
-	int8_t rssi = int8_t(data[-51]);
+	// (checked on hardware: the rx_ctrl length and group bit match the frames). This
+	// SDK stores the RSSI above the noise floor (positive, ~42 at 1 m): dBm = x - 96
+	int rssi = int8_t(data[-51]);
+	if (rssi >= 0) rssi -= 96;
 	if (rssi < -5 && rssi > -100) g_rssi4 = g_rssi4 == 0 ? rssi * 4 : g_rssi4 + (rssi - g_rssi4 / 4);
 	if (data[3] != EspNow::Data) return;
 	uint8_t next = (g_head + 1) % kSlots;
