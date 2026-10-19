@@ -3,7 +3,10 @@
 // anti-mag on real sessions. The calibrations come from the recorded config lines.
 //
 // Usage: slimelite_heading_replay session.jsonl out.csv [--sensitivity S]
-// CSV: t (relative), mac, role, heading_deg (replayed), state, rec_heading_deg, rate_deg_min, sigma_deg
+// CSV: t (relative), mac, role, heading_deg (replayed), state, rec_heading_deg, rate_deg_min, sigma_deg,
+//      norm (field / calibration norm), dip_dev_deg (dip - calibration dip), speed (rad/s),
+//      dev_yaw_deg (device yaw, uncorrected), hmd_yaw_deg
+// Options: --sensitivity S, --adaptive 0|1 (local field reference), --ref-time S
 #include <cstdio>
 #include <fstream>
 #include <map>
@@ -49,17 +52,21 @@ int main(int argc, char** argv) {
 	HeadingFilterSettings settings;
 	for (int i = 3; i + 1 < argc; i += 2)
 		if (std::string(argv[i]) == "--sensitivity") settings.sensitivity = std::atof(argv[i + 1]);
+		else if (std::string(argv[i]) == "--adaptive") settings.adaptiveRef = std::atoi(argv[i + 1]) != 0;
+		else if (std::string(argv[i]) == "--ref-time") settings.refTime = std::atof(argv[i + 1]);
 	std::ifstream in(argv[1]);
 	FILE* out = std::fopen(argv[2], "w");
 	if (!in || !out) {
 		std::printf("cannot open the files\n");
 		return 1;
 	}
-	std::fprintf(out, "t,mac,role,heading_deg,state,rec_heading_deg,rate_deg_min,sigma_deg\n");
+	std::fprintf(out, "t,mac,role,heading_deg,state,rec_heading_deg,rate_deg_min,sigma_deg,norm,dip_dev_deg,speed,dev_yaw_deg,hmd_yaw_deg\n");
 
 	Config config;
 	std::map<std::string, Track> tracks;
 	double t0 = -1;
+	double hmdYaw = 0;
+	bool hasHmd = false;
 	std::string line;
 	while (std::getline(in, line)) {
 		json j = json::parse(line, nullptr, false);
@@ -76,6 +83,10 @@ int main(int argc, char** argv) {
 				if (changed) tr.filter.setCalibration(tc.mag);
 				tr.cal = tc.mag;
 			}
+		} else if (k == "dev" && j.value("cls", 0) == 1 && j.contains("q")) {
+			auto q = j["q"];
+			hmdYaw = 2.0 * std::atan2(q[2].get<double>(), q[0].get<double>());
+			hasHmd = true;
 		} else if (k == "tmp") {
 			tracks[j["mac"].get<std::string>()].temperature = j.value("c", 0.0);
 		} else if (k == "trk") {
@@ -111,9 +122,13 @@ int main(int argc, char** argv) {
 				tr.lastOutput = second;
 				auto it = config.trackers.find(mac);
 				const char* role = it != config.trackers.end() ? roleName(it->second.role) : "none";
-				std::fprintf(out, "%.2f,%s,%s,%.2f,%s,%.2f,%.3f,%.2f\n", t - t0, mac.c_str(), role,
+				// Yaws (twist about the vertical): device (uncorrected) and headset
+				const double devYaw = 2.0 * std::atan2(tr.qWorld.y, tr.qWorld.w);
+				std::fprintf(out, "%.2f,%s,%s,%.2f,%s,%.2f,%.3f,%.2f,%.4f,%.2f,%.3f,%.2f,%s\n", t - t0, mac.c_str(), role,
 							 rad2deg(tr.filter.heading()), stateName(tr.filter.state()), tr.recHeading,
-							 rad2deg(tr.filter.rate()) * 60, rad2deg(tr.filter.headingSigma()));
+							 rad2deg(tr.filter.rate()) * 60, rad2deg(tr.filter.headingSigma()), tr.filter.lastNorm(),
+							 rad2deg(tr.filter.lastDip() - tr.filter.calibration().dip), tr.angularSpeed,
+							 rad2deg(devYaw), hasHmd ? std::to_string(rad2deg(hmdYaw)).c_str() : "");
 			}
 		}
 	}

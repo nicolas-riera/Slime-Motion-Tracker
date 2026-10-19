@@ -106,6 +106,16 @@ struct HeadingFilterSettings {
 	double stillSpeed = 0.35;  // rad/s
 	double stillGrowth = 5.0;
 	double stillMaxFactor = 100.0;
+	// Local field reference: the expected norm and dip follow the field where the
+	// player is (another room, the building's steel: uniformly different from where
+	// the calibration was done) over refTime seconds, only while the mag heading
+	// agrees with the gyro. A field changing as the tracker moves (metal nearby) or
+	// a heading the gyro contradicts stays a disturbance. Bounded around the
+	// calibration's norm and dip.
+	bool adaptiveRef = true;
+	double refTime = 20.0;
+	double refMaxNorm = 0.4;  // relative
+	double refMaxDip = deg2rad(25.0);
 };
 
 class HeadingFilter {
@@ -154,6 +164,8 @@ public:
 	// Last measurement, for diagnostics
 	double lastNorm() const { return m_lastNorm; }
 	double lastDip() const { return m_lastDip; }
+	double refNorm() const { return m_refNorm; }
+	double refDip() const { return m_refDip; }
 
 private:
 	MagCalibration m_cal;
@@ -167,6 +179,7 @@ private:
 	double m_cleanTime = 0;
 	double m_rejectRatio = 0;  // recent fraction of heading-inconsistent samples
 	double m_lastNorm = 0, m_lastDip = 0;
+	double m_refNorm = 1, m_refDip = 0;  // local field reference (adaptiveRef)
 	// Initial acquisition: circular mean of the first consistent samples
 	double m_acqSin = 0, m_acqCos = 0, m_acqTime = 0;
 	// Re-lock after a gyro glitch: circular mean of the innovation

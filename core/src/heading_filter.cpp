@@ -25,6 +25,8 @@ void HeadingFilter::reset() {
 	m_stillTime = m_cleanTime = m_rejectRatio = 0;
 	m_acqSin = m_acqCos = m_acqTime = 0;
 	m_relock = false;
+	m_refNorm = 1;
+	m_refDip = m_cal.dip;
 }
 
 void HeadingFilter::updateCalibration(MagCalibration cal, const Quat& qWorld,
@@ -59,7 +61,11 @@ void HeadingFilter::update(const Quat& qWorld, const std::array<int16_t, 3>& raw
 	double normTol = lerp(0.35, 0.08, sens);
 	double dipTol = deg2rad(lerp(16.0, 4.0, sens));
 	double headTol = deg2rad(lerp(25.0, 6.0, sens));
-	double dNorm = std::fabs(norm - 1.0), dDip = std::fabs(dip - m_cal.dip);
+	if (!s.adaptiveRef) {
+		m_refNorm = 1;
+		m_refDip = m_cal.dip;
+	}
+	double dNorm = std::fabs(norm / m_refNorm - 1.0), dDip = std::fabs(dip - m_refDip);
 	bool fieldOk = dNorm < normTol && dDip < dipTol;
 
 	if (!m_initialized) {
@@ -134,6 +140,15 @@ void HeadingFilter::update(const Quat& qWorld, const std::array<int16_t, 3>& raw
 	// disturbance, unless the prediction itself has become uncertain enough
 	headTol += s.headingTolPerRadPerSec * angularSpeed;
 	bool headingOk = std::fabs(innovation) < headTol + 3.0 * std::sqrt(m_P[0][0]);
+
+	// The local reference follows the field while the heading agrees with the gyro
+	// (strictly: without the growing prediction uncertainty, which would let a long
+	// disturbance teach itself)
+	if (s.adaptiveRef && std::fabs(innovation) < headTol) {
+		double a = std::min(1.0, dt / s.refTime);
+		m_refNorm = std::clamp(m_refNorm + (norm - m_refNorm) * a, 1.0 - s.refMaxNorm, 1.0 + s.refMaxNorm);
+		m_refDip = std::clamp(m_refDip + (dip - m_refDip) * a, m_cal.dip - s.refMaxDip, m_cal.dip + s.refMaxDip);
+	}
 	double k = std::min(1.0, dt / 0.5);
 	m_rejectRatio += ((headingOk && fieldOk ? 0.0 : 1.0) - m_rejectRatio) * k;
 
