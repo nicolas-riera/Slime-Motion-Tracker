@@ -120,11 +120,14 @@ void roleSelector(DriverLink& link, const TrackerInfo& t, float width);
 // Name of a tracker in lists: its role, or "Tracker 36:36:94" when unassigned
 std::string trackerName(const TrackerInfo& t);
 
-int wifiBars(int rssi);  // 0..3
-int radioBars(int rssi);  // 0..4
+// WiFi signal: 3 excellent, 2 good, 1 fair, 0 weak, -1 unknown (no reading yet)
+int signalLevel(int rssi);
+const char* signalQuality(int rssi);  // "excellent" .. "weak", "" when unknown
+// WiFi icon of a tracker: one lit arc per signal level, the dot alone in orange
+// when weak, slashed when offline
+void wifiIcon(ImDrawList* dl, ImVec2 c, float s, const TrackerInfo& t, ImU32 on);
 ImU32 magStateColor(const std::string& state);
 const char* magStateLabel(const std::string& state);
-const char* transportLabel(const std::string& transport);
 
 // Cells of the tracker rows, drawn at p in a cell of height h
 void drawConnection(ImDrawList* dl, ImVec2 p, float h, const TrackerInfo& t);

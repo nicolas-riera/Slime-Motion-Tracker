@@ -25,14 +25,6 @@ std::string displayMagState(const TrackerInfo& t) {
     return t.mag.state;
 }
 
-const char* signalQuality(int rssi) {
-    if (rssi >= 0) return "";
-    if (rssi >= -55) return "excellent";
-    if (rssi >= -67) return "good";
-    if (rssi >= -77) return "fair";
-    return "weak";
-}
-
 void openMagPage(DriverLink& link, const TrackerInfo& t, bool start) {
     g.magPage = t.mac;
     g.magSawGuided = false;
@@ -128,10 +120,7 @@ void drawInfoCards(DriverLink& link, const TrackerInfo& t, const TrackerDetail* 
     beginCard("##device");
     sectionTitle("DEVICE");
     infoRow("MAC address", col::text, "%s", t.mac.c_str());
-    if (t.transport == "espnow")
-        infoRow("Connection", col::text, "ESP-NOW via USB dongle");
-    else
-        infoRow("Connection", col::text, "WiFi  %s", t.ip.c_str());
+    infoRow("Connection", col::text, "WiFi  %s", t.ip.c_str());
     infoRow("Firmware", na(d && !d->firmware.empty()), "%s", d && !d->firmware.empty() ? d->firmware.c_str() : "--");
     infoRow("Board", na(d), "%s", d ? boardName(d->board) : "--");
     infoRow("IMU", na(d), "%s", d ? imuName(d->imuType) : "--");
@@ -150,7 +139,8 @@ void drawInfoCards(DriverLink& link, const TrackerInfo& t, const TrackerDetail* 
     beginCard("##link");
     sectionTitle("LINK & POWER");
     if (t.connected && t.rssi < 0)
-        infoRow("Signal", col::text, "%d dBm  (%s)", t.rssi, signalQuality(t.rssi));
+        infoRow("Signal", signalLevel(t.rssi) == 0 ? col::orange : col::text, "%d dBm  (%s)", t.rssi,
+                signalQuality(t.rssi));
     else
         infoRow("Signal", col::textFaint, "--");
     if (t.connected && t.latencyMs >= 0)

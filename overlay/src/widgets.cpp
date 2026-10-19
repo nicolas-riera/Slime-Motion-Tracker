@@ -248,16 +248,6 @@ void tracker(ImDrawList* dl, ImVec2 c, float s, ImU32 col) {
     dl->AddCircleFilled(P(c, s, 0.18f, -0.10f), s * 0.06f, col, 10);
 }
 
-void dongle(ImDrawList* dl, ImVec2 c, float s, ImU32 col) {
-    col = sty(col);
-    const float t = stroke(s) * 0.9f;
-    // Body (filled) and connector (outline with two contacts), horizontal
-    dl->AddRectFilled(P(c, s, -0.46f, -0.17f), P(c, s, 0.10f, 0.17f), col, s * 0.07f);
-    dl->AddRect(P(c, s, 0.10f, -0.12f), P(c, s, 0.44f, 0.12f), col, s * 0.02f, 0, t);
-    dl->AddRectFilled(P(c, s, 0.20f, -0.05f), P(c, s, 0.26f, 0.01f), col);
-    dl->AddRectFilled(P(c, s, 0.31f, -0.05f), P(c, s, 0.37f, 0.01f), col);
-}
-
 void wifi(ImDrawList* dl, ImVec2 c, float s, int bars, ImU32 on, ImU32 off) {
     on = sty(on);
     off = sty(off);
@@ -269,20 +259,8 @@ void wifi(ImDrawList* dl, ImVec2 c, float s, int bars, ImU32 on, ImU32 off) {
         dl->PathArcTo(o, radii[i] * s, a0, a1, 16);
         dl->PathStroke(i < bars ? on : off, 0, t);
     }
-    dl->AddCircleFilled(o, s * 0.08f, bars > 0 ? on : off, 12);
+    dl->AddCircleFilled(o, s * 0.08f, bars >= 0 ? on : off, 12);
     if (bars < 0) dl->AddLine(P(c, s, -0.38f, -0.38f), P(c, s, 0.38f, 0.38f), on, t);
-}
-
-void signalBars(ImDrawList* dl, ImVec2 c, float s, int bars, ImU32 on, ImU32 off) {
-    on = sty(on);
-    off = sty(off);
-    const float w = s * 0.16f, gap = s * 0.09f;
-    const float x0 = c.x - (4 * w + 3 * gap) * 0.5f, bottom = c.y + s * 0.38f;
-    for (int i = 0; i < 4; ++i) {
-        const float h = s * (0.24f + 0.17f * static_cast<float>(i)) * 1.1f;
-        const float x = x0 + static_cast<float>(i) * (w + gap);
-        dl->AddRectFilled(ImVec2(x, bottom - h), ImVec2(x + w, bottom), i < bars ? on : off, w * 0.3f);
-    }
 }
 
 void battery(ImDrawList* dl, ImVec2 c, float s, float level, bool charging, ImU32 outline, ImU32 fill) {

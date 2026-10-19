@@ -3,7 +3,7 @@
 // the recorder be tested from the command line. The overlay also starts it when
 // SteamVR is not running (standalone mode: tracker status without a headset),
 // with --parent (exit with the overlay) and --until-steamvr (exit when SteamVR
-// starts, so the driver gets the tracker port and the dongle).
+// starts, so the driver gets the tracker port).
 //
 // Usage: smt_engine_host <path\to\smt_engine.dll> [--seconds N]
 //        [--parent PID] [--until-steamvr]

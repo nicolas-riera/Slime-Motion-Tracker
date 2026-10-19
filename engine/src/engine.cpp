@@ -101,16 +101,13 @@ Engine::Engine(const SmtEngineHost& host, const char* handover)
 	recordEvent(h.is_object() ? "engine_reloaded" : "engine_started", kVersion);
 	applySettings();
 	m_hub.setLog([this](const std::string& msg) { log("%s", msg.c_str()); });
-	m_dongle.setLog([this](const std::string& msg) { log("%s", msg.c_str()); });
 	if (!m_hub.start()) log("%s", m_hub.portError().c_str());
-	m_dongle.start(proto::kTrackerPort);
 	if (!m_overlay.start()) log("cannot bind the overlay port %d", OverlayLink::kPort);
 	// The overlay is not started with SteamVR: the user launches it (desktop shortcut)
 }
 
 Engine::~Engine() {
 	if (m_dirty) m_config.save(Config::defaultPath());
-	m_dongle.stop();
 	m_hub.stop();
 	m_overlay.stop();
 	m_recorder.close();
@@ -588,8 +585,6 @@ void Engine::publishState(const std::vector<TrackerSnapshot>& trackers, const Bo
 			planted = out.planted[tc->role == Role::LeftAnkle ? 0 : 1];
 		ts.push_back({{"mac", t.mac},
 					  {"ip", t.ip},
-					  // Trackers on the USB dongle reach the hub through the local bridge
-					  {"transport", t.ip == "127.0.0.1" ? "espnow" : "wifi"},
 					  {"role", roleName(tc ? tc->role : Role::None)},
 					  {"connected", t.connected},
 					  {"rotationHz", t.rotationHz},
@@ -623,11 +618,6 @@ void Engine::publishState(const std::vector<TrackerSnapshot>& trackers, const Bo
 		{"type", "state"},
 		{"version", 1},
 		{"driver", {{"version", kVersion}, {"trackerPort", 6969}, {"portError", m_hub.portError()}}},
-		{"dongle", [&] {
-			 DongleBridge::Status d = m_dongle.status();
-			 return json{{"connected", d.connected}, {"port", d.port},     {"mac", d.mac},
-						 {"channel", d.channel},     {"version", d.version}, {"trackers", d.trackers}};
-		 }()},
 		{"mode", modeName(m_config.mode)},
 		{"userHeight", m_config.userHeight},
 		{"measuredEyeHeight", m_config.measuredEyeHeight ? json(*m_config.measuredEyeHeight) : json(nullptr)},

@@ -66,11 +66,8 @@ void gear(ImDrawList* dl, ImVec2 c, float s, ImU32 col);
 void calibrate(ImDrawList* dl, ImVec2 c, float s, ImU32 col);  // person in a scan frame
 void reset(ImDrawList* dl, ImVec2 c, float s, ImU32 col);  // circular arrow
 void tracker(ImDrawList* dl, ImVec2 c, float s, ImU32 col);  // small box
-void dongle(ImDrawList* dl, ImVec2 c, float s, ImU32 col);  // USB stick
-// bars: lit arcs 0..3, -1 = disconnected (all faint, slashed)
+// bars: lit arcs 0..3 (the dot is always lit), -1 = disconnected (all faint, slashed)
 void wifi(ImDrawList* dl, ImVec2 c, float s, int bars, ImU32 on, ImU32 off);
-// bars: lit bars 0..4
-void signalBars(ImDrawList* dl, ImVec2 c, float s, int bars, ImU32 on, ImU32 off);
 // level 0..1, < 0 unknown
 void battery(ImDrawList* dl, ImVec2 c, float s, float level, bool charging, ImU32 outline, ImU32 fill);
 void compass(ImDrawList* dl, ImVec2 c, float s, ImU32 ring, ImU32 needle);

@@ -53,7 +53,6 @@ TrackerInfo parseTracker(const json& j) {
     TrackerInfo t;
     t.mac = getString(j, "mac", "");
     t.ip = getString(j, "ip", "");
-    t.transport = getString(j, "transport", "wifi");
     t.role = getString(j, "role", "none");
     t.connected = getBool(j, "connected", false);
     t.rotationHz = getFloat(j, "rotationHz", 0.0f);
@@ -198,14 +197,6 @@ DriverState parseState(const json& j) {
     s.driverVersion = getString(drv, "version", "");
     s.trackerPort = getInt(drv, "trackerPort", 0);
     s.portError = getString(drv, "portError", "");
-
-    const json& dg = getObject(j, "dongle");
-    s.dongle.connected = getBool(dg, "connected", false);
-    s.dongle.port = getString(dg, "port", "");
-    s.dongle.mac = getString(dg, "mac", "");
-    s.dongle.channel = getInt(dg, "channel", 0);
-    s.dongle.version = getInt(dg, "version", 0);
-    s.dongle.trackers = getInt(dg, "trackers", 0);
 
     s.mode = getString(j, "mode", "three");
     s.userHeight = getFloat(j, "userHeight", 1.75f);

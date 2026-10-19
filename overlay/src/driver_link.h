@@ -29,7 +29,6 @@ struct MagInfo {
 struct TrackerInfo {
     std::string mac;
     std::string ip;
-    std::string transport = "wifi";  // wifi|espnow (through the USB dongle)
     std::string role = "none";  // waist|left_ankle|right_ankle|none
     bool connected = false;
     float rotationHz = 0.0f;
@@ -68,14 +67,6 @@ struct RecordingInfo {
     bool active = false;
     std::string file;
     float megabytes = 0.0f;
-};
-
-struct DongleInfo {
-    bool connected = false;
-    std::string port, mac;
-    int channel = 0;
-    int version = 0;
-    int trackers = 0;
 };
 
 struct OutputsInfo {
@@ -150,7 +141,6 @@ struct DriverState {
     std::string driverVersion;
     int trackerPort = 0;
     std::string portError;
-    DongleInfo dongle;
     std::string mode = "three";  // three|ankles
     float userHeight = 1.75f;
     std::optional<float> measuredEyeHeight;

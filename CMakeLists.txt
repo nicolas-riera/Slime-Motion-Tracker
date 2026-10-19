@@ -45,7 +45,6 @@ add_library(smt_core STATIC
   core/src/mounting_calibration.cpp
   core/src/protocol.cpp
   core/src/tracker_hub.cpp
-  core/src/dongle_bridge.cpp
   core/src/config.cpp
   core/src/linalg.cpp)
 target_include_directories(smt_core PUBLIC core/include)

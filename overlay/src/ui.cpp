@@ -326,47 +326,7 @@ void drawCalibration(DriverLink& link, const DriverState& s) {
     }
 }
 
-// ---------------------------------------------------------------- home: dongle + trackers
-
-void drawDongle(const DongleInfo& d) {
-    const float width = ImGui::GetContentRegionAvail().x;
-    const float h = 66.0f;
-    const ImVec2 p = ImGui::GetCursorScreenPos();
-    ImGui::Dummy(ImVec2(width, h));
-    const bool hovered = ImGui::IsItemHovered();
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    const ImVec2 q(p.x + width, p.y + h);
-    // Distinct background: deep accent gradient (clipped to the rounded shape)
-    dl->AddRectFilled(p, q, sty(IM_COL32(34, 30, 76, 255)), 12.0f);
-    dl->PushClipRect(ImVec2(p.x + width * 0.45f, p.y), q, true);
-    dl->AddRectFilled(p, q, sty(IM_COL32(28, 26, 56, 255)), 12.0f);
-    dl->PopClipRect();
-    dl->AddRectFilledMultiColor(ImVec2(p.x + width * 0.25f, p.y + 1), ImVec2(p.x + width * 0.45f, q.y - 1),
-                                sty(IM_COL32(34, 30, 76, 255)), sty(IM_COL32(28, 26, 56, 255)),
-                                sty(IM_COL32(28, 26, 56, 255)), sty(IM_COL32(34, 30, 76, 255)));
-    dl->AddRect(p, q, sty(alpha(col::accentSoft, 0.45f)), 12.0f, 0, 1.2f);
-    const ImVec2 ic(p.x + 14 + 20, p.y + h * 0.5f);
-    dl->AddCircleFilled(ic, 20.0f, sty(alpha(col::accentSoft, 0.20f)), 24);
-    icon::dongle(dl, ic, 24.0f, col::white);
-    const float tx = p.x + 14 + 40 + 14;
-    textAt(dl, fonts.bold, ImVec2(tx, p.y + 11), col::white, "USB dongle");
-    char line[192];
-    std::snprintf(line, sizeof(line), "%s  \xC2\xB7  Channel %d  \xC2\xB7  %d tracker%s", d.port.c_str(), d.channel,
-                  d.trackers, d.trackers == 1 ? "" : "s");
-    textAt(dl, fonts.small, ImVec2(tx, p.y + 35), alpha(col::white, 0.75f), line);
-    char right[96];
-    std::snprintf(right, sizeof(right), "Firmware v%d", d.version);
-    const ImVec2 rs = textSize(fonts.small, right);
-    const ImVec2 ms = textSize(fonts.small, d.mac.c_str());
-    const float rx = q.x - 16 - std::max(rs.x, ms.x);
-    const ImVec2 bs = textSize(fonts.bold, "USB dongle");
-    if (rx > tx + bs.x + 20 && rx > tx + textSize(fonts.small, line).x + 20) {
-        textAt(dl, fonts.small, ImVec2(q.x - 16 - ms.x, p.y + 13), alpha(col::white, 0.6f), d.mac.c_str());
-        textAt(dl, fonts.small, ImVec2(q.x - 16 - rs.x, p.y + 35), alpha(col::white, 0.6f), right);
-    } else if (hovered) {
-        ImGui::SetTooltip("%s\nFirmware v%d", d.mac.c_str(), d.version);
-    }
-}
+// ---------------------------------------------------------------- home: trackers
 
 void drawTrackerTable(const DriverState& s) {
     const float width = ImGui::GetContentRegionAvail().x;
@@ -382,8 +342,7 @@ void drawTrackerTable(const DriverState& s) {
     }
     if (s.trackers.empty()) {
         banner(icon::info, col::textDim, col::card, g.connected ? "No tracker found yet" : "Waiting for the engine",
-               g.connected ? "Turn the trackers on. WiFi trackers must be on the same network as this PC; "
-                             "ESP-NOW trackers pair with the USB dongle."
+               g.connected ? "Turn the trackers on. They must be on the same WiFi network as this PC."
                            : "The tracking engine is starting.");
         return;
     }
@@ -415,7 +374,7 @@ void drawTrackerTable(const DriverState& s) {
         ImGui::PopID();
         if (hovered) {
             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-            ImGui::SetTooltip("%s\n%s%s", t.mac.c_str(), t.ip.c_str(), t.transport == "espnow" ? " (USB dongle)" : "");
+            ImGui::SetTooltip("%s\n%s", t.mac.c_str(), t.ip.c_str());
         }
         if (clicked) g.trackerPage = t.mac;
 
@@ -447,7 +406,6 @@ void drawTrackerTable(const DriverState& s) {
 void drawHomeMain(DriverLink& link, const DriverState& s) {
     drawCalibration(link, s);
     if (!s.portError.empty()) banner(icon::warning, col::red, alpha(col::red, 0.10f), "Tracker port", s.portError.c_str());
-    if (s.dongle.connected) drawDongle(s.dongle);
     ImGui::Dummy(ImVec2(0, 2));
     drawTrackerTable(s);
 }
@@ -558,10 +516,7 @@ void drawBody(DriverLink& link, const DriverState& s) {
         drawGlow(dl, p, q, g.glow[t.mac], 10.0f);
         const float cy = p.y + h * 0.5f;
         dl->AddCircleFilled(ImVec2(p.x + 16, cy), 4.5f, sty(t.connected ? col::green : col::textFaint), 12);
-        if (t.transport == "espnow")
-            icon::dongle(dl, ImVec2(p.x + 40, cy), 20.0f, col::textDim);
-        else
-            icon::wifi(dl, ImVec2(p.x + 40, cy), 18.0f, t.connected ? 3 : -1, col::textDim, alpha(col::textFaint, 0.5f));
+        wifiIcon(dl, ImVec2(p.x + 40, cy), 18.0f, t, col::textDim);
         textAt(dl, fonts.body, ImVec2(p.x + 62, cy - fonts.body->FontSize * 0.5f - 1),
                t.connected ? col::text : col::textDim, t.mac.c_str());
         const float comboW = std::min(180.0f, width * 0.42f);
@@ -764,19 +719,28 @@ std::string trackerName(const TrackerInfo& t) {
     return roleLabel(role);
 }
 
-int wifiBars(int rssi) {
-    if (rssi >= 0) return 0;
-    if (rssi >= -62) return 3;
-    if (rssi >= -74) return 2;
-    return 1;
+int signalLevel(int rssi) {
+    if (rssi >= 0) return -1;
+    if (rssi >= -55) return 3;
+    if (rssi >= -67) return 2;
+    if (rssi >= -77) return 1;
+    return 0;
 }
 
-int radioBars(int rssi) {
-    if (rssi >= 0) return 0;
-    if (rssi >= -58) return 4;
-    if (rssi >= -68) return 3;
-    if (rssi >= -78) return 2;
-    return 1;
+const char* signalQuality(int rssi) {
+    static const char* names[] = {"weak", "fair", "good", "excellent"};
+    const int level = signalLevel(rssi);
+    return level < 0 ? "" : names[level];
+}
+
+void wifiIcon(ImDrawList* dl, ImVec2 c, float s, const TrackerInfo& t, ImU32 on) {
+    const ImU32 off = alpha(col::textFaint, 0.40f);
+    if (!t.connected) {
+        icon::wifi(dl, c, s, -1, col::textFaint, off);
+        return;
+    }
+    const int level = signalLevel(t.rssi);
+    icon::wifi(dl, c, s, std::max(level, 0), level < 0 ? col::textFaint : (level == 0 ? col::orange : on), off);
 }
 
 ImU32 magStateColor(const std::string& state) {
@@ -798,30 +762,15 @@ const char* magStateLabel(const std::string& state) {
     return "None";
 }
 
-const char* transportLabel(const std::string& transport) {
-    return transport == "espnow" ? "ESP-NOW (USB dongle)" : "WiFi";
-}
-
 void drawConnection(ImDrawList* dl, ImVec2 p, float h, const TrackerInfo& t) {
     const float cy = p.y + h * 0.5f;
-    const ImU32 off = alpha(col::textFaint, 0.45f);
-    float x = p.x;
+    const float x = p.x + 26;
     if (!t.connected) {
-        if (t.transport == "espnow")
-            icon::dongle(dl, ImVec2(x + 10, cy), 20.0f, col::textFaint);
-        else
-            icon::wifi(dl, ImVec2(x + 10, cy), 18.0f, -1, col::textFaint, off);
-        textAt(dl, fonts.small, ImVec2(x + 28, cy - fonts.small->FontSize * 0.5f - 1), alpha(col::red, 0.85f), "Offline");
+        wifiIcon(dl, ImVec2(p.x + 10, cy), 18.0f, t, col::text);
+        textAt(dl, fonts.small, ImVec2(p.x + 28, cy - fonts.small->FontSize * 0.5f - 1), alpha(col::red, 0.85f), "Offline");
         return;
     }
-    if (t.transport == "espnow") {
-        icon::dongle(dl, ImVec2(x + 10, cy), 20.0f, col::textDim);
-        icon::signalBars(dl, ImVec2(x + 31, cy), 14.0f, radioBars(t.rssi), col::text, off);
-        x += 42;
-    } else {
-        icon::wifi(dl, ImVec2(x + 10, cy + 1), 19.0f, wifiBars(t.rssi), col::text, off);
-        x += 26;
-    }
+    wifiIcon(dl, ImVec2(p.x + 10, cy + 1), 19.0f, t, col::text);
     char ms[24];
     if (t.latencyMs >= 0)
         std::snprintf(ms, sizeof(ms), "%.0f ms", t.latencyMs);
@@ -944,7 +893,7 @@ void update(DriverLink& link, bool rendering) {
         const double wall = wallNow();
         for (const TrackerInfo& t : s.trackers)
             if (t.connected && t.battery >= 0.0f)
-                g.battery.add(t.mac, t.transport, t.battery, t.batteryVoltage, wall);
+                g.battery.add(t.mac, t.battery, t.batteryVoltage, wall);
     }
     if (Clock::now() - g.lastBatterySave > std::chrono::seconds(60)) {
         g.lastBatterySave = Clock::now();

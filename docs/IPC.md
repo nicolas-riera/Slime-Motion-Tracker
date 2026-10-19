@@ -76,7 +76,8 @@ Field notes:
 - `lastCalibration`: wall clock (Unix seconds) of the last successful full calibration
   and quick reset, `null` when never done. Persisted in the config.
 - `trackers[].role`: `waist` | `left_ankle` | `right_ankle` | `none`.
-- `battery`: 0..1, or `-1` when unknown. `rssi` in dBm, `0` when unknown.
+- `battery`: 0..1, or `-1` when unknown. `rssi` in dBm (WiFi, averaged over the last
+  readings), `0` when unknown.
 - `activity`: 0..1, smoothed angular speed. Lets the user find a tracker by shaking it.
 - `mag.state`: `absent` (no mag on this tracker), `disabled` (mag turned off in settings),
   `uncalibrated`, `calibrating` (guided calibration running, see `progress`), `ok`,
@@ -84,8 +85,6 @@ Field notes:
 - `mag.residual`: fit residual of the current calibration (lower is better, < 0.08 is good).
 - `outputs`: which virtual SteamVR trackers are currently published.
 - `recording`: session recording status (see `engine/src/recorder.h` for the file format).
-- `trackers[].transport`: `wifi` or `espnow` (through the USB dongle); `dongle`: the USB
-  dongle status (`connected`, `port`, `mac`, `channel`, `version`, `trackers`).
 
 ### View streams
 

@@ -33,7 +33,6 @@ void BatteryEstimator::load(const std::string& path) {
     for (const auto& [mac, hj] : j.items()) {
         if (!hj.is_object()) continue;
         History h;
-        h.transport = hj.value("transport", "");
         h.lastReading = hj.value("last", 0.0);
         // Charging is re-detected from fresh readings (an older version flagged single jumps)
         h.charging = false;
@@ -53,8 +52,7 @@ void BatteryEstimator::save() {
     for (const auto& [mac, h] : m_history) {
         nlohmann::json minutes = nlohmann::json::array();
         for (const Minute& m : h.minutes) minutes.push_back({m.t, m.level});
-        j[mac] = {{"transport", h.transport},
-                  {"last", h.lastReading},
+        j[mac] = {{"last", h.lastReading},
                   {"charging", h.charging},
                   {"settle", h.settle},
                   {"minutes", minutes}};
@@ -69,8 +67,7 @@ void BatteryEstimator::save() {
     std::rename(tmp.c_str(), m_path.c_str());
 }
 
-void BatteryEstimator::add(const std::string& mac, const std::string& transport, double level, double voltage,
-                           double now) {
+void BatteryEstimator::add(const std::string& mac, double level, double voltage, double now) {
     History& h = m_history[mac];
     if (now - h.lastReading < 1.0) return;  // one reading a second is plenty
     if (!plausible(level, voltage)) {
@@ -78,16 +75,14 @@ void BatteryEstimator::add(const std::string& mac, const std::string& transport,
         // a new history (the jump from 0 % is not a charge)
         if (!h.minutes.empty() || !h.pending.empty() || h.charging) {
             h = History{};
-            h.transport = transport;
             m_dirty = true;
         }
         h.lastReading = now;
         h.minuteStart = 0;
         return;
     }
-    if (now - h.lastReading > kMaxGap || transport != h.transport) {
+    if (now - h.lastReading > kMaxGap) {
         h = History{};
-        h.transport = transport;
         m_dirty = true;
     }
     h.lastReading = now;

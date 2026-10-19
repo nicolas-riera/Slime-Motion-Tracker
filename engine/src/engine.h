@@ -13,7 +13,6 @@
 #include "recorder.h"
 #include "smt/body_solver.h"
 #include "smt/config.h"
-#include "smt/dongle_bridge.h"
 #include "smt/engine_api.h"
 #include "smt/foot_model.h"
 #include "smt/tracker_hub.h"
@@ -66,7 +65,6 @@ private:
 	std::string m_moduleDirectory;
 	Config m_config;
 	TrackerHub m_hub;
-	DongleBridge m_dongle;  // after m_hub: stops first
 	OverlayLink m_overlay;
 	Recorder m_recorder;
 	std::string m_handoverRecording;  // file to keep appending to after a hot reload

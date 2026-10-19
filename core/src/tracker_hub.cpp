@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 
 namespace smt {
 
@@ -45,6 +46,10 @@ struct TrackerHub::Tracker {
 
 	// Connection log: events by kind since the last report
 	std::array<int, 16> eventCount{};
+
+	// WiFi signal: moving average of the RSSI readings since the connection
+	bool hasRssi = false;
+	double rssiAverage = 0;
 
 	Quat prevRotation;
 	double prevRotationTime = 0;
@@ -329,7 +334,10 @@ void TrackerHub::processEvent(const std::string& mac, const proto::Event& e, dou
 				s.temperature = e.temperature;
 				break;
 			case proto::Event::Kind::Signal:
-				s.rssi = e.rssi;
+				// One raw reading every 2 s, noisy (+-5 dB): exponential average over ~5 readings
+				tr.rssiAverage = tr.hasRssi ? tr.rssiAverage + (e.rssi - tr.rssiAverage) / 3.0 : double(e.rssi);
+				tr.hasRssi = true;
+				s.rssi = int(std::lround(tr.rssiAverage));
 				break;
 			case proto::Event::Kind::Pong:
 				if (e.pingId == tr.pingId && tr.pingSent > 0) {
@@ -429,6 +437,7 @@ void TrackerHub::networkLoop() {
 						tr.snap.bootCount++;
 						tr.snap.hasRotation = false;
 						tr.prevRotationTime = 0;
+						tr.hasRssi = false;
 						// The device fusion restarts with an arbitrary yaw
 						tr.heading.reset();
 					}
@@ -501,6 +510,7 @@ void TrackerHub::networkLoop() {
 					tr->snap.latencyMs = -1;
 					tr->roundTrips.clear();
 					tr->pingSent = 0;
+					tr->hasRssi = false;
 					continue;
 				}
 				sendTo(tr->addr, proto::heartbeat(++m_packetNumber));

@@ -5,7 +5,6 @@
 
 #include "battery_estimator.h"
 #include "smt/body_solver.h"
-#include "smt/dongle_bridge.h"
 #include "smt/pose_model.h"
 #include "smt/mag.h"
 #include "smt/mounting_calibration.h"
@@ -92,37 +91,6 @@ static SyntheticMag makeMag() {
 	double dip = deg2rad(60);
 	s.earth = {std::cos(dip) * std::sin(0.3), -std::sin(dip), std::cos(dip) * std::cos(0.3)};
 	return s;
-}
-
-static void testDongleFrames() {
-	using namespace smt::dongle;
-	Frame a;
-	a.type = kData;
-	const uint8_t mac[6] = {0x2C, 0xF4, 0x32, 0x7B, 0xFF, 0xD1};
-	std::memcpy(a.mac, mac, 6);
-	a.payload = {0, 0, 0, 3, 'H', 'e', 'y', 0xA5, 0x5A};
-	Frame b;
-	b.type = kInfo;
-	b.payload = {'S', 'L', 'D', 'O', 'N', 'G', 'L', 'E', 1, 6};
-	std::vector<uint8_t> stream = {0x13, 0xA5, 0x00};  // boot noise
-	auto ea = encode(a), eb = encode(b);
-	stream.insert(stream.end(), ea.begin(), ea.end());
-	std::vector<uint8_t> bad = eb;
-	bad.back() ^= 0xFF;  // corrupted checksum: dropped
-	stream.insert(stream.end(), bad.begin(), bad.end());
-	stream.insert(stream.end(), eb.begin(), eb.end());
-	Decoder d;
-	std::vector<Frame> got;
-	for (size_t i = 0; i < stream.size(); i += 5) {  // arbitrary chunking
-		auto f = d.feed(stream.data() + i, std::min<size_t>(5, stream.size() - i));
-		got.insert(got.end(), f.begin(), f.end());
-	}
-	CHECK(got.size() == 2, "dongle frames decoded: %zu", got.size());
-	if (got.size() == 2) {
-		CHECK(got[0].payload == a.payload && std::memcmp(got[0].mac, mac, 6) == 0, "dongle data frame content");
-		CHECK(got[1].type == kInfo && got[1].payload == b.payload, "dongle info frame content");
-	}
-	CHECK(macString(mac) == "2C:F4:32:7B:FF:D1", "mac string");
 }
 
 static void testPoseFusion() {
@@ -435,13 +403,13 @@ static void testBatteryEstimator() {
 	double t = 1000;
 	BatteryEstimator e;
 	// USB powered: reads 0 % (ignored), then on battery at 41 %, slowly discharging
-	for (int i = 0; i < 300; i++, t += 1) e.add(mac, "espnow", 0.0, 0.0, t);
-	for (int i = 0; i < 20 * 60; i++, t += 1) e.add(mac, "espnow", 0.41 - (t - 1300) * 1e-6, 3.66, t);
+	for (int i = 0; i < 300; i++, t += 1) e.add(mac, 0.0, 0.0, t);
+	for (int i = 0; i < 20 * 60; i++, t += 1) e.add(mac, 0.41 - (t - 1300) * 1e-6, 3.66, t);
 	CHECK(e.estimate(mac).state != BatteryEstimator::State::Charging, "battery: 0 -> 41 %% jump taken as charging");
 	CHECK(e.estimate(mac).state == BatteryEstimator::State::Ok, "battery: no estimate after 20 min of discharge");
 	// A sustained rise (1 %/min for 5 min) is charging
 	const double base = 0.40;
-	for (int i = 0; i < 5 * 60; i++, t += 1) e.add(mac, "espnow", base + i / 6000.0, 3.9, t);
+	for (int i = 0; i < 5 * 60; i++, t += 1) e.add(mac, base + i / 6000.0, 3.9, t);
 	CHECK(e.estimate(mac).state == BatteryEstimator::State::Charging, "battery: sustained rise not seen as charging");
 	CHECK(!BatteryEstimator::plausible(0.0, 4.1) && !BatteryEstimator::plausible(0.5, 2.5) &&
 			  BatteryEstimator::plausible(0.5, 0.0),
@@ -453,7 +421,6 @@ int main() {
 	testProtocol();
 	testMagCalibration();
 	testHeadingFilter();
-	testDongleFrames();
 	testPoseFusion();
 	testMounting();
 	testBodySolver();

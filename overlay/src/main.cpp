@@ -194,9 +194,9 @@ bool isProcessRunning(const wchar_t* exeName) {
 // ------------------------------------------------------------------ standalone engine
 
 // Without SteamVR the overlay runs the engine itself (smt_engine_host with a
-// fake headset, next to the overlay), so the trackers and the dongle can be checked
-// without a headset. The host exits with the overlay and as soon as SteamVR starts,
-// leaving the tracker port and the dongle to the driver.
+// fake headset, next to the overlay), so the trackers can be checked without a
+// headset. The host exits with the overlay and as soon as SteamVR starts, leaving
+// the tracker port to the driver.
 class StandaloneEngine {
 public:
     ~StandaloneEngine() {
