@@ -88,7 +88,11 @@ public:
 	}
 
 private:
-	static constexpr float samplingRateCalibrationSeconds = 5;
+	// Slime Motion Tracker: 60 s instead of 5. The samples are counted as the FIFO is
+	// read, in batches of up to 8 (more while WiFi holds the loop up): a 5 s window
+	// (~1000 gyro samples at 204.8 Hz) was off by up to ~1%, a gyro scale error that
+	// turned every full body turn into ~4 deg of heading drift, different at each boot
+	static constexpr float samplingRateCalibrationSeconds = 60;
 
 	struct CalibrationData {
 		uint64_t startMillis = 0;
