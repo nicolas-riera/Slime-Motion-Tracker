@@ -154,6 +154,19 @@ void TrackerHub::cancelGuidedMagCalibration(const std::string& mac) {
 	if (it != m_trackers.end()) it->second->guided = false;
 }
 
+std::optional<TrackerHub::MagView> TrackerHub::magView(const std::string& mac) const {
+	std::lock_guard lock(m_mutex);
+	auto it = m_trackers.find(mac);
+	if (it == m_trackers.end()) return std::nullopt;
+	const Tracker& tr = *it->second;
+	MagView v;
+	v.samples = tr.calibrator.rawSamples();
+	v.bins = tr.calibrator.binCounts();
+	v.guided = tr.guided;
+	v.progress = tr.guided ? tr.snap.magProgress : tr.calibrator.coverage();
+	return v;
+}
+
 void TrackerHub::resetMagCalibration(const std::string& mac) {
 	MagCalibrationCallback cb;
 	{
@@ -238,6 +251,13 @@ void TrackerHub::processEvent(const std::string& mac, const proto::Event& e, dou
 						// Faster than any limb: a sensor glitch, not a motion
 						if (w > kGlitchAngularSpeed && ang > deg2rad(20)) tr.heading.gyroGlitch();
 						s.angularSpeed += (w - s.angularSpeed) * std::min(1.0, dt / 0.05);
+						// Angular velocity vector in the tracker frame (q = prev * rel)
+						Quat rel = tr.prevRotation.conj() * q;
+						if (rel.w < 0) rel = Quat{-rel.w, -rel.x, -rel.y, -rel.z};
+						Vec3 axis{rel.x, rel.y, rel.z};
+						double sn = axis.norm();
+						Vec3 omega = sn > 1e-9 ? axis * (2.0 * std::atan2(sn, rel.w) / (sn * dt)) : Vec3{};
+						s.gyroLocal = s.gyroLocal + (omega - s.gyroLocal) * std::min(1.0, dt / 0.05);
 						double act = std::min(1.0, w / 6.0);
 						s.activity += (act - s.activity) * std::min(1.0, dt / 0.3);
 					}
@@ -256,6 +276,8 @@ void TrackerHub::processEvent(const std::string& mac, const proto::Event& e, dou
 			case proto::Event::Kind::Mag: {
 				if (e.sensorId != 0 || !s.hasRotation) break;
 				tr.hasMagData = true;
+				s.hasMag = true;
+				s.magRaw = e.mag;
 				tr.magCount++;
 				double dt = tr.lastMagTime > 0 ? std::clamp(t - tr.lastMagTime, 0.0, 0.2) : 0.02;
 				tr.lastMagTime = t;
@@ -396,6 +418,11 @@ void TrackerHub::networkLoop() {
 					tr.snap.ip = ip;
 					tr.snap.connected = true;
 					tr.lastPacketTime = t;
+					tr.snap.firmware = e.firmware;
+					tr.snap.board = e.board;
+					tr.snap.imuType = e.imuType;
+					tr.snap.mcu = e.mcu;
+					tr.snap.protocolVersion = e.protocolVersion;
 					if (isNew)
 						log("hub: handshake " + mac + " from " + addrString(from) + " (firmware " + e.firmware + ")");
 					if (isNew) {

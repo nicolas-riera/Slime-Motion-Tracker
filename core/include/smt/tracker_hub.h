@@ -12,6 +12,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <optional>
 #include <vector>
 
 #include "smt/linalg.h"
@@ -50,6 +51,14 @@ struct TrackerSnapshot {
 	int rssi = 0;
 	double latencyMs = -1;  // ping round trip (median of the last ones), -1 = unknown
 
+	// Handshake
+	std::string firmware;
+	int board = 0, imuType = 0, mcu = 0, protocolVersion = 0;
+	// Angular velocity (tracker frame, rad/s, smoothed) and the last raw mag sample
+	Vec3 gyroLocal;
+	bool hasMag = false;
+	std::array<int16_t, 3> magRaw{};
+
 	Quat corrected() const { return hasHeading ? Quat::yaw(-heading) * qWorld : qWorld; }
 };
 
@@ -80,6 +89,14 @@ public:
 	void startGuidedMagCalibration(const std::string& mac);
 	void cancelGuidedMagCalibration(const std::string& mac);
 	void resetMagCalibration(const std::string& mac);
+	// Mag calibration samples of a tracker, for the overlay's calibration page
+	struct MagView {
+		std::vector<Vec3> samples;  // raw, sensor frame
+		std::array<int, MagCalibrator::kBins> bins{};
+		bool guided = false;
+		double progress = 0;
+	};
+	std::optional<MagView> magView(const std::string& mac) const;
 
 	// Hot reload of the engine: tracker addresses and headings, so the trackers
 	// keep streaming to the new engine without reconnecting. Import before start().

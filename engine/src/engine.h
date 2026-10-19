@@ -45,6 +45,14 @@ private:
 						   const std::vector<TrackerSnapshot>& trackers);
 	void finishCalibration(const Pose& hmd);
 	void publishState(const std::vector<TrackerSnapshot>& trackers, const BodyOutput& out);
+	// Overlay views (skeleton, tracker page, mag calibration page), see the "view" command
+	void publishViews(double now, const std::vector<TrackerSnapshot>& trackers, const BodyOutput& out,
+					  const Pose& hmd, bool hmdValid);
+	void publishDetail(const TrackerSnapshot& t, bool withMagView);
+	// All mapped trackers usable (connected, calibrated) and both ankles mapped
+	bool ready(const std::vector<TrackerSnapshot>& trackers) const;
+	// Automatic solver mode: three trackers when the waist tracker is usable
+	void updateMode(double now, bool waistUsable);
 	void applySettings();
 	void markDirty() { m_dirty = true; }
 	bool trackerOrientation(const TrackerSnapshot& t, const TrackerConfig& tc, Quat& out) const;
@@ -95,6 +103,15 @@ private:
 
 	std::mutex m_pendingMutex;
 	std::vector<std::pair<std::string, MagCalibration>> m_pendingMag;
+
+	// Automatic mode hysteresis: since when the waist tracker is usable / missing
+	double m_waistSeenSince = -1, m_waistLostSince = -1;
+
+	// What the overlay currently shows (re-sent every ~0.5 s, expires after 2 s)
+	double m_viewUntil = -1;
+	std::string m_viewTracker;
+	bool m_viewMag = false;
+	double m_lastPose = 0, m_lastDetail = 0;
 
 	bool m_dirty = false;
 	double m_lastSave = 0;

@@ -2,7 +2,9 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
@@ -17,9 +19,9 @@ using nlohmann::json;
 namespace {
 
 constexpr const char* kVersion = "0.2.0";
-constexpr double kStandSeconds = 5.0;
+constexpr double kStandSeconds = 3.0;
 constexpr double kQuickResetSeconds = 3.0;
-constexpr double kSkiSeconds = 5.0;
+constexpr double kSkiSeconds = 3.0;
 
 Pose poseFromMatrix(const double m[3][4]) {
 	Pose p;
@@ -266,6 +268,8 @@ void Engine::frame(const SmtFrameInput& fin, SmtFrameOutput& fout) {
 		}
 	}
 
+	updateMode(now, in.hasWaist);
+
 	// The foot model sees every frame (its history), valid or not
 	if (m_footModel.loaded()) {
 		FootEstimate fe = m_footModel.update(in, now);
@@ -316,6 +320,7 @@ void Engine::frame(const SmtFrameInput& fin, SmtFrameOutput& fout) {
 		m_lastState = now;
 		publishState(trackers, out);
 	}
+	publishViews(now, trackers, out, hmd, hmdValid);
 	if (m_dirty && now - m_lastSave > 1.0) {
 		m_lastSave = now;
 		m_dirty = false;
@@ -370,10 +375,18 @@ void Engine::handleCommand(const json& cmd) {
 		if (cmd.value("valid", false) && cmd.contains("y")) onFloor(cmd["y"].get<double>(), TrackerHub::now());
 		return;
 	}
-	if (type == "setMode") {
-		m_config.mode = modeFromName(cmd.value("mode", "three"));
-		m_solver.reset();
-	} else if (type == "setHeight") {
+	if (type == "view") {
+		// The overlay shows a 3D view: stream the poses it needs while it lasts
+		if (cmd.value("visible", false)) {
+			m_viewUntil = TrackerHub::now() + 2.0;
+			m_viewTracker = cmd.value("tracker", "");
+			m_viewMag = cmd.value("magView", false);
+		} else {
+			m_viewUntil = -1;
+		}
+		return;
+	}
+	if (type == "setHeight") {
 		double h = cmd.value("meters", m_config.userHeight);
 		if (h > 1.0 && h < 2.5) m_config.userHeight = h;
 		m_solver.reset();
@@ -399,6 +412,10 @@ void Engine::handleCommand(const json& cmd) {
 		else if (key == "velocityPrediction") s.velocityPrediction = v.get<bool>();
 		else if (key == "recording") s.recording = v.get<bool>();
 		recordEvent("setting", key + "=" + v.dump());
+		updateRecordingState();
+	} else if (type == "resetSettings") {
+		m_config.settings = Settings{};
+		recordEvent("setting", "reset");
 		updateRecordingState();
 	} else if (type == "calibrate" || type == "quickReset") {
 		m_calQuick = type == "quickReset";
@@ -608,6 +625,7 @@ void Engine::publishState(const std::vector<TrackerSnapshot>& trackers, const Bo
 		{"measuredEyeHeight", m_config.measuredEyeHeight ? json(*m_config.measuredEyeHeight) : json(nullptr)},
 		{"floorKnown", m_floorKnown},
 		{"calibrated", calibrated},
+		{"ready", ready(trackers)},
 		{"calibration", {{"phase", phases[int(m_calPhase)]}, {"countdown", countdown}, {"message", m_calMessage}}},
 		{"lastCalibration",
 		 {{"full", m_config.lastFullCalibration > 0 ? json(m_config.lastFullCalibration) : json(nullptr)},
@@ -628,6 +646,147 @@ void Engine::publishState(const std::vector<TrackerSnapshot>& trackers, const Bo
 		{"outputs", {{"waist", out.valid}, {"leftFoot", out.valid}, {"rightFoot", out.valid}}},
 	};
 	m_overlay.send(state);
+}
+
+bool Engine::ready(const std::vector<TrackerSnapshot>& trackers) const {
+	bool left = false, right = false;
+	for (const auto& [mac, tc] : m_config.trackers) {
+		if (tc.role == Role::None) continue;
+		auto t = std::find_if(trackers.begin(), trackers.end(), [&](const TrackerSnapshot& s) { return s.mac == mac; });
+		Quat q;
+		if (t == trackers.end() || !trackerOrientation(*t, tc, q)) return false;
+		left = left || tc.role == Role::LeftAnkle;
+		right = right || tc.role == Role::RightAnkle;
+	}
+	return left && right;
+}
+
+void Engine::updateMode(double now, bool waistUsable) {
+	// A tracker blinking out for a moment must not reset the solver twice
+	constexpr double kToThree = 0.5, kToAnkles = 2.0;  // s
+	if (waistUsable) {
+		m_waistLostSince = -1;
+		if (m_waistSeenSince < 0) m_waistSeenSince = now;
+	} else {
+		m_waistSeenSince = -1;
+		if (m_waistLostSince < 0) m_waistLostSince = now;
+	}
+	Mode want = m_config.mode;
+	if (m_config.mode == Mode::Ankles && waistUsable && now - m_waistSeenSince >= kToThree) want = Mode::Three;
+	if (m_config.mode == Mode::Three && !waistUsable && now - m_waistLostSince >= kToAnkles) want = Mode::Ankles;
+	if (want == m_config.mode) return;
+	m_config.mode = want;
+	log("mode: %s (waist tracker %s)", modeName(want), waistUsable ? "usable" : "missing");
+	recordEvent("mode", modeName(want));
+	applySettings();
+	m_solver.reset();
+	markDirty();
+}
+
+namespace {
+
+// Compact JSON numbers for the view messages (0.1 mm / 1e-4)
+double r4(double v) { return std::round(v * 1e4) / 1e4 + 0.0; }
+json v3(const Vec3& v) { return json::array({r4(v.x), r4(v.y), r4(v.z)}); }
+json q4(const Quat& q) { return json::array({r4(q.w), r4(q.x), r4(q.y), r4(q.z)}); }
+
+}  // namespace
+
+void Engine::publishViews(double now, const std::vector<TrackerSnapshot>& trackers, const BodyOutput& out,
+						  const Pose& hmd, bool hmdValid) {
+	if (m_viewUntil < 0 || TrackerHub::now() > m_viewUntil || !m_overlay.hasPeer()) return;
+
+	if (now - m_lastPose >= 1.0 / 30 || now < m_lastPose) {
+		m_lastPose = now;
+		json hands = json::array();
+		for (int i = 0; i < 2; i++)
+			hands.push_back({{"valid", m_handValid[i]}, {"p", v3(m_hands[i].position)}, {"q", q4(m_hands[i].rotation)}});
+		json pose = {
+			{"type", "pose"},
+			{"valid", out.valid},
+			{"ready", ready(trackers)},
+			{"floor", r4(m_floorY)},
+			{"floorKnown", m_floorKnown},
+			{"mode", modeName(m_config.mode)},
+			{"head", {{"valid", hmdValid}, {"p", v3(hmd.position)}, {"q", q4(hmd.rotation)}}},
+			{"joints",
+			 {{"neck", v3(out.debug.neck)},
+			  {"pelvis", v3(out.waist.position)},
+			  {"hip0", v3(out.debug.hip0)},
+			  {"hipL", v3(out.debug.hipJoints[0])},
+			  {"hipR", v3(out.debug.hipJoints[1])},
+			  {"kneeL", v3(out.knees[0])},
+			  {"kneeR", v3(out.knees[1])},
+			  {"ankleL", v3(out.feet[0].position)},
+			  {"ankleR", v3(out.feet[1].position)}}},
+			{"pelvisQ", q4(out.waist.rotation)},
+			{"feetQ", json::array({q4(out.feet[0].rotation), q4(out.feet[1].rotation)})},
+			{"planted", json::array({out.planted[0], out.planted[1]})},
+			{"hands", hands},
+		};
+		m_overlay.send(pose);
+	}
+
+	if (!m_viewTracker.empty() && (now - m_lastDetail >= 1.0 / 20 || now < m_lastDetail)) {
+		m_lastDetail = now;
+		auto t = std::find_if(trackers.begin(), trackers.end(),
+							  [&](const TrackerSnapshot& s) { return s.mac == m_viewTracker; });
+		if (t != trackers.end()) publishDetail(*t, m_viewMag || t->magState == MagState::Calibrating);
+	}
+}
+
+void Engine::publishDetail(const TrackerSnapshot& t, bool withMagView) {
+	const MagCalibration& cal = t.magCalibration;
+	json d = {
+		{"type", "detail"},
+		{"mac", t.mac},
+		{"connected", t.connected},
+		{"firmware", t.firmware},
+		{"board", t.board},
+		{"imuType", t.imuType},
+		{"mcu", t.mcu},
+		{"protocolVersion", t.protocolVersion},
+		{"bootCount", t.bootCount},
+		{"hasRotation", t.hasRotation},
+		{"q", q4(t.corrected())},
+		{"qRaw", q4(t.qWorld)},
+		{"gyro", v3(t.gyroLocal)},
+		{"accel", v3(t.accelLocal)},
+		{"hasMag", t.hasMag},
+		{"magRaw", json::array({t.magRaw[0], t.magRaw[1], t.magRaw[2]})},
+		{"mag",
+		 {{"state", magStateName(t.magState)},
+		  {"progress", r4(t.magProgress)},
+		  {"valid", cal.valid},
+		  {"residual", cal.valid ? r4(cal.residual) : 1.0},
+		  {"dip", r4(rad2deg(cal.dip))},
+		  {"norm", r4(t.magNorm)},
+		  {"fieldDip", r4(t.magDip)},
+		  {"hasHeading", t.hasHeading},
+		  {"heading", r4(rad2deg(t.heading))}}},
+	};
+	// Calibrated field in the sensor frame (units of the calibration's field norm)
+	if (cal.valid && t.hasMag) d["magField"] = v3(cal.apply(t.magRaw));
+	if (withMagView) {
+		if (auto v = m_hub.magView(t.mac)) {
+			// Keep the datagram small (well under 64 KB): at most ~600 points
+			const size_t n = v->samples.size(), step = std::max<size_t>(1, (n + 599) / 600);
+			json pts = json::array();
+			for (size_t i = 0; i < n; i += step) {
+				const Vec3& p = v->samples[i];
+				pts.push_back({std::lround(p.x), std::lround(p.y), std::lround(p.z)});
+			}
+			json dirs = json::array();
+			for (int i = 0; i < MagCalibrator::kBins; i++) dirs.push_back(v3(MagCalibrator::binDirection(i)));
+			d["magView"] = {{"samples", pts},
+							{"bins", v->bins},
+							{"binDirs", dirs},
+							{"target", MagCalibrator::binTarget()},
+							{"guided", v->guided},
+							{"progress", r4(v->progress)}};
+		}
+	}
+	m_overlay.send(d);
 }
 
 }  // namespace smt

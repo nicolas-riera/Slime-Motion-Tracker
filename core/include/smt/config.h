@@ -28,7 +28,7 @@ struct Settings {
 	double footPlantStrength = 0.7;
 	double inertialWeight = 0.5;
 	bool velocityPrediction = false;
-	bool recording = true;  // record sessions for offline tuning
+	bool recording = false;  // record sessions for offline tuning
 	bool poseModel = true;  // fuse the learned pose model (models/pose_model.bin) when present
 };
 

@@ -175,6 +175,20 @@ static void testMagCalibration() {
 		t += 0.05;
 	}
 	CHECK(cal.coverage() >= 0.85, "coverage %.2f", cal.coverage());
+	// Visualization accessors (overlay calibration page)
+	{
+		auto bins = cal.binCounts();
+		size_t total = 0;
+		int full = 0;
+		for (int b : bins) {
+			total += size_t(b);
+			if (b >= MagCalibrator::binTarget()) full++;
+		}
+		CHECK(total == cal.sampleCount() && cal.rawSamples().size() == total, "mag view sample count");
+		CHECK(std::fabs(cal.coverage() - std::min(1.0, full / 18.0)) < 1e-9, "mag view bin target");
+		for (int i = 0; i < MagCalibrator::kBins; i++)
+			CHECK(std::fabs(MagCalibrator::binDirection(i).norm() - 1) < 1e-9, "bin direction %d not unit", i);
+	}
 	auto res = cal.solve();
 	CHECK(res.has_value(), "mag solve failed");
 	if (!res) return;

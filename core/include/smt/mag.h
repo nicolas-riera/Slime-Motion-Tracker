@@ -76,6 +76,14 @@ public:
 	};
 	static std::optional<MagCalibration> solveSamples(const std::vector<Sample>& samples);
 
+	// Visualization (overlay calibration page): the raw samples (sensor frame,
+	// counts), the samples per orientation bin, the bins' directions (where "up"
+	// is in the sensor frame) and how many samples fill a bin
+	std::vector<Vec3> rawSamples() const;
+	std::array<int, kBins> binCounts() const;
+	static Vec3 binDirection(int i);
+	static int binTarget();
+
 private:
 	std::array<std::deque<Sample>, kBins> m_bins;
 	std::array<double, kBins> m_lastAdded{};

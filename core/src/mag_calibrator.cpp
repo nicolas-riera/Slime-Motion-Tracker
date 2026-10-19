@@ -62,6 +62,23 @@ double MagCalibrator::coverage() const {
 	return std::min(1.0, full / 18.0);
 }
 
+std::vector<Vec3> MagCalibrator::rawSamples() const {
+	std::vector<Vec3> out;
+	for (const auto& b : m_bins)
+		for (const auto& s : b) out.push_back(s.m);
+	return out;
+}
+
+std::array<int, MagCalibrator::kBins> MagCalibrator::binCounts() const {
+	std::array<int, kBins> out{};
+	for (int i = 0; i < kBins; i++) out[i] = int(m_bins[i].size());
+	return out;
+}
+
+Vec3 MagCalibrator::binDirection(int i) { return binDirections()[std::clamp(i, 0, kBins - 1)]; }
+
+int MagCalibrator::binTarget() { return kMinSamplesPerBin; }
+
 size_t MagCalibrator::sampleCount() const {
 	size_t n = 0;
 	for (const auto& b : m_bins) n += b.size();
