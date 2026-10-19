@@ -7,6 +7,9 @@
 // Usage: slimelite_body_replay session.jsonl out.csv [--from S] [--to S] [--floor Y] [--model foot_model.json]
 //   --from/--to: seconds from the start of the recording
 //   --floor: floor height in raw tracking space (default: from the recording)
+//   --dump inputs.bin: also write the per-frame inputs as float64 rows (names in
+//     inputs.bin.json): HMD and controller poses, calibrated segment orientations,
+//     world accelerations (tools/pose_model)
 //   SL_NO_WAIST=1: ignore the waist tracker (ankles-only mode on a three-tracker recording)
 //   SL_MAG_REPLAY=1: rerun the mag heading filter (current code, SL_TUNE mag constants)
 //     instead of the recorded headings. The replayed heading is aligned to the
@@ -246,12 +249,14 @@ int main(int argc, char** argv) {
 	}
 	double from = 0, to = 1e18;
 	std::optional<double> floorArg;
+	std::string dumpPath;
 	for (int i = 3; i + 1 < argc; i += 2) {
 		std::string k = argv[i];
 		double v = std::atof(argv[i + 1]);
 		if (k == "--from") from = v;
 		else if (k == "--to") to = v;
 		else if (k == "--floor") floorArg = v;
+		else if (k == "--dump") dumpPath = argv[i + 1];
 	}
 
 	const std::string session = argv[1];
@@ -296,7 +301,25 @@ int main(int argc, char** argv) {
 	std::map<std::string, TrackerState> trackers;
 	Pose hmd;
 	bool hmdValid = false;
-	std::array<Vec3, 2> controllers;  // left, right hand (for diagnosis only)
+	std::array<Vec3, 2> controllers;  // left, right hand
+	std::array<Quat, 2> controllerRot;
+	std::array<bool, 2> controllerValid{};
+	static const char* kDumpNames[] = {
+		"t", "hmd_valid", "hx", "hy", "hz", "hqw", "hqx", "hqy", "hqz", "floor", "eye_h", "height",
+		"w_valid", "wqw", "wqx", "wqy", "wqz", "wax", "way", "waz",
+		"l_valid", "lqw", "lqx", "lqy", "lqz", "lax", "lay", "laz",
+		"r_valid", "rqw", "rqx", "rqy", "rqz", "rax", "ray", "raz",
+		"c0_valid", "c0x", "c0y", "c0z", "c0qw", "c0qx", "c0qy", "c0qz",
+		"c1_valid", "c1x", "c1y", "c1z", "c1qw", "c1qx", "c1qy", "c1qz",
+		"out_valid", "o_wx", "o_wy", "o_wz", "o_lx", "o_ly", "o_lz", "o_rx", "o_ry", "o_rz"};
+	constexpr size_t kDumpColumns = sizeof(kDumpNames) / sizeof(kDumpNames[0]);
+	FILE* dump = nullptr;
+	if (!dumpPath.empty()) {
+		dump = std::fopen(dumpPath.c_str(), "wb");
+		json names = json::array();
+		for (const char* n : kDumpNames) names.push_back(n);
+		std::ofstream(dumpPath + ".json") << json{{"columns", names}}.dump();
+	}
 	double floorY = floorArg.value_or(0);
 	bool floorKnown = floorArg.has_value();
 	// Old recordings have no floor line: floor = HMD height at the stand capture -
@@ -410,6 +433,8 @@ int main(int argc, char** argv) {
 				floorKnown = true;
 			} else if (what == "calibration") {
 				if (detail.rfind("ski:", 0) == 0 || detail.rfind("done: Reset", 0) == 0) standHmdY = hmd.position.y;
+				// Stand pose capture times, for tools that calibrate other devices on it
+				if (detail.rfind("ski:", 0) == 0 && dump) std::printf("stand_capture %.3f\n", t - t0);
 				if (detail.rfind("done:", 0) == 0) {
 					solver.reset();
 					realign();
@@ -484,7 +509,11 @@ int main(int argc, char** argv) {
 			if (ts.aligned) ts.heading = wrapAngle(ts.filter.heading() + ts.offset);
 		} else if (ev.kind == Kind::Dev) {
 			int cls = int(f[0]), role = int(f[1]);
-			if (cls == 2 && (role == 1 || role == 2)) controllers[role - 1] = {f[3], f[4], f[5]};
+			if (cls == 2 && (role == 1 || role == 2)) {
+				controllers[role - 1] = {f[3], f[4], f[5]};
+				controllerRot[role - 1] = Quat{f[6], f[7], f[8], f[9]};
+				controllerValid[role - 1] = f[2] != 0;
+			}
 			if (cls != 1) continue;
 			hmdValid = f[2] != 0;
 			hmd.position = {f[3], f[4], f[5]};
@@ -501,6 +530,7 @@ int main(int argc, char** argv) {
 			bin.floorY = floorY;
 			std::array<Vec3, 2> accel;
 			std::array<double, 2> gyro{};
+			Vec3 waistAccel;
 			for (const auto& [mac, tc] : config.trackers) {
 				auto it = trackers.find(mac);
 				if (it == trackers.end() || !it->second.hasRotation || !tc.mountingValid) continue;
@@ -515,6 +545,7 @@ int main(int argc, char** argv) {
 					if (noWaist) continue;
 					bin.hasWaist = true;
 					bin.waist = seg;
+					waistAccel = (seg * tc.mounting.conj()).rotate(ts.accelLocal);
 				} else if (tc.role == Role::LeftAnkle || tc.role == Role::RightAnkle) {
 					int i = tc.role == Role::LeftAnkle ? 0 : 1;
 					auto& leg = bin.legs[i];
@@ -542,6 +573,38 @@ int main(int argc, char** argv) {
 			double rel = t - t0;
 			if (rel < from || rel > to) continue;
 			frames++;
+			if (dump) {
+				double row[kDumpColumns] = {};
+				size_t c = 0;
+				auto put = [&](double v) { row[c++] = v; };
+				auto putQ = [&](const Quat& q) { put(q.w); put(q.x); put(q.y); put(q.z); };
+				auto putV = [&](const Vec3& v) { put(v.x); put(v.y); put(v.z); };
+				put(rel);
+				put(bin.hmdValid);
+				putV(hmd.position);
+				putQ(hmd.rotation);
+				put(floorY);
+				put(dims.eyeHeight);
+				put(dims.height);
+				put(bin.hasWaist);
+				putQ(bin.waist);
+				putV(waistAccel);
+				for (int i = 0; i < 2; i++) {
+					put(bin.legs[i].valid);
+					putQ(bin.legs[i].shin);
+					putV(bin.legs[i].accelWorld);
+				}
+				for (int i = 0; i < 2; i++) {
+					put(controllerValid[i]);
+					putV(controllers[i]);
+					putQ(controllerRot[i]);
+				}
+				put(o.valid);
+				putV(o.waist.position);
+				putV(o.feet[0].position);
+				putV(o.feet[1].position);
+				std::fwrite(row, sizeof(double), kDumpColumns, dump);
+			}
 			Vec3 hf = hmd.rotation.rotate({0, 0, -1});
 			std::fprintf(csv, "%.4f,%.4f,%.4f,%.4f,%.1f,", rel, hmd.position.x, hmd.position.y, hmd.position.z,
 						 rad2deg(std::asin(std::clamp(hf.y, -1.0, 1.0))));
@@ -589,6 +652,7 @@ int main(int argc, char** argv) {
 		}
 	}
 	std::fclose(csv);
+	if (dump) std::fclose(dump);
 	std::printf("%d frames written, floor %.3f%s, solver %.2f s\n", frames, floorY, floorKnown ? "" : " (unknown)",
 				solveSeconds);
 	return 0;

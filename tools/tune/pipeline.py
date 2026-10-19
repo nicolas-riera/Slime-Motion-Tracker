@@ -290,9 +290,15 @@ class Scorer:
         s, p = self.S[i], self.prep[i]
         ctx = p["ctx"]
         d, lifted = np.full((len(s.t), 2), np.nan), np.zeros((len(s.t), 2), bool)
+        hmd = np.stack([ctx["hmd_x"], ctx["hmd_y"], ctx["hmd_z"]], 1)
+        reach = 1.1 * ctx["eye_h"] + 0.1
         for k, leg in enumerate("lr"):
             e = np.linalg.norm(res["feet"][:, 3 * k:3 * k + 3] - self.gt[i][leg], axis=1) * 100
-            ok = s.clean[leg] & s.gt_ok
+            # A foot farther from the head than the body is long: the Kinect tracked
+            # something else (lying on the bed, out of its view)
+            # ... or an ankle almost at eye level (the bed or the user's body seen as a foot)
+            plausible = (np.linalg.norm(s.g[leg] - hmd, axis=1) < reach) & (s.g[leg][:, 1] < hmd[:, 1] - 0.25)
+            ok = s.clean[leg] & s.gt_ok & plausible
             d[ok, k] = e[ok]
             lifted[:, k] = (s.g[leg][:, 1] - ctx["floor"]) > LIFTED
         hx, hz = ctx["hmd_x"], ctx["hmd_z"]
@@ -300,7 +306,7 @@ class Scorer:
         ax, az = mid[:, 0] - hx, mid[:, 2] - hz
         n = np.hypot(ax, az)
         lat = np.abs((res["waist"][:, 0] - hx) * az - (res["waist"][:, 2] - hz) * ax) / np.maximum(n, 1e-6) * 100
-        lat[~(s.clean["l"] & s.clean["r"]) | (n < 0.3) | ~s.gt_ok] = np.nan
+        lat[~(np.isfinite(d[:, 0]) & np.isfinite(d[:, 1])) | (n < 0.3)] = np.nan
         rec = np.stack([ctx["rec_wx"], ctx["rec_wy"], ctx["rec_wz"]], 1)
         pel = np.linalg.norm(res["waist"] - rec, axis=1) * 100
         pel[~(ctx["rec_valid"] > 0)] = np.nan
