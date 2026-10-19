@@ -1,6 +1,6 @@
 # Model archive
 
-Every trained model version is kept here, never overwritten. `engine/models/` holds
+Every trained model version is kept here, never overwritten. `engine/models/` (deployed with the driver) holds
 the version in use; a new version is copied here before it replaces it.
 
 | File | Date | Training data | Notes |
