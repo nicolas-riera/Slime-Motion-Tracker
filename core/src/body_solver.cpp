@@ -161,6 +161,17 @@ const double kHoldBounce = tunable("kHoldBounce", 0.15);
 // Raised-foot probability from micro-movements (updateRaised): how much it stops
 // pulling a raised foot to the floor and keeps its knee up (kRaisedUse 0..1), and
 // how fast a planted foot it says is on the floor sinks there (kRaisedSink, 1/s)
+// Standing sway: the body pivots as a block around the ankles, the hip moving with
+// the head by the ratio of their heights above the ankles. The head chain alone (down
+// the waist tracker's axis) took every sway for a bend at the hips and moved the hip
+// against the head. Standing on both planted feet with the head not dropping, the
+// hip's horizontal position gets a target of feet + ratio x (head - feet) plus an
+// offset that follows the head chain's answer over kSwayTime (a held posture stays
+// the solver's): fast sway follows the ankle pivot, slow posture the waist tracker.
+const double kSwaySigma = tunable("kSwaySigma", 0.008);  // m, 0 = off
+const double kSwayTime = tunable("kSwayTime", 8.0);  // s
+const double kSwayDropStart = tunable("kSwayDropStart", 0.04);  // m of head drop: a bend
+const double kSwayDropEnd = tunable("kSwayDropEnd", 0.08);
 const double kRaisedUse = tunable("kRaisedUse", 0.0);
 const double kRaisedSink = tunable("kRaisedSink", 0.0);
 // Logistic regression on the Kinect sessions (tools/pose_model/raised_features.py):
@@ -340,6 +351,8 @@ void BodySolver::reset() {
 	m_smoothedWaist = {};
 	m_raised = {};
 	m_hmdBounce = 0;
+	m_swayRef = {};
+	m_swayGate = m_standHeadY = m_bothPlantedTime = 0;
 }
 
 double BodySolver::legCost(const LegProblem& p, double phi) const {
@@ -564,6 +577,32 @@ BodyOutput BodySolver::update(const BodyInput& in) {
 		}
 	}
 
+	// ---- standing sway prior (kSway*) ----
+	bool swayActive = false;
+	Vec3 swayPrior;  // hip target, horizontal
+	if (kSwaySigma > 0) {
+		const bool both = m_legs[0].planted && m_legs[1].planted;
+		m_bothPlantedTime = both ? m_bothPlantedTime + dt : 0;
+		// Standing head height: rises at once, sinks slowly (a held lower stance becomes
+		// the reference after a while)
+		if (!m_initialized || m_standHeadY == 0) m_standHeadY = headPivot.y;
+		m_standHeadY = std::max(headPivot.y, m_standHeadY - 0.01 * dt);
+		const double drop = m_standHeadY - headPivot.y;
+		const double gate = standing * smoothstep(0.3, 0.6, m_bothPlantedTime) *
+							smoothstep(kSwayDropEnd, kSwayDropStart, drop);
+		m_swayGate += (gate - m_swayGate) * std::min(1.0, dt / 0.3);
+		const Vec3 feetMid = (m_legs[0].anchor + m_legs[1].anchor) * 0.5;
+		const double headAbove = std::max(0.5, d.eyeHeight - d.headDown - d.ankleHeight);
+		const double ratio = std::clamp((d.standingHipHeight() - d.ankleHeight) / headAbove, 0.3, 0.8);
+		Vec3 pivotHip = feetMid + (headPivot - feetMid) * ratio;
+		Vec3 chain = hip0 - pivotHip;  // the head chain's answer, from the pivot line
+		chain.y = 0;
+		if (m_swayGate < 0.05) m_swayRef = chain;
+		else m_swayRef += (chain - m_swayRef) * std::min(1.0, dt / kSwayTime);
+		swayPrior = pivotHip + m_swayRef;
+		swayActive = m_swayGate >= 0.05;
+	}
+
 	// ---- solve: legs by global search, then the hip offset, alternated ----
 	const double plant = std::clamp(s.footPlantStrength, 0.0, 1.0);
 	const double inertial = std::clamp(s.inertialWeight, 0.0, 1.0);
@@ -656,6 +695,11 @@ BodyOutput BodySolver::update(const BodyInput& in) {
 			den += Vec3{w, w, w};
 		};
 		if (seated > 0.5) addTarget(m_seat - hip0, kSeatSigma / std::sqrt(2 * seated - 1 + 1e-3), 3.0);
+		if (swayActive) {
+			Vec3 target = swayPrior - hip0;
+			target.y = hipOffset.y;  // horizontal only
+			addTarget(target, kSwaySigma / std::sqrt(m_swayGate), 3.0);
+		}
 		for (int i = 0; i < 2; i++) {
 			Vec3 base = hip0 + legVector(i, phi[i]);  // ankle without hip offset
 			if (m_legs[i].planted) addTarget(m_legs[i].anchor - base, anchorSigma, 3.0);

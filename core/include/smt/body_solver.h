@@ -178,6 +178,11 @@ private:
 	Mode m_mode = Mode::Three;
 	std::array<LegState, 2> m_legs;
 	Vec3 m_hipOffset;
+	// Standing sway (kSway*): hip offset from the ankle-pivot line, standing head height
+	Vec3 m_swayRef;
+	double m_swayGate = 0;  // 0..1, smoothed
+	double m_standHeadY = 0;
+	double m_bothPlantedTime = 0;
 	// HMD vertical speed (low-passed |vy|): walking and running bounce, holding a
 	// leg up in place does not
 	double m_prevHmdY = 0, m_hmdBounce = 0;

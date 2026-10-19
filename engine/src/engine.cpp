@@ -312,10 +312,10 @@ void Engine::frame(const SmtFrameInput& fin, SmtFrameOutput& fout) {
 	toSlPose(waistOk, out.waist, out.waistVelocity, fout.devices[SMT_DEVICE_WAIST]);
 	// The SteamVR foot trackers sit on the instep, where foot trackers are worn (and where
 	// games expect them), not at the ankle joint the solver places: forward along the
-	// foot and a little lower, in proportion to the height (8 and 1.7 cm at 1.73 m)
+	// foot, in proportion to the height (8 cm at 1.73 m). Not lower: the avatar's foot
+	// follows the tracker and went through the floor
 	Pose feet[2] = {out.feet[0], out.feet[1]};
-	for (Pose& f : feet)
-		f.position = f.position + f.rotation.rotate(Vec3{0, -0.010 * m_config.userHeight, -0.045 * m_config.userHeight});
+	for (Pose& f : feet) f.position = f.position + f.rotation.rotate(Vec3{0, 0, -0.045 * m_config.userHeight});
 	toSlPose(out.valid, feet[0], out.footVelocity[0], fout.devices[SMT_DEVICE_LEFT_FOOT]);
 	toSlPose(out.valid, feet[1], out.footVelocity[1], fout.devices[SMT_DEVICE_RIGHT_FOOT]);
 	fout.sendVelocity = m_config.settings.velocityPrediction ? 1 : 0;
