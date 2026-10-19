@@ -106,7 +106,7 @@ def main():
     height = float(np.median(f["d"]["height"]))
     off = skeleton_smplh(args.body_model, height) if args.body_model else skeleton(height)
     if args.reuse:
-        G = np.load(args.reuse)["global_rot"].astype(np.float64)
+        G = np.load(args.reuse)["global_rot"]
         n = len(G)
     else:
         net = HMD_imu_HME_Universe(135, 3, 256, 0.05, 8, 2)
@@ -115,21 +115,35 @@ def main():
         net.eval().to(args.device)
         X = np.nan_to_num(f["X"])
         pose = infer(net, X, args.chunk, args.warm, args.batch, args.device).reshape(-1, 22, 6)
-        local = sixd_to_mat(pose.astype(np.float64))  # (N, 22, 3, 3)
-        n = len(local)
-        G = np.zeros_like(local)
-        for j in range(22):
+        del X, net
+        if args.device != "cpu":
+            torch.cuda.empty_cache()
+        n = len(pose)
+        G = np.zeros((n, 22, 3, 3), np.float32)
+    # Forward kinematics by slices: a 12 h session is 2.6 M frames, and whole-array
+    # float64 intermediates took tens of GB (the machine swapped)
+    ours = np.zeros((n, 22, 3), np.float32)
+    step = 100_000
+    for a in range(0, n, step):
+        b = min(n, a + step)
+        if args.reuse:
+            Gs = G[a:b].astype(np.float64)
+        else:
+            local = sixd_to_mat(pose[a:b].astype(np.float64))  # (m, 22, 3, 3)
+            Gs = np.zeros_like(local)
+            for j in range(22):
+                p = PARENTS[j]
+                Gs[:, j] = local[:, j] if p < 0 else Gs[:, p] @ local[:, j]
+            G[a:b] = Gs
+        P = np.zeros((b - a, 22, 3))
+        for j in range(1, 22):
             p = PARENTS[j]
-            G[:, j] = local[:, j] if p < 0 else G[:, p] @ local[:, j]
-    P = np.zeros((n, 22, 3))
-    for j in range(1, 22):
-        p = PARENTS[j]
-        P[:, j] = P[:, p] + np.einsum("nij,j->ni", G[:, p], off[j])
-    P += (f["head_pos"] - P[:, 15])[:, None]  # anchored at the head (AMASS frame)
-    ours = features.RX90.inv().apply(P.reshape(-1, 3)).reshape(n, 22, 3)
-    ours[..., 1] += f["floor"][:, None]
-    np.savez_compressed(args.out, t=f["t"], joints=ours.astype(np.float32), valid=f["valid"],
-                        global_rot=G.astype(np.float32))
+            P[:, j] = P[:, p] + np.einsum("nij,j->ni", Gs[:, p], off[j])
+        P += (f["head_pos"][a:b] - P[:, 15])[:, None]  # anchored at the head (AMASS frame)
+        o = features.RX90.inv().apply(P.reshape(-1, 3)).reshape(b - a, 22, 3)
+        o[..., 1] += f["floor"][a:b, None]
+        ours[a:b] = o
+    np.savez_compressed(args.out, t=f["t"], joints=ours, valid=f["valid"], global_rot=G)
     print(f"{n} frames -> {args.out}")
 
 
