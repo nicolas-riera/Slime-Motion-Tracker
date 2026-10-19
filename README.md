@@ -67,7 +67,7 @@ replay, tuning and training.
 - Windows, SteamVR, Visual Studio 2022 (C++ workload), CMake >= 3.24, Python 3.
 - Python tools: `py -3 -m venv .venv` then `.venv\Scripts\pip install esptool pyserial platformio jsonschema==4.22.0 numpy`.
 
-## 1. Flash the trackers
+## 1. Flash the trackers (Wemos D1 Mini / ICM-45686 + QMC6309 only)
 
 Plug a tracker over USB, then:
 
