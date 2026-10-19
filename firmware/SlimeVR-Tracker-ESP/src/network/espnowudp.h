@@ -11,7 +11,10 @@
 	so the connection logic (discovery, handshake, timeouts) is the same for both.
 
 	ESP-NOW frames: 'S' 'L' version kind payload. kind 0: SlimeVR packet,
-	1: dongle search (tracker broadcast), 2: dongle answer.
+	1: dongle search (tracker broadcast), 2: dongle answer or beacon (broadcast
+	every 100 ms), payload[0] = the dongle's channel. Close to the dongle its
+	frames are also heard on the neighbouring channels: the tracker moves to the
+	announced channel.
 */
 #pragma once
 

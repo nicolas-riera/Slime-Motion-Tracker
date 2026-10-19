@@ -81,7 +81,9 @@ std::vector<std::string> serialPorts() {
 		if (RegEnumValueA(key, i, name, &nameLen, nullptr, &type, reinterpret_cast<BYTE*>(value), &valueLen)
 			!= ERROR_SUCCESS)
 			break;
-		if (type == REG_SZ) ports.emplace_back(value, strnlen(value, valueLen));
+		// Bluetooth serial ports (\Device\BthModemN) are skipped: opening one tries to
+		// connect to the paired device, which blocks for seconds
+		if (type == REG_SZ && !std::strstr(name, "BthModem")) ports.emplace_back(value, strnlen(value, valueLen));
 	}
 	RegCloseKey(key);
 	return ports;

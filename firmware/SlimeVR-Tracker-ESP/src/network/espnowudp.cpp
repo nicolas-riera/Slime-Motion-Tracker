@@ -3,6 +3,8 @@
 #include <ESP8266WiFi.h>
 #include <espnow.h>
 
+#include "logging/Logger.h"
+
 extern "C" {
 #include <user_interface.h>
 }
@@ -20,6 +22,11 @@ uint8_t g_channel = 1;
 uint32_t g_lastHop = 0;
 int g_hops = 0;
 
+SlimeVR::Logging::Logger g_logger{"ESP-NOW"};
+// Dongle heard while searching (its beacon or answer), paired from loop()
+volatile bool g_found = false;
+volatile uint8_t g_foundChannel = 0;
+
 // Receive ring (the callback runs in the system task, the reader in loop())
 constexpr int kSlots = 4;
 struct Slot {
@@ -31,13 +38,17 @@ volatile uint8_t g_head = 0, g_tail = 0;
 
 void onReceive(uint8_t* mac, uint8_t* data, uint8_t len) {
 	if (len < EspNow::kHeader || data[0] != 'S' || data[1] != 'L' || data[2] != EspNow::kVersion) return;
-	if (!g_paired || memcmp(mac, g_dongle, 6) != 0) {
-		// The dongle answered: lock on it (and stay on this channel)
-		if (g_paired && esp_now_is_peer_exist(g_dongle)) esp_now_del_peer(g_dongle);
-		memcpy(g_dongle, mac, 6);
-		esp_now_add_peer(g_dongle, ESP_NOW_ROLE_COMBO, g_channel, nullptr, 0);
-		g_paired = true;
+	if (!g_paired) {
+		// The dongle's beacon or answer carries its channel: close to the dongle it
+		// is also heard on the neighbouring channels
+		if (data[3] == EspNow::Here && !g_found) {
+			memcpy(g_dongle, mac, 6);
+			g_foundChannel = len > EspNow::kHeader && data[4] >= 1 && data[4] <= 13 ? data[4] : g_channel;
+			g_found = true;
+		}
+		return;
 	}
+	if (memcmp(mac, g_dongle, 6) != 0) return;
 	g_lastRx = millis();
 	if (data[3] != EspNow::Data) return;
 	uint8_t next = (g_head + 1) % kSlots;
@@ -63,11 +74,13 @@ void begin() {
 	if (g_active) {
 		// Searching again from ESP-NOW mode: keep the radio, forget the dongle
 		g_paired = false;
+		g_found = false;
 		g_hops = 0;
 		return;
 	}
 	g_active = true;
 	g_paired = false;
+	g_found = false;
 	g_hops = 0;
 	WiFi.persistent(false);
 	WiFi.mode(WIFI_STA);
@@ -86,6 +99,16 @@ void leaveNetwork() { wifi_station_disconnect(); }
 
 bool searchStep() {
 	if (g_paired) return true;
+	if (g_found) {
+		g_channel = g_foundChannel;
+		wifi_set_channel(g_channel);
+		if (esp_now_is_peer_exist(g_dongle)) esp_now_del_peer(g_dongle);
+		esp_now_add_peer(g_dongle, ESP_NOW_ROLE_COMBO, g_channel, nullptr, 0);
+		g_lastRx = millis();
+		g_paired = true;
+		g_logger.info("Dongle found on channel %d", g_channel);
+		return true;
+	}
 	uint32_t now = millis();
 	if (now - g_lastHop < 150) return false;
 	if (g_lastHop != 0) {
@@ -95,6 +118,7 @@ bool searchStep() {
 	g_lastHop = now;
 	wifi_set_channel(g_channel);
 	sendFrame(g_broadcast, Search, nullptr, 0);
+	if (g_hops == 25) g_logger.info("Dongle not found, using WiFi");
 	return false;
 }
 

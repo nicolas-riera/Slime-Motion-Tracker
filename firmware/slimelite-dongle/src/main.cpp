@@ -9,13 +9,15 @@
 //   xor = XOR of type, len, mac and payload
 //   type 0: data (SlimeVR packet), mac = tracker
 //   type 1: dongle info, dongle -> PC, once a second and on probe:
-//           payload "SLDONGLE" version channel, mac = dongle
+//           payload "SLDONGLE" version channel, then uint16 counters (ESP-NOW
+//           frames received, searches received, answers sent), mac = dongle
 //   type 2: probe, PC -> dongle
 //   type 3: set channel, PC -> dongle, payload[0] = 1..13
 // LED: 3 fast blinks once ready, then off; every 5 s, one blink per tracker
 // heard in the last 3 s.
 // ESP-NOW frames: 'S' 'L' version kind payload. kind 0: SlimeVR packet, 1: a
-// tracker searching for the dongle (broadcast), 2: the dongle's answer. A tracker
+// tracker searching for the dongle (broadcast), 2: the dongle's answer and its
+// beacon (broadcast every 100 ms), payload[0] = its channel. A tracker
 // that finds the dongle never joins the WiFi network (power saving).
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
@@ -32,6 +34,7 @@ constexpr size_t kHeader = 4;
 constexpr size_t kMaxPayload = 250 - kHeader;
 enum Kind : uint8_t { kData = 0, kSearch = 1, kHere = 2 };
 uint8_t g_channel = 6;
+constexpr uint32_t kBeaconMs = 100;
 
 // ESP-NOW receive ring (filled in the system task, drained in loop())
 constexpr int kSlots = 32;
@@ -43,6 +46,9 @@ struct Slot {
 Slot g_slots[kSlots];
 volatile uint8_t g_head = 0, g_tail = 0;
 volatile uint32_t g_dropped = 0;
+// Diagnostics, appended to the info frame: ESP-NOW frames received, searches, answers sent ok
+volatile uint16_t g_rxAll = 0, g_rxSearch = 0;
+uint16_t g_answers = 0;
 
 // Trackers searching for the dongle, answered from loop()
 constexpr int kSearchSlots = 8;
@@ -50,8 +56,10 @@ uint8_t g_searchMac[kSearchSlots][6];
 volatile uint8_t g_searchHead = 0, g_searchTail = 0;
 
 void onReceive(uint8_t* mac, uint8_t* data, uint8_t len) {
+	g_rxAll++;
 	if (len < kHeader || data[0] != 'S' || data[1] != 'L' || data[2] != kVersion) return;
 	if (data[3] == kSearch) {
+		g_rxSearch++;
 		uint8_t next = (g_searchHead + 1) % kSearchSlots;
 		if (next != g_searchTail) {
 			memcpy(g_searchMac[g_searchHead], mac, 6);
@@ -86,7 +94,10 @@ void writeFrame(uint8_t type, const uint8_t* mac, const uint8_t* payload, uint8_
 void sendInfo() {
 	uint8_t mac[6];
 	WiFi.macAddress(mac);
-	uint8_t p[10] = {'S', 'L', 'D', 'O', 'N', 'G', 'L', 'E', kVersion, g_channel};
+	uint16_t rxAll = g_rxAll, rxSearch = g_rxSearch;
+	uint8_t p[16] = {'S', 'L', 'D', 'O', 'N', 'G', 'L', 'E', kVersion, uint8_t(wifi_get_channel()),
+					 uint8_t(rxAll), uint8_t(rxAll >> 8), uint8_t(rxSearch), uint8_t(rxSearch >> 8),
+					 uint8_t(g_answers), uint8_t(g_answers >> 8)};
 	writeFrame(1, mac, p, sizeof(p));
 }
 
@@ -120,7 +131,7 @@ void sendToTracker(const uint8_t* mac, uint8_t kind, const uint8_t* payload, uin
 	if (!esp_now_is_peer_exist(m)) esp_now_add_peer(m, ESP_NOW_ROLE_COMBO, g_channel, nullptr, 0);
 	uint8_t buf[kHeader + kMaxPayload] = {'S', 'L', kVersion, kind};
 	memcpy(buf + kHeader, payload, len);
-	esp_now_send(m, buf, kHeader + len);
+	if (esp_now_send(m, buf, kHeader + len) == 0 && kind == kHere && m[0] != 0xFF) g_answers++;
 }
 
 // Trackers heard recently (data frames), for the LED
@@ -239,7 +250,7 @@ void setup() {
 void loop() {
 	readSerial();
 	while (g_searchTail != g_searchHead) {
-		sendToTracker(g_searchMac[g_searchTail], kHere, nullptr, 0);
+		sendToTracker(g_searchMac[g_searchTail], kHere, &g_channel, 1);
 		g_searchTail = (g_searchTail + 1) % kSearchSlots;
 	}
 	while (g_tail != g_head) {
@@ -249,6 +260,13 @@ void loop() {
 		g_tail = (g_tail + 1) % kSlots;
 	}
 	updateLed();
+	// Beacon for the searching trackers, which listen 150 ms on each channel
+	static uint32_t lastBeacon = 0;
+	if (millis() - lastBeacon >= kBeaconMs) {
+		lastBeacon = millis();
+		static const uint8_t bc[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+		sendToTracker(bc, kHere, &g_channel, 1);
+	}
 	static uint32_t lastInfo = 0;
 	if (millis() - lastInfo > 1000) {
 		lastInfo = millis();
