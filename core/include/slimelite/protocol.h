@@ -21,6 +21,7 @@ enum PacketType : uint32_t {
 	kHeartbeat = 0,
 	kHandshake = 3,
 	kAccel = 4,
+	kPingPong = 10,
 	kBatteryLevel = 12,
 	kSensorInfo = 15,
 	kRotationData = 17,
@@ -43,6 +44,7 @@ struct Event {
 		Temperature,
 		Signal,
 		FeatureFlags,
+		Pong,
 	};
 	Kind kind = Kind::Heartbeat;
 	uint8_t sensorId = 0;
@@ -64,6 +66,8 @@ struct Event {
 	uint8_t sensorState = 0;
 	float temperature = 0;
 	int8_t rssi = 0;
+	// Pong: the id of the ping the tracker echoes
+	uint32_t pingId = 0;
 };
 
 // Parses one datagram, expanding bundles. Unknown packets are skipped.
@@ -71,6 +75,8 @@ std::vector<Event> parse(const uint8_t* data, size_t len);
 
 std::vector<uint8_t> handshakeReply();
 std::vector<uint8_t> heartbeat(uint64_t packetNumber);
+// The firmware echoes it as is: the round trip is the latency
+std::vector<uint8_t> ping(uint64_t packetNumber, uint32_t id);
 // The firmware reads the ack at offset 4, i.e. without a packet number
 std::vector<uint8_t> sensorInfoAck(uint8_t sensorId, uint8_t state);
 // Advertises bundle support (bit 0)

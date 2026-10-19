@@ -1,0 +1,54 @@
+// Remaining battery time per tracker, from its discharge rate.
+//
+// The level reported by the trackers comes from the battery voltage: it is noisy,
+// sags under load and jumps when a charger is plugged in or removed. The readings
+// are reduced to one median per minute and the discharge rate is the least-squares
+// slope of the last 40 minutes. The history restarts when the level climbs
+// (charging, another battery), after a charge (the voltage relaxes for a few
+// minutes once the charger is removed), after a gap (tracker off, it may have
+// been charged meanwhile) and when the tracker changes transport (WiFi and
+// ESP-NOW draw differently). It is saved to a file so an overlay restart keeps it.
+#pragma once
+
+#include <map>
+#include <string>
+#include <vector>
+
+namespace slimelite::ui {
+
+class BatteryEstimator {
+public:
+    enum class State { Estimating, Charging, Ok };
+    struct Estimate {
+        State state = State::Estimating;
+        double hours = 0;  // remaining, when Ok
+    };
+
+    void load(const std::string& path);
+    void save();
+    // level 0..1; now: wall-clock seconds, so the saved history stays valid
+    void add(const std::string& mac, const std::string& transport, double level, double now);
+    [[nodiscard]] Estimate estimate(const std::string& mac) const;
+
+private:
+    struct Minute {
+        double t;
+        double level;
+    };
+    struct History {
+        std::string transport;
+        std::vector<Minute> minutes;
+        std::vector<double> pending;  // readings of the current minute
+        double minuteStart = 0;
+        double lastReading = 0;
+        bool charging = false;
+        int settle = 0;  // minutes still discarded after a charge
+    };
+    void closeMinute(History& h, double now, double level);
+
+    std::map<std::string, History> m_history;
+    std::string m_path;
+    bool m_dirty = false;
+};
+
+}  // namespace slimelite::ui

@@ -48,6 +48,7 @@ struct TrackerSnapshot {
 	float batteryVoltage = 0, batteryLevel = -1;
 	float temperature = 0;
 	int rssi = 0;
+	double latencyMs = -1;  // ping round trip (median of the last ones), -1 = unknown
 
 	Quat corrected() const { return hasHeading ? Quat::yaw(-heading) * qWorld : qWorld; }
 };

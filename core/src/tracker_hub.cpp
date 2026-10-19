@@ -38,6 +38,11 @@ struct TrackerHub::Tracker {
 	sockaddr_in addr{};
 	double lastPacketTime = 0;
 
+	// Latency: one ping a second, round trips of the last ones
+	uint32_t pingId = 0;
+	double pingSent = 0, lastPingTime = 0;
+	std::vector<double> roundTrips;
+
 	Quat prevRotation;
 	double prevRotationTime = 0;
 	bool hasMagData = false;
@@ -301,6 +306,16 @@ void TrackerHub::processEvent(const std::string& mac, const proto::Event& e, dou
 			case proto::Event::Kind::Signal:
 				s.rssi = e.rssi;
 				break;
+			case proto::Event::Kind::Pong:
+				if (e.pingId == tr.pingId && tr.pingSent > 0) {
+					tr.roundTrips.push_back((t - tr.pingSent) * 1000.0);
+					tr.pingSent = 0;
+					if (tr.roundTrips.size() > 5) tr.roundTrips.erase(tr.roundTrips.begin());
+					std::vector<double> sorted = tr.roundTrips;
+					std::sort(sorted.begin(), sorted.end());
+					s.latencyMs = sorted[sorted.size() / 2];
+				}
+				break;
 			default:
 				break;
 		}
@@ -407,9 +422,17 @@ void TrackerHub::networkLoop() {
 				if (t - tr->lastPacketTime > 5.0) {
 					tr->snap.connected = false;
 					tr->snap.rotationHz = tr->snap.magHz = 0;
+					tr->snap.latencyMs = -1;
+					tr->roundTrips.clear();
+					tr->pingSent = 0;
 					continue;
 				}
 				sendTo(tr->addr, proto::heartbeat(++m_packetNumber));
+				// A ping a second; a lost one is forgotten after 2 s
+				if (tr->pingSent == 0 ? t - tr->lastPingTime >= 1.0 : t - tr->pingSent > 2.0) {
+					tr->pingSent = tr->lastPingTime = t;
+					sendTo(tr->addr, proto::ping(++m_packetNumber, ++tr->pingId));
+				}
 			}
 		}
 	}

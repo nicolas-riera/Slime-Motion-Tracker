@@ -13,8 +13,7 @@ inline constexpr int kHeight = 768;
 void setup();
 
 struct FrameInfo {
-    bool vrActive = false;    // OpenVR initialized and the dashboard overlay exists
-    bool standalone = false;  // no SteamVR: the overlay runs the engine with a fake headset
+    bool vrActive = false;  // OpenVR initialized and the dashboard overlay exists
 };
 
 // Builds the whole UI for this frame (between ImGui::NewFrame() and ImGui::Render()).

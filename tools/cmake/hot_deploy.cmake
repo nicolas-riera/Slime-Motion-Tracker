@@ -15,6 +15,8 @@ if(NOT res EQUAL 0)
 endif()
 message(STATUS "hot deploy: ${name} -> ${DST}")
 if(RESTART_OVERLAY AND killed EQUAL 0)
-  # Only restart it if it was running (i.e. SteamVR is up)
-  execute_process(COMMAND cmd /c start "" "${DST}/${name}")
+  # Only restart it if it was open
+  # Start-Process (ShellExecute) does not hand our output pipes to the overlay,
+  # which would keep the build waiting until the overlay exits
+  execute_process(COMMAND powershell -NoProfile -Command "Start-Process -FilePath '${DST}/${name}'")
 endif()

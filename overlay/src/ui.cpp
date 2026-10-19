@@ -6,11 +6,13 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <map>
 #include <string>
 #include <type_traits>
 
+#include "battery_estimator.h"
 #include "imgui.h"
 
 namespace slimelite::ui {
@@ -77,6 +79,9 @@ struct UiState {
     float activeSliderValue = 0.0f;
 
     std::string prevPhase = "idle";
+
+    BatteryEstimator battery;
+    Clock::time_point lastBatterySave = Clock::now();
 };
 
 UiState g;
@@ -169,16 +174,12 @@ void drawHeader(const DriverLink& link, const DriverState& s, bool connected) {
             ImGui::TextColored(kOrange, "[protocol v%d, expected v1]", s.version);
         }
     } else {
-        ImGui::TextColored(kRed, "Driver not running");
+        // The overlay runs the engine itself without SteamVR and hands over to the
+        // driver when SteamVR starts: only the few seconds of a switch end up here
+        ImGui::TextColored(kGrey, "Starting the engine...");
     }
 
-    if (!connected) {
-        banner(link.hasState()
-                   ? "Driver not running: no answer from the SteamVR driver for 2 seconds. Is SteamVR still running?"
-                   : "Driver not running: start SteamVR with the SlimeVR-lite driver enabled. "
-                     "Settings below are shown as placeholders.",
-               ImVec4(0.55f, 0.12f, 0.12f, 1.0f));
-    } else if (!s.portError.empty()) {
+    if (connected && !s.portError.empty()) {
         banner(s.portError.c_str(), ImVec4(0.55f, 0.12f, 0.12f, 1.0f));
     }
 }
@@ -366,7 +367,7 @@ void drawTrackers(DriverLink& link, const DriverState& s, bool connected) {
     if (s.trackers.empty()) {
         ImGui::TextColored(kGrey, connected ? "No tracker found yet. Turn the trackers on and check they "
                                               "are on the same network as this PC."
-                                            : "Waiting for the driver...");
+                                            : "Starting the engine...");
     } else if (ImGui::BeginTable("trackers", 4,
                                  ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
                                      ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_PadOuterX)) {
@@ -414,15 +415,39 @@ void drawTrackers(DriverLink& link, const DriverState& s, bool connected) {
             else
                 ImGui::TextColored(kRed, "Disconnected");
             ImGui::Text("%.0f Hz / mag %.0f Hz", t.rotationHz, t.magHz);
-            if (t.battery >= 0.0f)
-                ImGui::TextColored(t.battery < 0.15f ? kOrange : ImVec4(1, 1, 1, 1), "Battery %.0f%% (%.2f V)",
-                                   t.battery * 100.0f, t.batteryVoltage);
-            else
+            if (t.battery >= 0.0f) {
+                ImGui::TextColored(t.battery < 0.15f ? kOrange : ImVec4(1, 1, 1, 1), "Battery %.0f%%",
+                                   t.battery * 100.0f);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%.2f V", t.batteryVoltage);
+                ImGui::SameLine();
+                const BatteryEstimator::Estimate e = g.battery.estimate(t.mac);
+                if (e.state == BatteryEstimator::State::Charging)
+                    ImGui::TextColored(kGreen, "charging");
+                else if (e.state == BatteryEstimator::State::Estimating)
+                    ImGui::TextColored(kGrey, "~...");
+                else if (e.hours >= 24)
+                    ImGui::TextColored(kGrey, ">24h");
+                else {
+                    const int minutes = int(e.hours * 60 + 0.5);
+                    ImGui::TextColored(e.hours < 0.5 ? kOrange : kGrey, "~%dh%02d", minutes / 60, minutes % 60);
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Remaining time, from the discharge rate of the last 40 minutes\n"
+                                      "(first estimate after 8 minutes). Restarts after a charge, when\n"
+                                      "the tracker was off and when it switches between WiFi and the\n"
+                                      "USB dongle.");
+            } else
                 ImGui::TextColored(kGrey, "Battery --");
-            if (t.rssi < 0)  // ESP-NOW trackers report none
+            if (t.rssi < 0)
                 ImGui::Text("%d dBm", t.rssi);
             else
                 ImGui::TextColored(kGrey, "-- dBm");
+            ImGui::SameLine();
+            if (t.connected && t.latencyMs >= 0)
+                ImGui::TextColored(t.latencyMs > 50 ? kOrange : ImVec4(1, 1, 1, 1), " %.0f ms", t.latencyMs);
+            else
+                ImGui::TextColored(kGrey, " -- ms");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Round trip PC -> tracker -> PC (median of the last 5 pings)");
             ImGui::SameLine();
             ImGui::Text(" %.1f \xC2\xB0""C", t.temperature);
 
@@ -490,10 +515,7 @@ void drawFooter(const DriverState& s, bool connected, const FrameInfo& info) {
     output(" Right foot", s.outputs.rightFoot);
 
     char right[96];
-    std::snprintf(right, sizeof(right), "SteamVR: %s",
-                  info.vrActive     ? "connected"
-                  : info.standalone ? "not running (standalone engine, fake headset)"
-                                    : "not running");
+    std::snprintf(right, sizeof(right), "SteamVR: %s", info.vrActive ? "connected" : "not running");
     ImGui::SameLine(ImGui::GetContentRegionMax().x - ImGui::CalcTextSize(right).x);
     ImGui::TextColored(info.vrActive ? kGreen : kGrey, "%s", right);
 }
@@ -516,6 +538,9 @@ void setup() {
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = nullptr;  // no imgui.ini next to the driver binaries
     io.LogFilename = nullptr;
+
+    if (const char* appData = std::getenv("LOCALAPPDATA"))
+        g.battery.load(std::string(appData) + "\\SlimeVR-lite\\battery_history.json");
 
     // Large fonts so the UI is readable in the headset. Segoe UI ships with Windows;
     // fall back to the (scaled) built-in font otherwise.
@@ -574,12 +599,23 @@ void setup() {
 
 void draw(DriverLink& link, const FrameInfo& info) {
     const bool connected = link.connected();
-    // Without a live driver, show defaults (placeholders) instead of stale data.
+    // While the engine switches between the driver and the standalone host, the last
+    // state stays on screen (disabled); defaults before the first one.
     static const DriverState kPlaceholder{};
-    const DriverState& s = connected ? link.state() : kPlaceholder;
+    const DriverState& s = link.hasState() ? link.state() : kPlaceholder;
     if (!connected) {
         g.pendingNumbers.clear();
         g.pendingStrings.clear();
+    }
+
+    if (connected) {
+        const double wall = std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
+        for (const TrackerInfo& t : s.trackers)
+            if (t.connected && t.battery >= 0.0f) g.battery.add(t.mac, t.transport, t.battery, wall);
+    }
+    if (Clock::now() - g.lastBatterySave > std::chrono::seconds(60)) {
+        g.lastBatterySave = Clock::now();
+        g.battery.save();
     }
 
     const ImGuiIO& io = ImGui::GetIO();

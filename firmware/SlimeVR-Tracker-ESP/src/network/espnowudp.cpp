@@ -26,6 +26,7 @@ SlimeVR::Logging::Logger g_logger{"ESP-NOW"};
 // Dongle heard while searching (its beacon or answer), paired from loop()
 volatile bool g_found = false;
 volatile uint8_t g_foundChannel = 0;
+volatile int16_t g_rssi4 = 0;  // smoothed dBm x 4
 
 // Receive ring (the callback runs in the system task, the reader in loop())
 constexpr int kSlots = 4;
@@ -50,6 +51,11 @@ void onReceive(uint8_t* mac, uint8_t* data, uint8_t len) {
 	}
 	if (memcmp(mac, g_dongle, 6) != 0) return;
 	g_lastRx = millis();
+	// The ESP8266 callback has no RSSI, but the frame sits in the receive buffer
+	// after the radio's rx_ctrl (12 bytes, RSSI first), the 802.11 header (24) and
+	// the ESP-NOW action header and vendor element (15): 51 bytes before the payload
+	int8_t rssi = int8_t(data[-51]);
+	if (rssi < -5 && rssi > -100) g_rssi4 = g_rssi4 == 0 ? rssi * 4 : g_rssi4 + (rssi - g_rssi4 / 4);
 	if (data[3] != EspNow::Data) return;
 	uint8_t next = (g_head + 1) % kSlots;
 	if (next == g_tail) return;  // full: drop
@@ -136,6 +142,7 @@ bool active() { return g_active; }
 bool paired() { return g_paired; }
 uint8_t channel() { return g_channel; }
 uint32_t lastReceiveMillis() { return g_lastRx; }
+int8_t rssi() { return int8_t(g_rssi4 / 4); }
 
 }  // namespace EspNow
 

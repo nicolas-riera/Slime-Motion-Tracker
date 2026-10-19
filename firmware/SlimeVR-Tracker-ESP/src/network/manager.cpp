@@ -59,6 +59,11 @@ void Manager::update() {
 	auto wasConnected = m_IsConnected;
 	if (m_Transport == Transport::EspNow) {
 		m_IsConnected = true;
+		// The signal strength the overlay shows: the dongle's frames instead of the AP
+		if (millis() - m_LastRssiSample >= 2000 && EspNow::rssi() != 0) {
+			m_LastRssiSample = millis();
+			networkConnection.sendSignalStrength(uint8_t(EspNow::rssi()));
+		}
 	} else {
 		wifiNetwork.upkeep();
 		m_IsConnected = wifiNetwork.isConnected();

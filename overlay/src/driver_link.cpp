@@ -60,6 +60,7 @@ TrackerInfo parseTracker(const json& j) {
     t.battery = getFloat(j, "battery", -1.0f);
     t.batteryVoltage = getFloat(j, "batteryVoltage", 0.0f);
     t.rssi = getInt(j, "rssi", 0);
+    t.latencyMs = getFloat(j, "latencyMs", -1.0f);
     t.temperature = getFloat(j, "temperature", 0.0f);
     t.activity = getFloat(j, "activity", 0.0f);
     t.planted = getBool(j, "planted", false);

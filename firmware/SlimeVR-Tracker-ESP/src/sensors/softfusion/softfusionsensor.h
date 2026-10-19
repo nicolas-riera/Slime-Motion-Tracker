@@ -94,6 +94,10 @@ class SoftFusionSensor : public Sensor {
 	// the calibration, heading fusion and disturbance rejection. The on-device VQF
 	// stays 6D so the firmware remains fully compatible with the SlimeVR server.
 	static constexpr uint32_t MagPollIntervalMicros = 20000;  // 50 Hz
+	// Eco mode: at rest (VQF rest detection) 10 Hz, which saves 40 packets a second;
+	// not off, the host's heading correction and mag calibration use rest samples.
+	// Full rate again on the first motion (rest detection drops at once)
+	static constexpr uint32_t MagRestPollIntervalMicros = 100000;  // 10 Hz
 	uint32_t m_lastMagPollTime = 0;
 	int16_t m_lastMagSample[3]{};
 	bool m_newMagSample = false;
@@ -109,7 +113,9 @@ class SoftFusionSensor : public Sensor {
 				return;
 			}
 			uint32_t now = micros();
-			if (now - m_lastMagPollTime < MagPollIntervalMicros) {
+			const uint32_t interval
+				= m_fusion.getRestDetected() ? MagRestPollIntervalMicros : MagPollIntervalMicros;
+			if (now - m_lastMagPollTime < interval) {
 				return;
 			}
 			m_lastMagPollTime = now;

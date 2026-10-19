@@ -45,6 +45,8 @@ bool active();
 bool paired();
 uint8_t channel();
 uint32_t lastReceiveMillis();
+// Signal strength of the dongle's frames (dBm, smoothed), 0 before any
+int8_t rssi();
 }  // namespace EspNow
 
 class HybridUdp {

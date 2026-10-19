@@ -577,6 +577,7 @@ void Engine::publishState(const std::vector<TrackerSnapshot>& trackers, const Bo
 					  {"battery", t.batteryLevel >= 0 ? t.batteryLevel : -1.0},
 					  {"batteryVoltage", t.batteryVoltage},
 					  {"rssi", t.rssi},
+					  {"latencyMs", t.latencyMs},
 					  {"temperature", t.temperature},
 					  {"activity", t.activity},
 					  {"planted", planted},

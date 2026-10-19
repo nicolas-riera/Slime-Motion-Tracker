@@ -58,6 +58,11 @@ void parseInner(uint32_t type, Reader r, std::vector<Event>& out) {
 		case kHeartbeat:
 			e.kind = Event::Kind::Heartbeat;
 			break;
+		case kPingPong:
+			if (!r.has(4)) return;
+			e.kind = Event::Kind::Pong;
+			e.pingId = r.u32();
+			break;
 		case kRotationData:
 			if (!r.has(2 + 16)) return;
 			e.kind = Event::Kind::Rotation;
@@ -175,6 +180,14 @@ std::vector<uint8_t> heartbeat(uint64_t packetNumber) {
 	std::vector<uint8_t> out;
 	putU32(out, 1);  // server heartbeat
 	putU64(out, packetNumber);
+	return out;
+}
+
+std::vector<uint8_t> ping(uint64_t packetNumber, uint32_t id) {
+	std::vector<uint8_t> out;
+	putU32(out, kPingPong);
+	putU64(out, packetNumber);
+	putU32(out, id);
 	return out;
 }
 

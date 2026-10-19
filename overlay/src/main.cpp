@@ -536,7 +536,7 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ PWSTR, _In
         vrOverlay.updateFloor(link);
 
         ImGui::NewFrame();
-        ui::draw(link, ui::FrameInfo{.vrActive = vrOverlay.active(), .standalone = standalone.running()});
+        ui::draw(link, ui::FrameInfo{.vrActive = vrOverlay.active()});
         ImGui::Render();
 
         // Render the UI offscreen.

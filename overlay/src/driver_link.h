@@ -37,6 +37,7 @@ struct TrackerInfo {
     float battery = -1.0f;  // 0..1, -1 = unknown
     float batteryVoltage = 0.0f;
     int rssi = 0;  // dBm, 0 = unknown
+    float latencyMs = -1.0f;  // ping round trip, -1 = unknown
     float temperature = 0.0f;
     float activity = 0.0f;  // 0..1
     bool planted = false;
