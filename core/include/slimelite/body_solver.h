@@ -156,6 +156,9 @@ private:
 		Vec3 insPos, insVel;
 		double swingTime = 0;
 		double footBlend = 0;  // 0 flat on the floor, 1 follows the shin
+		// Thigh direction (pelvis frame) of the last solve, and the one held when a
+		// swing outlasts the dead reckoning (knee kept up, see kHoldTime)
+		Vec3 thighLocal{0, -1, 0}, holdThigh{0, -1, 0};
 	};
 
 	// One Euro filter (Casiez et al.) on a 3D point
@@ -174,6 +177,9 @@ private:
 	Mode m_mode = Mode::Three;
 	std::array<LegState, 2> m_legs;
 	Vec3 m_hipOffset;
+	// HMD vertical speed (low-passed |vy|): walking and running bounce, holding a
+	// leg up in place does not
+	double m_prevHmdY = 0, m_hmdBounce = 0;
 	Vec3 m_seat;  // where the hip rests when seated or lying
 	bool m_seatValid = false;
 	bool m_initialized = false;

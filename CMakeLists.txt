@@ -75,6 +75,9 @@ target_link_libraries(slimelite_foot_model_check PRIVATE slimelite_core)
 # Learned pose model: C++/Python consistency and timing (tools/pose_model)
 add_executable(slimelite_pose_model_check tools/pose_model/pose_model_check.cpp)
 target_link_libraries(slimelite_pose_model_check PRIVATE slimelite_core)
+# Solver on per-frame inputs (recorded dumps or motion capture converted to our sensors)
+add_executable(slimelite_dump_solve tools/pose_model/dump_solve.cpp)
+target_link_libraries(slimelite_dump_solve PRIVATE slimelite_core)
 
 # Kinect v2 depth recorder (ground truth), only with the Kinect for Windows SDK 2.0
 if(WIN32 AND DEFINED ENV{KINECTSDK20_DIR})
