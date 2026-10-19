@@ -44,9 +44,9 @@ using Microsoft::WRL::ComPtr;
 using Clock = std::chrono::steady_clock;
 using namespace smt;
 
-constexpr wchar_t kWindowClass[] = L"SlimeVRLiteOverlayWindow";
+constexpr wchar_t kWindowClass[] = L"SlimeMotionTrackerWindow";
 constexpr wchar_t kWindowTitle[] = L"Slime Motion Tracker";
-constexpr wchar_t kMutexName[] = L"SlimeVRLiteOverlay";
+constexpr wchar_t kMutexName[] = L"SlimeMotionTrackerApp";
 constexpr DXGI_FORMAT kFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
 constexpr auto kFramePeriod = std::chrono::microseconds(16667);  // ~60 Hz
 constexpr auto kIdlePeriod = std::chrono::milliseconds(100);  // nothing visible: link, sounds, VR events
