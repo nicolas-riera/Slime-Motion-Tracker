@@ -106,9 +106,6 @@ in the SteamVR dashboard). The SlimeVR server must not run at the same time (bot
 4. **Full calibration** (Home tab): stand straight looking ahead, then when asked take the
    ski pose (knees bent, leaning forward, arms down). 3 s each, with a beep every second.
 
-Later sessions: just put the trackers on. If something looks rotated, use **Quick reset**
-(stand straight). If you turned the mag off, a quick reset is needed after a tracker reboots.
-
 ## Tools
 
 - `tools/slime_server.py`: minimal Python server; live view and JSONL recording.
