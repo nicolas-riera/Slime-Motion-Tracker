@@ -196,6 +196,13 @@ nlohmann::json TrackerHub::exportHandover() const {
 					   {"ip", t->snap.ip},
 					   {"port", ntohs(t->addr.sin_port)},
 					   {"bootCount", t->snap.bootCount},
+					   // The handshake is not repeated: without these the tracker page showed
+					   // Unknown after every hot reload
+					   {"firmware", t->snap.firmware},
+					   {"board", t->snap.board},
+					   {"imuType", t->snap.imuType},
+					   {"mcu", t->snap.mcu},
+					   {"protocolVersion", t->snap.protocolVersion},
 					   {"hasHeading", t->heading.hasHeading()},
 					   {"heading", t->heading.heading()},
 					   {"headingRate", t->heading.rate()}});
@@ -217,6 +224,11 @@ void TrackerHub::importHandover(const nlohmann::json& j, double t) {
 		tr.snap.ip = ip;
 		tr.snap.connected = true;
 		tr.snap.bootCount = tj.value("bootCount", 0);
+		tr.snap.firmware = tj.value("firmware", std::string());
+		tr.snap.board = tj.value("board", 0);
+		tr.snap.imuType = tj.value("imuType", 0);
+		tr.snap.mcu = tj.value("mcu", 0);
+		tr.snap.protocolVersion = tj.value("protocolVersion", 0);
 		tr.lastPacketTime = t;
 		if (tj.value("hasHeading", false)) tr.heading.restore(tj.value("heading", 0.0), tj.value("headingRate", 0.0));
 	}
