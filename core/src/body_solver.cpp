@@ -240,6 +240,8 @@ const double kSwayDropStart = tunable("kSwayDropStart", 0.04);  // m of head dro
 const double kSwayDropEnd = tunable("kSwayDropEnd", 0.08);
 const double kRaisedUse = tunable("kRaisedUse", 0.0);
 const double kRaisedSink = tunable("kRaisedSink", 0.0);
+// The no-support sink also counts a foot at the floor between stance detections
+const double kSupportAtFloor = tunable("kSupportAtFloor", 1.0);
 // Logistic regression on the Kinect sessions (tools/pose_model/raised_features.py):
 // self_hf, self_lf, self_coh_hmd, self_coh_waist, self_acc, self_h, other_hf,
 // other_lf, other_coh_hmd, other_coh_waist, other_acc, other_h, sway_hmd
@@ -951,6 +953,10 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 		bool onFloor = false;
 		for (int i = 0; i < 2; i++) {
 			const LegState& ls = m_legs[i];
+			// A foot at the floor carries the weight even between two stance detections:
+			// balancing on one leg (yoga tree pose) its stance flickered, and each time
+			// the other foot, resting on the knee, sank a few cm
+			if (kSupportAtFloor && ls.ankle.y - ankleY < kFloorSnap) onFloor = true;
 			if (!ls.planted) continue;
 			if (ls.anchor.y - ankleY < kFloorSnap) onFloor = true;
 			if (lowest < 0 || ls.anchor.y < m_legs[lowest].anchor.y) lowest = i;
