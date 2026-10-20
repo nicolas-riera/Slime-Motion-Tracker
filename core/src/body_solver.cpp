@@ -112,6 +112,13 @@ const double kUpperSpine = tunable("kUpperSpine", 0.5);
 // fraction: leaning the head forward bends the upper back instead of sliding the
 // whole rigid trunk, hip included, along with the head
 const double kChestStand = tunable("kChestStand", 0.5);
+// A knee raised high tilts the pelvis back (30 deg seen) while the trunk stays upright:
+// the lumbar spine bends. Taken as a rigid trunk, the hip went 25 cm forward. With a
+// leg off the ground and its thigh flexed (kTuckFlex0..1 rad in the pelvis frame), this
+// fraction of the pelvis's backward tilt is left out of the head chain
+const double kTuck = tunable("kTuck", 1.0);
+const double kTuckFlex0 = tunable("kTuckFlex0", 0.4);
+const double kTuckFlex1 = tunable("kTuckFlex1", 0.9);
 // The neck takes the first kNeckRange (rad) of head tilt away from the trunk: only
 // the excess bends the chest, so looking down or around never moves the body
 const double kNeckRange = tunable("kNeckRange", 0.6);
@@ -185,6 +192,7 @@ const double kHoldTime = tunable("kHoldTime", 8.0);
 const double kHoldStart = tunable("kHoldStart", 0.6);
 const double kHoldSigma = tunable("kHoldSigma", 0.25);
 const double kHoldBounce = tunable("kHoldBounce", 0.25);
+const double kHoldLowerDisp = tunable("kHoldLowerDisp", -0.12);  // m
 // Raised-foot probability from micro-movements (updateRaised): how much it stops
 // pulling a raised foot to the floor and keeps its knee up (kRaisedUse 0..1), and
 // how fast a planted foot it says is on the floor sinks there (kRaisedSink, 1/s)
@@ -522,6 +530,26 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 	// the plane of the trunk): its heading corrects the chain's by kLieHeadYaw, unless
 	// they differ by more than kLieHeadYawMax rad (the head tilted toward a shoulder)
 	Vec3 chainUp = torsoUp;
+	if (useWaistTracker && kTuck > 0 && m_initialized) {
+		double raised = 0;
+		for (const LegState& ls : m_legs) {
+			// (a foot held still in the air is planted there)
+			if (ls.planted && ls.anchor.y - ankleY < 0.12) continue;
+			const double flex = std::atan2(-ls.thighLocal.z, -ls.thighLocal.y);
+			raised = std::max(raised, smoothstep(kTuckFlex0, kTuckFlex1, flex));
+		}
+		Vec3 back = pelvis.rotate({0, 0, 1});
+		back.y = 0;
+		if (raised > 0 && back.norm() > 1e-6) {
+			back = back.normalized();
+			const double tiltBack = torsoUp.dot(back);
+			if (tiltBack > 0) {
+				chainUp = (torsoUp - back * (tiltBack * kTuck * raised * standing)).normalized();
+				neck = headPivot - chainUp * d.neckDown;
+				hip0 = neck - chainUp * d.spine;
+			}
+		}
+	}
 	if (useWaistTracker && kLieHeadYaw > 0 && reclined > 0) {
 		const Vec3 headUp = hq.rotate(up);
 		const double th = std::hypot(torsoUp.x, torsoUp.z), hh = std::hypot(headUp.x, headUp.z);
@@ -585,10 +613,27 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 		forward[i] = li.shin.rotate({0, 0, -1});
 
 		if (!m_initialized || !ls.initialized) {
-			// Start standing: straight leg below the hip joint
+			// Start with the foot on the floor below the hip, the knee bent as the shin
+			// says. A straight leg along the shin put the feet 75 cm behind after a full
+			// reset (the solver restarts while the user still holds the ski pose), where
+			// the stance anchors kept them until the user moved
 			ls = LegState{};
 			ls.initialized = true;
-			ls.ankle = hip0 + legOffset[i] + down[i] * (d.thigh + d.shin);
+			LegProblem p0;
+			p0.hipJoint = hip0 + legOffset[i];
+			p0.down = down[i];
+			p0.forward = forward[i];
+			p0.pelvisKnown = useWaistTracker;
+			p0.pelvis = pelvis;
+			p0.floorY = in.floorY;
+			p0.ankleY = ankleY;
+			p0.maxLift = kMaxHipLift * standing;
+			p0.sigmaPhi = 10;
+			p0.under = 1;
+			ls.phi = solveLeg(p0);
+			const Vec3 thighDir = down[i] * std::cos(ls.phi) + forward[i] * std::sin(ls.phi);
+			ls.ankle = p0.hipJoint + thighDir * d.thigh + down[i] * d.shin;
+			ls.ankle.y = std::max(ls.ankle.y, ankleY);
 			ls.anchor = ls.insPos = ls.ankle;
 		}
 
@@ -629,6 +674,7 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 			ls.insPos = ls.ankle + ls.stanceDisp;
 			ls.insVel = ls.stanceVel;
 			ls.lowerVel = ls.stanceVel.y;
+			ls.lowerAcc = ls.lowerDisp = 0;
 		}
 		if (!ls.planted) {
 			const double prevSwing = ls.swingTime;
@@ -637,11 +683,17 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 			ls.swingTime += dt;
 			// Held leg (kHold*): decided while the dead reckoning is still good (the foot
 			// up, not descending), dropped when the raw accelerometer sees the leg lowered
-			// (the dead reckoning later follows the solution, it cannot tell)
-			ls.lowerVel = (ls.lowerVel + li.accelWorld.y * dt) * std::exp(-dt / 0.5);
-			if (prevSwing < kHoldStart && ls.swingTime >= kHoldStart)
+			// (the dead reckoning later follows the solution, it cannot tell). Lowered: a
+			// leaky, low-passed vertical displacement, so shaking the raised leg (+-15
+			// m/s^2 at a few Hz) averages out while putting it down (tens of cm) does not
+			ls.lowerAcc += (li.accelWorld.y - ls.lowerAcc) * std::min(1.0, dt / 0.1);
+			ls.lowerVel = (ls.lowerVel + ls.lowerAcc * dt) * std::exp(-dt / 0.8);
+			ls.lowerDisp = (ls.lowerDisp + ls.lowerVel * dt) * std::exp(-dt / 1.5);
+			if (prevSwing < kHoldStart && ls.swingTime >= kHoldStart) {
 				ls.holdLatched = ls.insPos.y - ankleY > 0.12 && ls.insVel.y > -0.15;
-			if (ls.lowerVel < -0.35) ls.holdLatched = false;
+				ls.lowerDisp = 0;
+			}
+			if (ls.lowerDisp < kHoldLowerDisp) ls.holdLatched = false;
 		} else {
 			ls.holdLatched = false;
 			ls.lowerVel = 0;

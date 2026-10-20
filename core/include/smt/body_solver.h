@@ -164,7 +164,9 @@ private:
 		Vec3 thighLocal{0, -1, 0}, holdThigh{0, -1, 0};
 		bool holdLatched = false;  // the leg is held up (see kHold*)
 		bool onBed = false;  // reclined, planted on the hip's surface rather than the floor
-		double lowerVel = 0;  // leaky vertical velocity from the raw accelerometer
+		// Leg being lowered (kHold*): low-passed vertical acceleration, its leaky velocity
+		// and displacement from the raw accelerometer
+		double lowerAcc = 0, lowerVel = 0, lowerDisp = 0;
 	};
 
 	// One Euro filter (Casiez et al.) on a 3D point

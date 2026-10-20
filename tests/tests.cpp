@@ -549,6 +549,21 @@ static void testBodySolver() {
 		std::printf("couch: feet y %.3f %.3f\n", out.feet[0].position.y, out.feet[1].position.y);
 	}
 
+	// Full reset: the solver restarts while the user still holds the ski pose (knees
+	// bent, shins and trunk leaning forward). The feet start below the hip, not 75 cm
+	// behind along straight legs
+	{
+		BodySolver ski;
+		ski.configure(d, Settings{}, Mode::Three);
+		BodyInput in = bodyInput(d, {0, 0.8, 0}, Quat::fromAxisAngle({1, 0, 0}, deg2rad(-30)), {});
+		for (auto& leg : in.legs) leg.shin = Quat::fromAxisAngle({1, 0, 0}, deg2rad(-25));
+		for (int f = 0; f < 30; f++) out = ski.update(in);
+		double behind = 0;
+		for (int i = 0; i < 2; i++) behind = std::max(behind, out.feet[i].position.z - out.waist.position.z);
+		CHECK(behind < 0.2, "ski pose restart: feet %.3f m behind the hip", behind);
+		std::printf("ski pose restart: feet %.3f m behind the hip\n", behind);
+	}
+
 	// Ankles-only mode standing
 	BodySolver ankles;
 	ankles.configure(d, Settings{}, Mode::Ankles);
