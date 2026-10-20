@@ -196,6 +196,7 @@ const double kModelRobust = tunable("kModelRobust", 3.0);
 // In stance the anchor dominates: the estimate (sigma scaled by this) only
 // corrects its drift slowly (a stronger pull made planted feet skate)
 const double kModelStanceScale = tunable("kModelStanceScale", 3.0);
+const double kModelSeated = tunable("kModelSeated", 0.0);
 // The swing prediction keeps its pull further than the stance anchors (in sigmas)
 const double kInsRobust = tunable("kInsRobust", 5.0);
 // ... and pulls the hip offset with a sigma this many times larger
@@ -852,8 +853,12 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 			p.support = standing * (ls.planted ? 1.0 : 0.1);
 			// Not reclined: the model never saw the user lying back, and there it bent
 			// the knees of the legs stretched on the bed
-			if (in.legs[i].hasFootMeasurement && reclined < 0.95) {
-				p.modelSigma = in.legs[i].footMeasurementSigma * (ls.planted ? kModelStanceScale : 1.0) / (1 - reclined);
+			// Seated, by kModelSeated only: pulling a swinging foot back under the chair
+			// (horizontally), it bent the knee, the foot rose 30 cm and stopped there,
+			// planted in the air (the leg lifting by itself while seated)
+			const double modelUse = lerp(kModelSeated, 1.0, standing);
+			if (in.legs[i].hasFootMeasurement && reclined < 0.95 && modelUse > 0.05) {
+				p.modelSigma = in.legs[i].footMeasurementSigma * (ls.planted ? kModelStanceScale : 1.0) / (1 - reclined) / modelUse;
 				p.model = in.legs[i].footMeasurement;
 			}
 			p.under = !ls.planted && insSigma[i] <= 0 ? standing : 0.0;
@@ -882,6 +887,9 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 				// Even partly held, the foot is not pulled under the hip (its horizontal
 				// pull alone dragged a raised knee down)
 				p.under *= smoothstep(0.3, 0.0, p.hold);
+				// Nor by the foot model: it pulled the held foot back toward the standing
+				// leg, the knee unfolded and the raised foot went 10-20 cm lower
+				if (p.modelSigma > 0) p.modelSigma = p.hold > 0.95 ? 0.0 : p.modelSigma / (1 - p.hold);
 			}
 			p.under *= 1 - kRaisedUse * m_raised.p[i];
 			// Nothing places the foot any more (no anchor, the dead reckoning over, not
