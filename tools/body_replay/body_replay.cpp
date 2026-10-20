@@ -4,7 +4,7 @@
 // to the recorded outputs. Lets the solver be changed and compared on real
 // sessions without SteamVR (tools/plot_replay.py plots the CSV).
 //
-// Usage: smt_body_replay session.jsonl out.csv [--from S] [--to S] [--floor Y] [--model foot_model.json]
+// Usage: smt_body_replay session.jsonl out.csv [--from S] [--to S] [--floor Y] [--model foot_model.json|none]
 //   --from/--to: seconds from the start of the recording
 //   --floor: floor height in raw tracking space (default: from the recording)
 //   --dump inputs.bin: also write the per-frame inputs as float64 rows (names in
@@ -371,11 +371,19 @@ int main(int argc, char** argv) {
 	auto realign = [&] {
 		for (auto& [mac, ts] : trackers) ts.aligned = false;
 	};
-	// Learned foot model (optional): --model path, or SMT_FOOT_MODEL
+	// Learned foot model: --model path, or SMT_FOOT_MODEL, by default the installed one
+	// as the engine runs it (replays without it did not reproduce the live sessions);
+	// "--model none" leaves it out
 	FootModel footModel;
 	std::string modelPath = std::getenv("SMT_FOOT_MODEL") ? std::getenv("SMT_FOOT_MODEL") : "";
 	for (int i = 3; i + 1 < argc; i += 2)
 		if (std::string(argv[i]) == "--model") modelPath = argv[i + 1];
+	if (modelPath.empty() && std::getenv("LOCALAPPDATA")) {
+		const std::string installed = std::string(std::getenv("LOCALAPPDATA")) +
+									  "/Slime Motion Tracker/driver/slime_motion_tracker/bin/win64/models/foot_model.json";
+		if (std::ifstream(installed)) modelPath = installed;
+	}
+	if (modelPath == "none") modelPath.clear();
 	if (!modelPath.empty() && !footModel.load(modelPath)) std::printf("cannot load the foot model %s\n", modelPath.c_str());
 	// Fusion sigma of the model (defaults of footMeasurementSigma), tunable offline
 	const double modelFloor = tunable("modelFloor", 0.03), modelScale = tunable("modelScale", 0.6);
