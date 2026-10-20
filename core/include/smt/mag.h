@@ -143,8 +143,11 @@ struct HeadingFilterSettings {
 	// (within fastTol) for fastTime seconds while the tracker turns by fastRotation is
 	// drift, not noise: take it at once instead of the slow Kalman pull (time constant of
 	// minutes) or waiting for the rotation-consistent relock
+	// Only offsets above fastMin: indoors the mag heading is off by up to +-10 deg from
+	// place to place (desk, PC), and with 4 deg each tracker jumped on its own, the legs
+	// turned against the pelvis while seated (heading total variation 114 -> 24 deg)
 	bool fastRealign = true;
-	double fastMin = deg2rad(4.0);
+	double fastMin = deg2rad(15.0);
 	double fastTol = deg2rad(4.0);
 	double fastTime = 1.5;
 	double fastRotation = deg2rad(30.0);

@@ -8,7 +8,7 @@
 //      dev_yaw_deg (device yaw, uncorrected), hmd_yaw_deg
 // Options: --sensitivity S, --adaptive 0|1 (local field reference), --ref-time S,
 //          --mag-sigma DEG, --corr-time S, --heading-walk DEG_PER_SQRT_MIN, --consistent 0|1,
-//          --max-rate DEG_PER_MIN, --fast 0|1 (fast realignment), --restore 1 (start from the
+//          --max-rate DEG_PER_MIN, --fast 0|1 (fast realignment), --fast-min DEG, --fast-tol DEG, --fast-time S, --restore 1 (start from the
 //          recorded live headings instead of acquiring), --autocal S (the tracker hub's automatic
 //          calibration, also fed while disturbed for more than S s: prints each replacement)
 // mag_deg: the heading the mag measures (the filter's target)
@@ -69,6 +69,9 @@ int main(int argc, char** argv) {
 		else if (std::string(argv[i]) == "--corr-time") settings.magCorrTime = std::atof(argv[i + 1]);
 		else if (std::string(argv[i]) == "--consistent") settings.consistentRelock = std::atoi(argv[i + 1]) != 0;
 		else if (std::string(argv[i]) == "--fast") settings.fastRealign = std::atoi(argv[i + 1]) != 0;
+		else if (std::string(argv[i]) == "--fast-min") settings.fastMin = deg2rad(std::atof(argv[i + 1]));
+		else if (std::string(argv[i]) == "--fast-tol") settings.fastTol = deg2rad(std::atof(argv[i + 1]));
+		else if (std::string(argv[i]) == "--fast-time") settings.fastTime = std::atof(argv[i + 1]);
 		else if (std::string(argv[i]) == "--restore") restore = std::atoi(argv[i + 1]) != 0;
 		else if (std::string(argv[i]) == "--autocal") autocal = std::atof(argv[i + 1]);
 		else if (std::string(argv[i]) == "--max-rate") settings.maxRate = deg2rad(std::atof(argv[i + 1])) / 60.0;
