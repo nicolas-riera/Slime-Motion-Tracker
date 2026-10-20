@@ -147,10 +147,14 @@ const double kHipSigmaSeated = tunable("kHipSigmaSeated", 0.05);
 // ~10 deg per step and, with the SteamVR foot point ahead of the ankle, that twist
 // slid the foot. Beyond kFootYawFree (rad) it is dragged along (pivoting in place)
 const double kFootYawFree = tunable("kFootYawFree", 0.26);
-// SteamVR foot point ahead of the ankle (fraction of the height, as the engine places
-// it) and how far it may dip below the ankle's floor height (m)
-constexpr double kToeLength = 0.045;
+// How far the sole may dip below the floor (m)
 const double kToeSink = tunable("kToeSink", 0.01);
+// The real foot around the ankle (fractions of the height): toe tip ahead and heel
+// behind, on the sole kept above the floor (less kToeSink). Only the SteamVR point
+// was: avatars' toes went into the floor at toe-off and touchdown (pointing down, the
+// ankle a few cm up), their heels on toe-up contacts
+const double kToeTip = tunable("kToeTip", 0.11);
+const double kHeel = tunable("kHeel", 0.04);
 // Planted, how much the output foot is the stance anchor rather than the solved ankle
 const double kPlantedOutput = tunable("kPlantedOutput", 0.6);
 const double kHipSigmaV = tunable("kHipSigmaV", 0.06);
@@ -1027,19 +1031,6 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 		}
 		Quat flat = Quat::yaw(ls.footYaw);
 		Quat footRot = slerp(flat, in.legs[i].shin, ls.footBlend);
-		{
-			// The SteamVR foot point is kToeLength * height ahead of the ankle along the
-			// foot: near the floor it never goes below the ankle's floor height. Following
-			// the shin in the air the foot pointed down, so that point went 5 cm into the
-			// floor at each touchdown until the foot flattened (kneeling, all the time)
-			const double toe = kToeLength * d.height;
-			const Vec3 fwd = footRot.rotate({0, 0, -1});
-			const double minUp = (ankleY - kToeSink - ankle.y) / toe;
-			if (fwd.y < minUp && minUp < 1) {
-				const double raise = std::asin(std::clamp(minUp, -1.0, 1.0)) - std::asin(std::clamp(fwd.y, -1.0, 1.0));
-				footRot = Quat::fromAxisAngle(footRot.rotate({1, 0, 0}), raise) * footRot;
-			}
-		}
 
 		// Planted, the output foot is the stance anchor itself: the leg has one degree
 		// of freedom (the knee), so the solved ankle went wherever the hip took it (the
@@ -1077,6 +1068,21 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 		out.footVelocity[i] = m_initialized ? (p - m_smoothedFeet[i]) / dt : Vec3{};
 		m_smoothedFeet[i] = p;
 		out.feet[i].position = p;
+		// Foot pitch limits keeping the toe tip and the heel (on the sole, ankleHeight below
+		// the ankle) above the floor (kToeTip, kHeel), at the smoothed height: following
+		// the shin in the air the foot pointed down, into the floor at each touchdown and
+		// toe-off (and the smoothed ankle lags below the solution rising)
+		Quat& footRot = out.feet[i].rotation;
+		const double h = d.ankleHeight, c = in.floorY - kToeSink - p.y;  // c < 0
+		const double toe = kToeTip * d.height, heel = kHeel * d.height;
+		const double pitch = std::asin(std::clamp(footRot.rotate({0, 0, -1}).y, -1.0, 1.0));
+		// toe: toe sin p - h cos p >= c; heel: -heel sin p - h cos p >= c
+		const double rt = std::hypot(toe, h), rh = std::hypot(heel, h);
+		double lo = -kPi, hi = kPi;
+		if (c / rt > -1) lo = std::atan2(h, toe) + std::asin(std::clamp(c / rt, -1.0, 1.0));
+		if (-c / rh < 1) hi = std::asin(std::clamp(-c / rh, -1.0, 1.0)) - std::atan2(h, heel);
+		const double limited = lo <= hi ? std::clamp(pitch, lo, hi) : 0.5 * (lo + hi);
+		if (limited != pitch) footRot = Quat::fromAxisAngle(footRot.rotate({1, 0, 0}), limited - pitch) * footRot;
 	}
 	Vec3 w = m_filters[2].filter(out.waist.position, dt, minCutoff, 0.8);
 	out.waistVelocity = m_initialized ? (w - m_smoothedWaist) / dt : Vec3{};
