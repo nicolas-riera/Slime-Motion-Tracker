@@ -542,8 +542,11 @@ void Engine::batteries(SmtBattery out[SMT_DEVICE_COUNT]) const {
 			default: break;
 		}
 		if (slot < 0) continue;
-		// The trackers do not report charging
-		out[slot] = SmtBattery{1, std::clamp(t.batteryLevel, 0.0f, 1.0f), 0};
+		// The trackers do not report charging. No battery reading (USB powered: level 0,
+		// or a voltage too low for a cell, same rule as the overlay) showed an empty
+		// battery in SteamVR: report it plugged in instead
+		const bool usb = t.batteryLevel <= 0.01f || (t.batteryVoltage > 0.0f && t.batteryVoltage < 3.0f);
+		out[slot] = usb ? SmtBattery{1, 1.0f, 1} : SmtBattery{1, std::clamp(t.batteryLevel, 0.0f, 1.0f), 0};
 	}
 }
 

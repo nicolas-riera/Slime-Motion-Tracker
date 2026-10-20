@@ -322,6 +322,28 @@ static BodyOutput runPose(BodySolver& solver, const BodyDimensions& d, double hm
 	return out;
 }
 
+// Inputs of a body whose hip joint center is at hip with the trunk along pelvis (the
+// head aligned with it, the legs stretched along it), as the solver's head chain sees
+// it; accel: linear acceleration of the whole body; head: head rotation in the trunk frame
+static BodyInput bodyInput(const BodyDimensions& d, const Vec3& hip, const Quat& pelvis, const Vec3& accel,
+						   const Quat& head = Quat{}) {
+	BodyInput in;
+	in.dt = 1.0 / 90;
+	in.hmdValid = true;
+	in.hmd.rotation = pelvis * head;
+	in.hmd.position = hip + pelvis.rotate({0, d.spine + d.neckDown, 0}) + in.hmd.rotation.rotate({0, d.headDown, -d.headBack});
+	in.floorY = 0;
+	in.hasWaist = true;
+	in.waist = pelvis;
+	in.waistAccel = accel;
+	for (auto& leg : in.legs) {
+		leg.valid = true;
+		leg.shin = pelvis;
+		leg.accelWorld = accel;
+	}
+	return in;
+}
+
 static void testBodySolver() {
 	BodyDimensions d = BodyDimensions::fromHeight(1.78, std::nullopt);
 	BodySolver solver;
@@ -405,6 +427,126 @@ static void testBodySolver() {
 		double moved = (out.waist.position - sat.waist.position).norm();
 		CHECK(moved < 0.05, "seated lean moved the hip by %.3f", moved);
 		std::printf("seated lean: hip moved %.3f m\n", moved);
+	}
+
+	// Lying down across the bed from its edge, then scooting 25 cm sideways (toward the
+	// middle): the hip moves with the body, the seat anchor must not keep it at the edge
+	{
+		BodySolver bed;
+		bed.configure(d, Settings{}, Mode::Three);
+		const Vec3 seat{0, 0.55, 0};
+		for (int f = 0; f < 60; f++) out = bed.update(bodyInput(d, {0, d.standingHipHeight(), 0}, Quat{}, {}));
+		for (int f = 0; f < 400; f++) out = bed.update(bodyInput(d, seat, Quat{}, {}));
+		for (int f = 0; f < 135; f++) {
+			const Quat back = Quat::fromAxisAngle({1, 0, 0}, deg2rad(90.0 * f / 134));
+			out = bed.update(bodyInput(d, seat, back, {}));
+		}
+		const Quat lying = Quat::fromAxisAngle({1, 0, 0}, deg2rad(90));
+		for (int f = 0; f < 270; f++) out = bed.update(bodyInput(d, seat, lying, {}));
+		const double x0 = out.waist.position.x;
+		for (int f = 0; f < 63; f++) {
+			const double t = f / 63.0;
+			const double x = t < 0.5 ? 0.5 * t * t : 0.25 - 0.5 * (1 - t) * (1 - t);
+			out = bed.update(bodyInput(d, seat + Vec3{x, 0, 0}, lying, {t < 0.5 ? 2.04 : -2.04, 0, 0}));
+		}
+		for (int f = 0; f < 90; f++) out = bed.update(bodyInput(d, seat + Vec3{0.25, 0, 0}, lying, {}));
+		const double moved = out.waist.position.x - x0;
+		CHECK(moved > 0.17, "lying scoot: hip moved %.3f of 0.25 m", moved);
+		std::printf("lying scoot: hip moved %.3f of 0.25 m 1 s later\n", moved);
+	}
+
+	// Lying on the back with the waist tracker's heading 12 deg off: the hip stays in line
+	// with the body (the head's up axis gives the trunk heading); turning the head on the
+	// pillow does not move it
+	{
+		BodySolver lie;
+		lie.configure(d, Settings{}, Mode::Three);
+		const Vec3 hip{0, 0.55, 0};
+		const Quat lying = Quat::fromAxisAngle({1, 0, 0}, deg2rad(90));
+		for (int f = 0; f < 60; f++) out = lie.update(bodyInput(d, {0, d.standingHipHeight(), 0}, Quat{}, {}));
+		for (int f = 0; f < 400; f++) out = lie.update(bodyInput(d, hip, Quat{}, {}));
+		for (int f = 0; f < 135; f++)
+			out = lie.update(bodyInput(d, hip, Quat::fromAxisAngle({1, 0, 0}, deg2rad(90.0 * f / 134)), {}));
+		BodyInput in = bodyInput(d, hip, lying, {});
+		in.waist = Quat::yaw(deg2rad(12)) * lying;
+		for (int f = 0; f < 900; f++) out = lie.update(in);
+		const double side = std::fabs(out.waist.position.x - hip.x);
+		CHECK(side < 0.06, "lying with a 12 deg waist heading error: hip %.3f m to the side", side);
+		BodyInput turned = bodyInput(d, hip, lying, {}, Quat::yaw(deg2rad(60)));
+		turned.waist = in.waist;
+		BodyOutput t = out;
+		for (int f = 0; f < 180; f++) t = lie.update(turned);
+		const double moved = (t.waist.position - out.waist.position).norm();
+		CHECK(moved < 0.03, "lying, head turned 60 deg: hip moved %.3f", moved);
+		// Knees up (shins vertical), the feet slide toward the hip on the bed: they do not
+		// drop to the floor below it (anchors from standing still pull them part way down)
+		BodyInput knees = turned;
+		for (auto& leg : knees.legs) leg.shin = Quat{};
+		BodyOutput k = t;
+		for (int f = 0; f < 270; f++) k = lie.update(knees);
+		CHECK(k.feet[0].position.y > 0.18 && k.feet[1].position.y > 0.18, "lying knees up: feet at %.3f %.3f",
+			  k.feet[0].position.y, k.feet[1].position.y);
+		std::printf("lying, waist heading 12 deg off: hip %.3f m to the side; head turned: hip moved %.3f\n", side,
+					moved);
+	}
+
+	// Knee raised and held up while the leg keeps moving (the shin swings, never still):
+	// the foot must stay up instead of dropping under the hip onto the floor
+	{
+		BodySolver raise;
+		raise.configure(d, Settings{}, Mode::Three);
+		runPose(raise, d, eye, 0, 120);
+		BodyInput in;
+		in.dt = 1.0 / 90;
+		in.hmdValid = true;
+		in.hmd.position = {0, eye, 0};
+		in.hasWaist = true;
+		for (auto& leg : in.legs) leg.valid = true;
+		const Vec3 accel{0, 4.8, -6.4};
+		double minY = 10;
+		for (int f = 0; f < 90 * 6; f++) {
+			const double t = f * in.dt;
+			if (t < 0.5) {
+				in.legs[1].accelWorld = t < 0.25 ? accel : accel * -1.0;
+			} else {
+				const double w = 2 * kPi * 1.5;
+				in.legs[1].shin = Quat::fromAxisAngle({1, 0, 0}, 0.4 * std::sin(w * (t - 0.5)));
+				// Small circles (1.5 m/s^2, ~2 cm): never still
+				in.legs[1].accelWorld = Vec3{1.5 * std::cos(w * (t - 0.5)), 0, 1.5 * std::sin(w * (t - 0.5))};
+				in.legs[1].angularSpeed = 1.0;
+			}
+			out = raise.update(in);
+			if (t > 1.0) minY = std::min(minY, out.feet[1].position.y);
+		}
+		CHECK(minY > d.ankleHeight + 0.15, "raised moving leg dropped to %.3f", minY);
+		// Then put down (shin vertical again, the same displacement back) and still
+		in.legs[1].shin = Quat{};
+		in.legs[1].angularSpeed = 0;
+		for (int f = 0; f < 90 * 2; f++) {
+			const double t = f * in.dt;
+			in.legs[1].accelWorld = t < 0.25 ? accel * -1.0 : t < 0.5 ? accel : Vec3{};
+			out = raise.update(in);
+		}
+		CHECK(out.feet[1].position.y < d.ankleHeight + 0.05, "lowered leg stayed up at %.3f", out.feet[1].position.y);
+		CHECK(std::fabs(out.feet[0].position.y - d.ankleHeight) < 0.03, "standing foot at %.3f",
+			  out.feet[0].position.y);
+		std::printf("raised moving leg: lowest foot y %.3f over 5 s\n", minY);
+	}
+
+	// Slouched on a couch (trunk 45 deg back), shins inclined 55 deg with the feet on the
+	// floor: the feet stay on the floor, not lifted to the seat
+	{
+		BodySolver couch;
+		couch.configure(d, Settings{}, Mode::Three);
+		for (int f = 0; f < 60; f++) out = couch.update(bodyInput(d, {0, d.standingHipHeight(), 0}, Quat{}, {}));
+		const Quat recline = Quat::fromAxisAngle({1, 0, 0}, deg2rad(45));
+		const Quat shin = Quat::fromAxisAngle({1, 0, 0}, deg2rad(-55));
+		BodyInput in = bodyInput(d, {0, 0.5, 0}, recline, {});
+		for (auto& leg : in.legs) leg.shin = shin;
+		for (int f = 0; f < 450; f++) out = couch.update(in);
+		const double y = std::max(out.feet[0].position.y, out.feet[1].position.y);
+		CHECK(y < d.ankleHeight + 0.05, "couch feet lifted to %.3f", y);
+		std::printf("couch: feet y %.3f %.3f\n", out.feet[0].position.y, out.feet[1].position.y);
 	}
 
 	// Ankles-only mode standing

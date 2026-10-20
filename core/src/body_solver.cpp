@@ -143,11 +143,28 @@ constexpr double kReclineStart = 0.85;
 constexpr double kReclineFull = 0.6;
 const double kBedBelowHip = tunable("kBedBelowHip", 0.08);
 const double kBedSigma = tunable("kBedSigma", 0.06);
+// Lying: the head chain's heading follows the head's up axis by this fraction (see the
+// solver), within kLieHeadYawMax rad of the waist tracker's
+const double kLieHeadYaw = tunable("kLieHeadYaw", 0.7);
+const double kLieHeadYawMax = tunable("kLieHeadYawMax", 0.7);
 // Pelvis up axis height below which the torso lies flat
 const double kLyingFlat = tunable("kLyingFlat", 0.3);
 const double kSeatSigma = tunable("kSeatSigma", 0.02);
 const double kSeatLeak = tunable("kSeatLeak", 8.0);
 constexpr double kSeatReach = 0.30;
+// The seat anchor only holds a hip resting on the seat. When the hip itself moves
+// (shifting on the chair, scooting up the bed after lying down across it, rolling
+// over) it follows the head chain: the waist tracker accelerates (above its slow mean,
+// kSeatMoveAccel0..1 m/s^2, then within kSeatMoveTime s) or the pelvis turns more
+// than kSeatTurnFree rad away from the orientation the anchor was set with (lying
+// back, rolling; leaning forward on a chair stays within it), the excess releasing
+// the anchor fully over kSeatTurnFull rad. The anchor used to stay up to 30 cm away
+// for many seconds: lying down from the bed edge, the pelvis stayed beside the body
+const double kSeatMoveAccel0 = tunable("kSeatMoveAccel0", 0.8);
+const double kSeatMoveAccel1 = tunable("kSeatMoveAccel1", 2.0);
+const double kSeatMoveTime = tunable("kSeatMoveTime", 0.25);
+const double kSeatTurnFree = tunable("kSeatTurnFree", 0.5);
+const double kSeatTurnFull = tunable("kSeatTurnFull", 0.5);
 // The learned foot model's horizontal ankle estimate loses its pull beyond this
 // many sigmas (rare frames are off by 20+ cm)
 const double kModelRobust = tunable("kModelRobust", 3.0);
@@ -158,14 +175,16 @@ const double kModelStanceScale = tunable("kModelStanceScale", 3.0);
 const double kInsRobust = tunable("kInsRobust", 5.0);
 // ... and pulls the hip offset with a sigma this many times larger
 const double kInsHipScale = tunable("kInsHipScale", 5.0);
-// A swing longer than the dead reckoning lasts (kMaxSwing) with the head quiet (no
-// walking/running bounce, kHoldBounce m/s): the leg is held up and moved (knee
-// raised, swinging the shin). Instead of pulling the foot under the hip onto the
-// floor, the thigh keeps its direction in the pelvis frame (kHoldSigma rad), fading
-// over kHoldTime s. 0 disables
-const double kHoldTime = tunable("kHoldTime", 0.0);
+// A leg held up and moving (knee raised, swinging the shin: never still, so never
+// planted in the air). The dead reckoning weakens within a second (its sigma grows
+// with the swing time) and the straight-leg prior then dropped the foot onto the floor.
+// From kHoldStart s of swing on, standing on the other foot with the head quiet (no
+// bounce, kHoldBounce m/s), the thigh keeps the direction it had then in the pelvis
+// frame (kHoldSigma rad), fading over kHoldTime s past the dead reckoning. 0 disables
+const double kHoldTime = tunable("kHoldTime", 8.0);
+const double kHoldStart = tunable("kHoldStart", 0.6);
 const double kHoldSigma = tunable("kHoldSigma", 0.25);
-const double kHoldBounce = tunable("kHoldBounce", 0.15);
+const double kHoldBounce = tunable("kHoldBounce", 0.25);
 // Raised-foot probability from micro-movements (updateRaised): how much it stops
 // pulling a raised foot to the floor and keeps its knee up (kRaisedUse 0..1), and
 // how fast a planted foot it says is on the floor sinks there (kRaisedSink, 1/s)
@@ -353,6 +372,8 @@ void BodySolver::reset() {
 	m_legs = {};
 	m_hipOffset = {};
 	m_seatValid = false;
+	m_waistAccMean = {};
+	m_waistActivity = 0;
 	m_initialized = false;
 	m_filters = {};
 	m_smoothedFeet = {};
@@ -495,21 +516,39 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 	const double standing = smoothstep(0.55, 0.8, (hip0.y - in.floorY) / d.standingHipHeight());
 	const double seated = 1 - standing;  // seated, kneeling or lying: the hip is supported
 	const double reclined = seated * smoothstep(kReclineStart, kReclineFull, torsoUp.y);
+	// Lying, the head chain runs along an almost horizontal trunk: a waist tracker
+	// heading error of 10 deg put the hip ~10 cm beside the body. The head's up axis
+	// lies along the trunk too, whatever the head turns (around that axis) or nods (in
+	// the plane of the trunk): its heading corrects the chain's by kLieHeadYaw, unless
+	// they differ by more than kLieHeadYawMax rad (the head tilted toward a shoulder)
+	Vec3 chainUp = torsoUp;
+	if (useWaistTracker && kLieHeadYaw > 0 && reclined > 0) {
+		const Vec3 headUp = hq.rotate(up);
+		const double th = std::hypot(torsoUp.x, torsoUp.z), hh = std::hypot(headUp.x, headUp.z);
+		if (th > 0.2 && hh > 0.2) {
+			const double delta = wrapAngle(std::atan2(headUp.x, headUp.z) - std::atan2(torsoUp.x, torsoUp.z));
+			const double w = kLieHeadYaw * reclined * smoothstep(0.2, 0.6, th) * smoothstep(0.2, 0.6, hh) *
+							 smoothstep(kLieHeadYawMax, 0.5 * kLieHeadYawMax, std::fabs(delta));
+			chainUp = Quat::yaw(delta * w).rotate(torsoUp);
+			neck = headPivot - chainUp * d.neckDown;
+			hip0 = neck - chainUp * d.spine;
+		}
+	}
 	if (reclined > 0 || kChestStand > 0) {
 		const double w = kChestHead * reclined + kChestStand * (1 - reclined);
 		Vec3 headUp = hq.rotate(up);
-		const double tilt = std::acos(std::clamp(torsoUp.dot(headUp), -1.0, 1.0));
+		const double tilt = std::acos(std::clamp(chainUp.dot(headUp), -1.0, 1.0));
 		const double neckRange =
 			kNeckRange * (kNeckStandOnly > 0 ? lerp(1.0, smoothstep(0.6, 0.8, eyeRatio), kNeckStandOnly) : 1.0);
 		if (neckRange > 0 && tilt > 1e-6) {
 			// Keep only the tilt beyond the neck's range
-			Vec3 axis = torsoUp.cross(headUp);
+			Vec3 axis = chainUp.cross(headUp);
 			double excess = std::max(0.0, tilt - neckRange);
-			headUp = axis.norm() > 1e-9 ? Quat::fromAxisAngle(axis, excess).rotate(torsoUp) : torsoUp;
+			headUp = axis.norm() > 1e-9 ? Quat::fromAxisAngle(axis, excess).rotate(chainUp) : chainUp;
 		}
-		const Vec3 chestUp = (torsoUp * (1 - w) + headUp * w).normalized();
+		const Vec3 chestUp = (chainUp * (1 - w) + headUp * w).normalized();
 		neck = headPivot - chestUp * d.neckDown;
-		hip0 = neck - chestUp * (d.spine * kUpperSpine) - torsoUp * (d.spine * (1 - kUpperSpine));
+		hip0 = neck - chestUp * (d.spine * kUpperSpine) - chainUp * (d.spine * (1 - kUpperSpine));
 	}
 	{
 		// Seated, the trunk leans forward: the hip is behind the head chain. Horizontal,
@@ -524,12 +563,16 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 	// (slouching on a couch, sitting back on a bed edge: the foot is on the floor)
 	// unless the torso is lying flat (then a vertical shin is a knee up, the foot on
 	// the bed)
-	std::array<double, 2> bedness{}, floorPref{};
+	std::array<double, 2> bedness{}, floorPref{}, onBedWeight{};
+	const double flatLying = smoothstep(kLyingFlat + 0.25, kLyingFlat + 0.1, torsoUp.y);
 	for (int i = 0; i < 2; i++) {
 		double shinUpY = -in.legs[i].shin.rotate({0, -1, 0}).y;
 		double hanging = smoothstep(0.6, 0.85, shinUpY) * smoothstep(kLyingFlat, kLyingFlat + 0.25, torsoUp.y);
 		bedness[i] = reclined * (1 - hanging);
 		floorPref[i] = seated * (1 - bedness[i]);
+		// Lying flat a foot is on the bed whatever its touchdown (see onBed): the anchors
+		// may date from standing
+		onBedWeight[i] = std::max(m_legs[i].onBed ? 1.0 : 0.0, flatLying);
 	}
 
 	// ---- per-leg geometry, stance detection (zero velocity), swing dead reckoning ----
@@ -568,7 +611,14 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 			// it is within a few cm of the floor
 			ls.anchor = ls.ankle;
 			if (ls.swingTime < kMaxSwing) ls.anchor.y = std::max(ankleY, ls.insPos.y);
-			if (ls.anchor.y - ankleY < lerp(kFloorSnap, kSeatFloorSnap, floorPref[i])) ls.anchor.y = ankleY;
+			// Reclined, the foot lands on the bed (the hip's surface) or on the floor,
+			// whichever its touchdown height is closer to: slouched on a couch, the feet
+			// on the floor used to be pulled up to the seat and floated
+			const double bedY = std::max(ankleY, (hip0 + m_hipOffset).y - kBedBelowHip);
+			ls.onBed = bedness[i] > 0.05 && ls.anchor.y - ankleY > 0.5 * (bedY - ankleY);
+			onBedWeight[i] = std::max(ls.onBed ? 1.0 : 0.0, flatLying);
+			const double floorWeight = lerp(seated, floorPref[i], onBedWeight[i]);
+			if (ls.anchor.y - ankleY < lerp(kFloorSnap, kSeatFloorSnap, floorWeight)) ls.anchor.y = ankleY;
 			out.debug.touchdownSwing[i] = ls.swingTime;
 			out.debug.touchdownHeight[i] = ls.anchor.y - ankleY;
 			ls.stanceVel = ls.stanceDisp = {};
@@ -578,11 +628,23 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 			ls.swingTime = 0;
 			ls.insPos = ls.ankle + ls.stanceDisp;
 			ls.insVel = ls.stanceVel;
+			ls.lowerVel = ls.stanceVel.y;
 		}
 		if (!ls.planted) {
+			const double prevSwing = ls.swingTime;
 			ls.insVel += li.accelWorld * dt;
 			ls.insPos += ls.insVel * dt;
 			ls.swingTime += dt;
+			// Held leg (kHold*): decided while the dead reckoning is still good (the foot
+			// up, not descending), dropped when the raw accelerometer sees the leg lowered
+			// (the dead reckoning later follows the solution, it cannot tell)
+			ls.lowerVel = (ls.lowerVel + li.accelWorld.y * dt) * std::exp(-dt / 0.5);
+			if (prevSwing < kHoldStart && ls.swingTime >= kHoldStart)
+				ls.holdLatched = ls.insPos.y - ankleY > 0.12 && ls.insVel.y > -0.15;
+			if (ls.lowerVel < -0.35) ls.holdLatched = false;
+		} else {
+			ls.holdLatched = false;
+			ls.lowerVel = 0;
 		}
 	}
 
@@ -628,11 +690,29 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 	const double hipSigmaSmooth = std::max(0.002, 1.5 * dt);
 	const double hipLimitH = lerp(useWaistTracker ? 0.25 : 0.4, kSeatReach + 0.1, seated);
 	// Seat anchor (see kSeatSigma): follows the hip while standing
+	if (useWaistTracker) {
+		m_waistAccMean += (in.waistAccel - m_waistAccMean) * std::min(1.0, dt / 2.0);
+		const double a = (in.waistAccel - m_waistAccMean).norm();
+		m_waistActivity += (a - m_waistActivity) * std::min(1.0, dt / 0.15);
+	} else {
+		m_waistActivity = 0;
+	}
 	if (seated < 0.5 || !m_seatValid) {
 		m_seat = hip0 + m_hipOffset;
+		m_seatPelvis = pelvis;
 		m_seatValid = true;
 	} else {
-		m_seat += (hip0 - m_seat) * std::min(1.0, dt / kSeatLeak);
+		// The hip moves on the seat (kSeatMove*, kSeatTurn*)
+		double release = dt / kSeatLeak +
+						 dt / kSeatMoveTime * smoothstep(kSeatMoveAccel0, kSeatMoveAccel1, m_waistActivity);
+		const double turn = (m_seatPelvis.conj() * pelvis).angle();
+		if (turn > kSeatTurnFree) {
+			const double excess = turn - kSeatTurnFree;
+			m_seatPelvis = slerp(m_seatPelvis, pelvis, excess / turn);
+			release += excess / kSeatTurnFull;
+		}
+		m_seatPelvis = slerp(m_seatPelvis, pelvis, std::min(1.0, dt / kSeatLeak));
+		m_seat += (hip0 - m_seat) * std::min(1.0, release);
 		Vec3 e = m_seat - hip0;
 		if (e.norm() > kSeatReach) m_seat = hip0 + e * (kSeatReach / e.norm());
 	}
@@ -643,6 +723,7 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 	};
 	Vec3 hipOffset = m_hipOffset;
 	std::array<double, 2> phi{m_legs[0].phi, m_legs[1].phi};
+	std::array<double, 2> held{};  // hold weight per leg (kHold*)
 	for (int iter = 0; iter < 3; iter++) {
 		for (int i = 0; i < 2; i++) {
 			const LegState& ls = m_legs[i];
@@ -671,19 +752,31 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 				p.model = in.legs[i].footMeasurement;
 			}
 			p.under = !ls.planted && insSigma[i] <= 0 ? standing : 0.0;
-			if (!ls.planted && ls.swingTime >= kMaxSwing) {
+			if (!ls.planted) {
+				double hold = 0;
 				if (kHoldTime > 0) {
-					double quiet = smoothstep(kHoldBounce, 0.5 * kHoldBounce, m_hmdBounce);
-					p.hold = quiet * std::exp(-(ls.swingTime - kMaxSwing) / kHoldTime);
+					// Holding a leg up stands on the other one (jogging or dancing in place,
+					// neither foot stays planted)
+					const LegState& other = m_legs[o];
+					const double support = other.planted ? 1.0 : smoothstep(kMaxSwing, 0.5 * kMaxSwing, other.swingTime);
+					const double quiet = smoothstep(kHoldBounce, 0.5 * kHoldBounce, m_hmdBounce);
+					// Knee lifts stand tall: crouching, a moving foot is on the floor
+					const double tall = smoothstep(0.82, 0.9, eyeRatio);
+					if (ls.holdLatched)
+						hold = support * quiet * tall * smoothstep(kHoldStart, kHoldStart + 0.3, ls.swingTime) *
+							   std::exp(-std::max(0.0, ls.swingTime - kMaxSwing) / kHoldTime);
 				}
-				// Standing only: the detector learnt standing, and seated or squatting a
-				// moving leg rests on the floor or the seat
-				p.hold = std::max(p.hold, kRaisedUse * m_raised.p[i]) * standing;
+				if (ls.swingTime >= kMaxSwing) hold = std::max(hold, kRaisedUse * m_raised.p[i]);
+				// Standing only: seated or squatting, a moving leg rests on the floor or the seat
+				p.hold = hold * standing;
+				held[i] = p.hold;
 				p.holdThigh = pelvis.rotate(ls.holdThigh);
-				p.under *= 1 - p.hold;
+				// Even partly held, the foot is not pulled under the hip (its horizontal
+				// pull alone dragged a raised knee down)
+				p.under *= smoothstep(0.3, 0.0, p.hold);
 			}
 			p.under *= 1 - kRaisedUse * m_raised.p[i];
-			p.bedWeight = ls.planted ? bedness[i] : 0.0;
+			p.bedWeight = ls.planted ? bedness[i] * onBedWeight[i] : 0.0;
 			p.bedY = std::max(ankleY, (hip0 + hipOffset).y - kBedBelowHip);
 			p.otherHeight = std::max(0.0, (hip0 + hipOffset + legVector(o, phi[o])).y - ankleY);
 			phi[i] = solveLeg(p);
@@ -715,7 +808,9 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 			// A swinging leg reaches its dead-reckoned position with its knee: it only
 			// pulls the hip when the leg cannot get there (lifting a knee does not lift
 			// the hip)
-			if (insSigma[i] > 0) addTarget(m_legs[i].insPos - base, insSigma[i] * kInsHipScale, kInsRobust);
+			// (A held leg keeps its knee where it is: it does not pull the hip either)
+			if (insSigma[i] > 0 && held[i] < 0.99)
+				addTarget(m_legs[i].insPos - base, insSigma[i] * kInsHipScale / (1 - held[i]), kInsRobust);
 		}
 		hipOffset = toHeading.conj().rotate({num.x / den.x, num.y / den.y, num.z / den.z});
 		hipOffset.x = std::clamp(hipOffset.x, -hipLimitH, hipLimitH);
@@ -766,7 +861,7 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 		ls.phi = phi[i];
 		Vec3 thighDir = down[i] * std::cos(ls.phi) + forward[i] * std::sin(ls.phi);
 		ls.thighLocal = pelvis.conj().rotate(thighDir);
-		if (ls.planted || ls.swingTime < kMaxSwing) ls.holdThigh = ls.thighLocal;
+		if (ls.planted || ls.swingTime < kHoldStart) ls.holdThigh = ls.thighLocal;
 		Vec3 knee = hip + legOffset[i] + thighDir * d.thigh;
 		Vec3 ankle = knee + down[i] * d.shin;
 		ankle.y = std::max(ankle.y, ankleY);
@@ -791,7 +886,7 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 				ls.anchor.y += (ankleY - ls.anchor.y) * std::min(1.0, standing * dt / kFloorSinkTime);
 			// Seated upright, a foot resting below furniture height is on the floor
 			if (ls.anchor.y > ankleY && ls.anchor.y < ankleY + kSeatFloorSnap)
-				ls.anchor.y += (ankleY - ls.anchor.y) * std::min(1.0, floorPref[i] * dt / kSeatSinkTime);
+				ls.anchor.y += (ankleY - ls.anchor.y) * std::min(1.0, lerp(seated, floorPref[i], onBedWeight[i]) * dt / kSeatSinkTime);
 			ls.insPos = ankle;
 			ls.insVel = {};
 		} else {

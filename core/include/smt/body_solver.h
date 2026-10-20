@@ -162,6 +162,9 @@ private:
 		// Thigh direction (pelvis frame) of the last solve, and the one held when a
 		// swing outlasts the dead reckoning (knee kept up, see kHoldTime)
 		Vec3 thighLocal{0, -1, 0}, holdThigh{0, -1, 0};
+		bool holdLatched = false;  // the leg is held up (see kHold*)
+		bool onBed = false;  // reclined, planted on the hip's surface rather than the floor
+		double lowerVel = 0;  // leaky vertical velocity from the raw accelerometer
 	};
 
 	// One Euro filter (Casiez et al.) on a 3D point
@@ -204,6 +207,11 @@ private:
 	void updateRaised(const BodyInput& in, double dt);
 	Vec3 m_seat;  // where the hip rests when seated or lying
 	bool m_seatValid = false;
+	// Hip moving on the seat (see kSeatMove*): waist tracker acceleration above its slow
+	// mean, and the pelvis orientation the seat anchor goes with
+	Vec3 m_waistAccMean;
+	double m_waistActivity = 0;
+	Quat m_seatPelvis;
 	bool m_initialized = false;
 	std::array<OneEuro, 3> m_filters;  // left foot, right foot, waist
 	std::array<Vec3, 2> m_smoothedFeet;

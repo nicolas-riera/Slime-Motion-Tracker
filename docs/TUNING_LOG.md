@@ -104,3 +104,31 @@ Kinect ankle median L/R: seated 19.7/20.8 -> 9.1/10.3 cm; other parts 15.9/14.8
 -> 15.3/14.6 and 16.2/12.5 -> 15.0/11.1 cm. Plausibility equal.
 Kalman foot filter: implemented (not deployed): neutral on Kinect, but skate
 +25% and swing_follow +30% on replays; to be tuned.
+
+## 2026-10-20 - lying pelvis, held leg, couch feet
+
+User: lying (and a bit seated) the pelvis is too far to the side; a leg held up
+while moving teleports to the floor; seated, the feet often lift off the floor.
+No Kinect data any more: synthetic scenarios in tests/tests.cpp, plus the two
+standing recordings of 2026-10-20 as a no-regression check (outputs identical).
+- Lying, the head chain runs along an almost horizontal trunk, so a waist
+  heading error swings the hip sideways (12 deg -> 9.8 cm). The head's up axis
+  lies along the trunk whatever the head turns or nods: its heading corrects the
+  chain's by 0.7 (kLieHeadYaw), within 40 deg. 12 deg error -> 3.4 cm; head
+  turned 60 deg on the pillow moves the hip 0.2 cm.
+- The seat anchor (2 cm, 8 s leak, 30 cm reach) kept the hip where it sat down:
+  scooting 25 cm on the bed moved the hip 10 cm. It now follows the head chain
+  when the waist tracker accelerates (0.8-2 m/s^2 above its 2 s mean; standing
+  recordings show ~1 m/s^2 of sway, so the thresholds stay high) or the pelvis
+  turns beyond 29 deg from the anchor's orientation (lying back, rolling). 20 cm.
+- Held leg (kHoldTime, was off): the dead reckoning loses its pull within ~1 s
+  and the straight-leg prior then dropped a moving raised leg to the floor (5 s
+  of a moving knee lift: lowest foot 7 cm -> 30 cm). The hold is decided at 0.6 s
+  of swing (foot up, not descending), needs the other foot planted, the head tall
+  and quiet, and drops when the raw accelerometer sees the leg lowered. A held
+  leg does not pull the hip (a first version bent the standing knee and locked it
+  after landing, seen on the high-knee recording).
+- Couch: reclined, a planted foot was pulled to the seat's height and only snapped
+  to the floor within 6 cm. The touchdown height now decides bed or floor (closer
+  of the two); lying flat keeps the bed. Shins at 55 deg: feet 4 cm up -> on the
+  floor.
