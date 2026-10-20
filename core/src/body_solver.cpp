@@ -200,25 +200,17 @@ const double kInsHipScale = tunable("kInsHipScale", 5.0);
 const double kHoldTime = tunable("kHoldTime", 8.0);
 // Knee smoothness loosening when nothing places the foot (see the leg problem)
 const double kFreeSmooth = tunable("kFreeSmooth", 3.0);
-// Knee hinge axis. The ski pose calibrates the shin's forward axis from its rotation
-// about the ankle, whose axis is turned outward from the knee's (tibial torsion): the
-// knees bent outward walking (15-30 deg per leg on the recordings). Walking, the shin
-// swings about the knee axis: its rotation axis in the shin frame (twist ignored) is
-// learned as a principal axis (forgetting time kHingeTime s of walking), from kHingeYaw0
-// rad (rotated inward), and the hinge turned to it. Kept across resets: the bias comes
-// back with every calibration
-const double kHingeYaw0 = tunable("kHingeYaw0", 0.3);
-const double kHingeTime = tunable("kHingeTime", 20.0);
-const double kHingeMax = 0.6;
-// Seated or lying the correction fades to this fraction: the knee bent, the tibia turns
-// inward on the femur (screw-home), and with the full correction the seated knees came
-// together (13 cm apart instead of 28)
-const double kHingeSeated = tunable("kHingeSeated", 0.0);
-// Measured walking (the thigh near vertical): fades out as the thigh rises between these
-// angles (rad from vertical). A raised knee with the full correction crossed the thighs
-// (15-28 deg inward)
-const double kHingeLift0 = tunable("kHingeLift0", 0.5);
-const double kHingeLift1 = tunable("kHingeLift1", 0.9);
+// Tibial rotation: the knee bent, the tibia turns on the femur (screw-home, free axial
+// rotation in flexion), so the shin's heading no longer gives the thigh's. The hinge
+// followed it: a raised knee went inward when the shin turned in (by up to 30 deg, and
+// by a different amount at each raise on the 15:20 recording), crouching brought the
+// feet in. The hinge heading is pulled toward the pelvis heading by kTibialFree, with the
+// knee angle from kTibialFlex0 to kTibialFlex1 rad
+const double kTibialFree = tunable("kTibialFree", 0.7);
+const double kTibialFlex0 = tunable("kTibialFlex0", 0.5);
+const double kTibialFlex1 = tunable("kTibialFlex1", 1.3);
+// Seated (the foot rests and sets the tibia's turn) the pull is scaled by this
+const double kTibialSeated = tunable("kTibialSeated", 0.0);
 const double kHoldStart = tunable("kHoldStart", 0.6);
 const double kHoldSigma = tunable("kHoldSigma", 0.25);
 const double kHoldBounce = tunable("kHoldBounce", 0.25);
@@ -412,8 +404,6 @@ void BodySolver::reset() {
 	m_seatValid = false;
 	m_waistAccMean = {};
 	m_waistActivity = 0;
-	m_hingePrevValid = false;
-	m_walkSpeed = 0;
 	m_initialized = false;
 	m_filters = {};
 	m_smoothedFeet = {};
@@ -635,36 +625,6 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 		onBedWeight[i] = std::max(m_legs[i].onBed ? 1.0 : 0.0, flatLying);
 	}
 
-	// ---- knee hinge axis (kHinge*) ----
-	{
-		const Vec3 hmdXZ{in.hmd.position.x, 0, in.hmd.position.z};
-		if (m_hingePrevValid)
-			m_walkSpeed += ((hmdXZ - m_prevHmdXZ).norm() / dt - m_walkSpeed) * std::min(1.0, dt / 0.5);
-		m_prevHmdXZ = hmdXZ;
-		const double walking = standing * smoothstep(0.85, 0.9, eyeRatio) * smoothstep(0.3, 0.5, m_walkSpeed);
-		for (int i = 0; i < 2; i++) {
-			auto& c = m_hingeCov[i];
-			if (!m_hingeInit) {
-				const double y0 = (i == 0 ? 1 : -1) * kHingeYaw0;
-				c = {sq(std::cos(y0)), std::cos(y0) * std::sin(y0), sq(std::sin(y0))};
-			}
-			if (m_hingePrevValid && kHingeTime > 0 && walking > 0.01) {
-				const Vec3 w = (m_prevShin[i].conj() * in.legs[i].shin).toRotationVector() / dt;
-				const double n2 = sq(w.x) + sq(w.z);
-				if (n2 > 1.0) {
-					const double k = std::min(1.0, walking * dt / kHingeTime);
-					c[0] += (sq(w.x) / n2 - c[0]) * k;
-					c[1] += (w.x * w.z / n2 - c[1]) * k;
-					c[2] += (sq(w.z) / n2 - c[2]) * k;
-				}
-			}
-			m_hingeYaw[i] = std::clamp(0.5 * std::atan2(2 * c[1], c[0] - c[2]), -kHingeMax, kHingeMax);
-			m_prevShin[i] = in.legs[i].shin;
-		}
-		m_hingeInit = m_hingePrevValid = true;
-		out.debug.hingeYaw = m_hingeYaw;
-	}
-
 	// ---- per-leg geometry, stance detection (zero velocity), swing dead reckoning ----
 	std::array<Vec3, 2> legOffset, down, forward;
 	for (int i = 0; i < 2; i++) {
@@ -673,11 +633,16 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 		legOffset[i] = pelvis.rotate({(i == 0 ? -0.5 : 0.5) * d.hipWidth, 0, 0});
 		down[i] = li.shin.rotate({0, -1, 0});
 		{
-			const Vec3 f0 = li.shin.rotate({0, 0, -1});
-			const Vec3 thigh = down[i] * std::cos(ls.phi) + f0 * std::sin(ls.phi);
-			const double lift = std::acos(std::clamp(-thigh.y, -1.0, 1.0));
-			const double w = lerp(kHingeSeated, 1.0, standing) * smoothstep(kHingeLift1, kHingeLift0, lift);
-			forward[i] = (li.shin * Quat::yaw(-m_hingeYaw[i] * w)).rotate({0, 0, -1});
+			// Twist about the shin axis toward the pelvis forward (kTibial*): the hinge
+			// plane turns to contain it, unless the shin points along it
+			const Vec3 u = -down[i], fs = li.shin.rotate({0, 0, -1}), fp = pelvis.rotate({0, 0, -1});
+			const double along = std::fabs(fp.dot(u));
+			const Vec3 target = fp - u * fp.dot(u);
+			const double twist = std::atan2(u.dot(fs.cross(target)), fs.dot(target));
+			const double pull = kTibialFree * smoothstep(kTibialFlex0, kTibialFlex1, ls.phi) *
+								smoothstep(0.95, 0.8, along) * lerp(kTibialSeated, 1.0, standing);
+			out.debug.hingeYaw[i] = pull * twist;
+			forward[i] = (li.shin * Quat::yaw(out.debug.hingeYaw[i])).rotate({0, 0, -1});
 		}
 
 		if (!m_initialized || !ls.initialized) {
