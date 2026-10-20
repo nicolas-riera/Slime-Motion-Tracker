@@ -34,6 +34,7 @@ public:
 
 private:
 	enum class CalPhase { Idle, Stand, Ski, Done, Error };
+	enum class HipPhase { Idle, Countdown, Measuring, Done, Error };
 	struct Capture {
 		Quat q;  // corrected tracker orientation
 		bool inMagFrame = false;
@@ -98,6 +99,12 @@ private:
 	bool m_calQuick = false;
 	double m_calDeadline = 0;
 	std::string m_calMessage;
+	// Hip side offset calibration (controllers on both sides of the pelvis)
+	HipPhase m_hipPhase = HipPhase::Idle;
+	double m_hipDeadline = 0, m_hipSum = 0;
+	int m_hipCount = 0;
+	std::string m_hipMessage;
+	void updateHipCalibration(double now, const BodyOutput& out);
 	Pose m_standHmd;
 	std::map<std::string, Capture> m_standCaptures;
 	// Tracker boot counts at the last calibration: without the mag, the yaw

@@ -21,6 +21,10 @@ namespace {
 constexpr const char* kVersion = "0.2.0";
 constexpr double kStandSeconds = 3.0;
 constexpr double kQuickResetSeconds = 3.0;
+// Hip side offset: time to put the controllers on the hips, then measured over
+constexpr double kHipCountdownSeconds = 5.0;
+constexpr double kHipMeasureSeconds = 1.0;
+constexpr double kHipMaxOffset = 0.2;
 constexpr double kSkiSeconds = 3.0;
 
 Pose poseFromMatrix(const double m[3][4]) {
@@ -187,6 +191,7 @@ void Engine::applySettings() {
 	hs.sensitivity = s.magSensitivity;
 	m_hub.setMagSettings(s.magEnabled, hs);
 	BodyDimensions dims = BodyDimensions::fromHeight(m_config.userHeight, m_config.measuredEyeHeight);
+	dims.hipSide = m_config.hipSideOffset;
 	m_eyeHeight = dims.eyeHeight;
 	m_legReach = dims.thigh + dims.shin + 0.06;  // waist output to ankle, straight leg
 	m_solver.configure(dims, s, m_config.mode);
@@ -297,6 +302,7 @@ void Engine::frame(const SmtFrameInput& fin, SmtFrameOutput& fout) {
 		m_pose.submit(pin, now, m_config.userHeight);
 		m_fuser.update(m_pose.latest(), hmd, m_floorY, m_eyeHeight, m_legReach, dt, out);
 	}
+	updateHipCalibration(now, out);
 	recordFrame(fin, out, trackers);
 	if (m_calPhase != m_recordedPhase) {
 		static const char* names[] = {"idle", "stand", "ski", "done", "error"};
@@ -428,6 +434,20 @@ void Engine::handleCommand(const json& cmd) {
 		m_calDeadline = TrackerHub::now() + (m_calQuick ? kQuickResetSeconds : kStandSeconds);
 		m_calMessage = "Stand straight, feet parallel, look straight ahead";
 		return;
+	} else if (type == "hipCalibrate") {
+		m_hipPhase = HipPhase::Countdown;
+		m_hipDeadline = TrackerHub::now() + kHipCountdownSeconds;
+		m_hipMessage = "Hold a controller against each side of your hips, stand straight";
+		return;
+	} else if (type == "hipCancel") {
+		m_hipPhase = HipPhase::Idle;
+		m_hipMessage.clear();
+		return;
+	} else if (type == "hipReset") {
+		m_config.hipSideOffset = 0;
+		m_hipPhase = HipPhase::Idle;
+		m_hipMessage.clear();
+		recordEvent("hip", "reset");
 	} else if (type == "cancelCalibration") {
 		m_calPhase = CalPhase::Idle;
 		m_calMessage.clear();
@@ -608,8 +628,48 @@ void Engine::finishCalibration(const Pose& hmd) {
 	markDirty();
 }
 
+void Engine::updateHipCalibration(double now, const BodyOutput& out) {
+	if (m_hipPhase == HipPhase::Countdown && now >= m_hipDeadline) {
+		m_hipPhase = HipPhase::Measuring;
+		m_hipDeadline = now + kHipMeasureSeconds;
+		m_hipSum = 0;
+		m_hipCount = 0;
+		m_hipMessage = "Measuring, hold still";
+	}
+	if (m_hipPhase != HipPhase::Measuring) return;
+	auto fail = [&](const char* why) {
+		m_hipPhase = HipPhase::Error;
+		m_hipMessage = why;
+		recordEvent("hip", std::string("error: ") + why);
+	};
+	if (!out.valid) return fail("The body is not tracked (calibrate first)");
+	if (!m_handValid[0] || !m_handValid[1]) return fail("Both controllers must be tracked");
+	// Across the pelvis, level: the controllers' midpoint against the hip the head
+	// chain gives (it includes the current offset, so the result adds to it)
+	Vec3 right = out.waist.rotation.rotate({1, 0, 0});
+	right.y = 0;
+	if (right.norm() < 0.3) return fail("Stand straight");
+	right = right.normalized();
+	const Vec3 l = m_hands[0].position, r = m_hands[1].position;
+	if ((r - l).dot(right) < 0.15)
+		return fail("Left controller on the left hip, right controller on the right hip");
+	m_hipSum += ((l + r) * 0.5 - out.debug.hip0).dot(right);
+	m_hipCount++;
+	if (now < m_hipDeadline) return;
+	const double offset = std::clamp(m_config.hipSideOffset + m_hipSum / std::max(1, m_hipCount), -kHipMaxOffset, kHipMaxOffset);
+	m_config.hipSideOffset = offset;
+	m_hipPhase = HipPhase::Done;
+	char msg[96];
+	std::snprintf(msg, sizeof(msg), "Hip centered: %.1f cm to the %s", std::fabs(offset) * 100, offset >= 0 ? "right" : "left");
+	m_hipMessage = msg;
+	recordEvent("hip", msg);
+	applySettings();
+	markDirty();
+}
+
 void Engine::publishState(const std::vector<TrackerSnapshot>& trackers, const BodyOutput& out) {
 	static const char* phases[] = {"idle", "stand", "ski", "done", "error"};
+	static const char* hipPhases[] = {"idle", "countdown", "measuring", "done", "error"};
 	const Settings& s = m_config.settings;
 	double now = TrackerHub::now();
 
@@ -666,6 +726,11 @@ void Engine::publishState(const std::vector<TrackerSnapshot>& trackers, const Bo
 		{"ready", ready(trackers)},
 		{"calibration",
 		 {{"phase", phases[int(m_calPhase)]}, {"quick", m_calQuick}, {"countdown", countdown}, {"message", m_calMessage}}},
+		{"hipSideOffset", m_config.hipSideOffset},
+		{"hipCalibration",
+		 {{"phase", hipPhases[int(m_hipPhase)]},
+		  {"countdown", m_hipPhase == HipPhase::Countdown ? std::max(0.0, m_hipDeadline - now) : 0.0},
+		  {"message", m_hipMessage}}},
 		{"lastCalibration",
 		 {{"full", m_config.lastFullCalibration > 0 ? json(m_config.lastFullCalibration) : json(nullptr)},
 		  {"reset", m_config.lastQuickReset > 0 ? json(m_config.lastQuickReset) : json(nullptr)}}},

@@ -618,6 +618,9 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 		pelvisBack.y = 0;
 		hip0 += pelvisBack * (kSitBack * d.height * seated * (1 - kSitBackRecline * reclined));
 	}
+	// The user's own offset (calibrated with the controllers): a torso leaning sideways
+	// put the whole lower body to one side
+	hip0 += pelvis.rotate({d.hipSide, 0, 0});
 
 	// Per leg, how much a planted foot rests on the bed (at the hip's height) rather
 	// than on the floor. Reclined with a vertical shin, the leg hangs from the seat

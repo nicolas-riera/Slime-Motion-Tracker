@@ -51,6 +51,9 @@ struct TrackerConfig {
 struct Config {
 	Mode mode = Mode::Three;
 	double userHeight = 1.75;
+	// Hip center to the right of the head chain (m, negative: left), measured with the
+	// controllers on both sides of the pelvis (a torso leaning sideways)
+	double hipSideOffset = 0;
 	std::optional<double> measuredEyeHeight;
 	// Wall clock (Unix seconds) of the last successful calibrations, 0 = never
 	double lastFullCalibration = 0;

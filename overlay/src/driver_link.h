@@ -43,6 +43,13 @@ struct TrackerInfo {
     MagInfo mag;
 };
 
+// Hip side offset calibration (controllers on both sides of the pelvis)
+struct HipCalibrationInfo {
+    std::string phase = "idle";  // idle|countdown|measuring|done|error
+    float countdown = 0.0f;
+    std::string message;
+};
+
 struct CalibrationInfo {
     std::string phase = "idle";  // idle|stand|ski|done|error
     bool quick = false;  // quick reset (stand only) rather than the full calibration
@@ -148,6 +155,8 @@ struct DriverState {
     bool calibrated = false;
     bool ready = false;  // all mapped trackers connected and calibrated, both ankles mapped
     CalibrationInfo calibration;
+    float hipSideOffset = 0.0f;  // m, > 0: hip center to the right of the head chain
+    HipCalibrationInfo hipCalibration;
     DriverSettings settings;
     std::vector<TrackerInfo> trackers;
     // Assigned trackers not heard since the engine started (offline, for the Body page)
@@ -190,6 +199,9 @@ public:
     void calibrate();
     void quickReset();
     void cancelCalibration();
+    void hipCalibrate();
+    void hipCancel();
+    void hipReset();
     void magCalibrate(std::string_view mac);
     void magCancel(std::string_view mac);
     void magReset(std::string_view mac);

@@ -81,6 +81,7 @@ struct BodyDimensions {
 	double eyeHeight = 0;  // standing eye height above the floor
 	double shin = 0, thigh = 0, ankleHeight = 0, hipWidth = 0, spine = 0;
 	double headDown = 0, headBack = 0, neckDown = 0;
+	double hipSide = 0;  // hip center to the right of the head chain, pelvis frame (m)
 
 	// Hip joint height above the floor when standing straight
 	double standingHipHeight() const { return ankleHeight + shin + thigh; }

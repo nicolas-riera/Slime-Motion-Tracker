@@ -58,6 +58,7 @@ bool Config::fromJson(const json& j) {
 	try {
 		mode = modeFromName(j.value("mode", "three"));
 		userHeight = j.value("userHeight", 1.75);
+		hipSideOffset = j.value("hipSideOffset", 0.0);
 		measuredEyeHeight.reset();
 		lastFullCalibration = j.value("lastFullCalibration", 0.0);
 		lastQuickReset = j.value("lastQuickReset", 0.0);
@@ -108,6 +109,7 @@ json Config::toJson() const {
 	json j;
 	j["mode"] = modeName(mode);
 	j["userHeight"] = userHeight;
+	j["hipSideOffset"] = hipSideOffset;
 	j["measuredEyeHeight"] = measuredEyeHeight ? json(*measuredEyeHeight) : json(nullptr);
 	j["lastFullCalibration"] = lastFullCalibration;
 	j["lastQuickReset"] = lastQuickReset;

@@ -496,6 +496,39 @@ void drawBody(DriverLink& link, const DriverState& s) {
     endCard();
     ImGui::Dummy(ImVec2(0, 4));
 
+    beginCard("##hip");
+    sectionTitle("HIP CENTER");
+    helpText("Trackers to one side of your body in VR (a torso that leans sideways)? Press Calibrate, then hold "
+             "a controller against each side of your hips and stand straight until it is done.");
+    ImGui::Dummy(ImVec2(0, 4));
+    const HipCalibrationInfo& hc = s.hipCalibration;
+    if (std::fabs(s.hipSideOffset) < 0.0005f)
+        infoRow("Side offset", col::textDim, "None");
+    else
+        infoRow("Side offset", col::text, "%.1f cm to the %s", std::fabs(s.hipSideOffset) * 100.0f,
+                s.hipSideOffset > 0 ? "right" : "left");
+    const bool hipRunning = hc.phase == "countdown" || hc.phase == "measuring";
+    if (hipRunning) {
+        if (hc.phase == "countdown")
+            text(fonts.body, col::orange, "%s (%.0f s)", hc.message.c_str(), std::ceil(hc.countdown));
+        else
+            text(fonts.body, col::orange, "%s", hc.message.c_str());
+    } else if (!hc.message.empty()) {
+        text(fonts.body, hc.phase == "error" ? col::red : col::green, "%s", hc.message.c_str());
+    }
+    ImGui::Dummy(ImVec2(0, 4));
+    if (hipRunning) {
+        if (button("Cancel##hip", ImVec2(160, 40))) link.hipCancel();
+    } else {
+        if (button("Calibrate##hip", ImVec2(160, 40), ButtonStyle::Primary)) link.hipCalibrate();
+        if (std::fabs(s.hipSideOffset) >= 0.0005f) {
+            ImGui::SameLine();
+            if (button("Reset##hip", ImVec2(120, 40))) link.hipReset();
+        }
+    }
+    endCard();
+    ImGui::Dummy(ImVec2(0, 4));
+
     beginCard("##mapping");
     sectionTitle("TRACKER ASSIGNMENT");
     helpText("Shake a tracker: its row lights up. The mode (ankles only, or ankles + waist) follows the trackers "
