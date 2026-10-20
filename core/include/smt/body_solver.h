@@ -219,6 +219,7 @@ private:
 	Vec3 m_waistAccMean;
 	double m_waistActivity = 0;
 	Quat m_seatPelvis;
+	double m_tuck = 0;  // smoothed raised-knee pelvis tuck weight (kTuck*)
 	bool m_initialized = false;
 	std::array<OneEuro, 3> m_filters;  // left foot, right foot, waist
 	std::array<Vec3, 2> m_smoothedFeet;

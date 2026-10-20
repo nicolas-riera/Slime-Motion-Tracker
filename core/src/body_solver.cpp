@@ -121,6 +121,11 @@ const double kChestStand = tunable("kChestStand", 0.5);
 const double kTuck = tunable("kTuck", 1.0);
 const double kTuckFlex0 = tunable("kTuckFlex0", 0.4);
 const double kTuckFlex1 = tunable("kTuckFlex1", 0.9);
+// ...weighted by the foot's height (m, continuous: the planted flag flickers, and the
+// pelvis switched with it) and smoothed over this time (s)
+const double kTuckFoot0 = tunable("kTuckFoot0", 0.05);
+const double kTuckFoot1 = tunable("kTuckFoot1", 0.2);
+const double kTuckTime = tunable("kTuckTime", 0.3);
 // The neck takes the first kNeckRange (rad) of head tilt away from the trunk: only
 // the excess bends the chest, so looking down or around never moves the body
 const double kNeckRange = tunable("kNeckRange", 0.6);
@@ -410,6 +415,7 @@ void BodySolver::reset() {
 	m_smoothedWaist = {};
 	m_raised = {};
 	m_hmdBounce = 0;
+	m_tuck = 0;
 	m_swayRef = {};
 	m_swayGate = m_standHeadY = m_bothPlantedTime = 0;
 }
@@ -553,16 +559,17 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 	// they differ by more than kLieHeadYawMax rad (the head tilted toward a shoulder)
 	Vec3 chainUp = torsoUp;
 	if (useWaistTracker && kTuck > 0 && m_initialized) {
-		double raised = 0;
+		double target = 0;
 		for (const LegState& ls : m_legs) {
-			// (a foot held still in the air is planted there)
-			if (ls.planted && ls.anchor.y - ankleY < 0.12) continue;
 			const double flex = std::atan2(-ls.thighLocal.z, -ls.thighLocal.y);
-			raised = std::max(raised, smoothstep(kTuckFlex0, kTuckFlex1, flex));
+			target = std::max(target, smoothstep(kTuckFlex0, kTuckFlex1, flex) *
+										  smoothstep(kTuckFoot0, kTuckFoot1, ls.ankle.y - ankleY));
 		}
+		m_tuck += (target - m_tuck) * std::min(1.0, dt / kTuckTime);
+		const double raised = m_tuck;
 		Vec3 back = pelvis.rotate({0, 0, 1});
 		back.y = 0;
-		if (raised > 0 && back.norm() > 1e-6) {
+		if (raised > 0.001 && back.norm() > 1e-6) {
 			back = back.normalized();
 			const double tiltBack = torsoUp.dot(back);
 			if (tiltBack > 0) {
