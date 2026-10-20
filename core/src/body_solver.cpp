@@ -54,7 +54,7 @@ constexpr double kHipClearance = 0.08;
 // Stance anchors follow the solution with this time constant (s), and jump to it
 // when farther than kAnchorReset (m). Planted feet are output at their anchor, so this
 // is how fast a planted foot drifts: 1 s let it slide ~2 cm/s, 2 s ~1.4 cm/s
-const double kAnchorLeak = tunable("kAnchorLeak", 2.0);
+const double kAnchorLeak = tunable("kAnchorLeak", 1.0);
 const double kAnchorReset = tunable("kAnchorReset", 0.15);
 // Swing prediction is dropped after this long without a stance (s)
 constexpr double kMaxSwing = 1.5;
@@ -147,7 +147,7 @@ const double kFootYawFree = tunable("kFootYawFree", 0.26);
 constexpr double kToeLength = 0.045;
 const double kToeSink = tunable("kToeSink", 0.01);
 // Planted, how much the output foot is the stance anchor rather than the solved ankle
-const double kPlantedOutput = tunable("kPlantedOutput", 1.0);
+const double kPlantedOutput = tunable("kPlantedOutput", 0.6);
 const double kHipSigmaV = tunable("kHipSigmaV", 0.06);
 const double kHipStretch = tunable("kHipStretch", 0.06);  // m, see the hip offset solve
 // Reclined (pelvis up axis height from kReclineStart to kReclineFull: leaning back
@@ -214,6 +214,11 @@ const double kHingeMax = 0.6;
 // inward on the femur (screw-home), and with the full correction the seated knees came
 // together (13 cm apart instead of 28)
 const double kHingeSeated = tunable("kHingeSeated", 0.0);
+// Measured walking (the thigh near vertical): fades out as the thigh rises between these
+// angles (rad from vertical). A raised knee with the full correction crossed the thighs
+// (15-28 deg inward)
+const double kHingeLift0 = tunable("kHingeLift0", 0.5);
+const double kHingeLift1 = tunable("kHingeLift1", 0.9);
 const double kHoldStart = tunable("kHoldStart", 0.6);
 const double kHoldSigma = tunable("kHoldSigma", 0.25);
 const double kHoldBounce = tunable("kHoldBounce", 0.25);
@@ -667,7 +672,13 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 		LegState& ls = m_legs[i];
 		legOffset[i] = pelvis.rotate({(i == 0 ? -0.5 : 0.5) * d.hipWidth, 0, 0});
 		down[i] = li.shin.rotate({0, -1, 0});
-		forward[i] = (li.shin * Quat::yaw(-m_hingeYaw[i] * lerp(kHingeSeated, 1.0, standing))).rotate({0, 0, -1});
+		{
+			const Vec3 f0 = li.shin.rotate({0, 0, -1});
+			const Vec3 thigh = down[i] * std::cos(ls.phi) + f0 * std::sin(ls.phi);
+			const double lift = std::acos(std::clamp(-thigh.y, -1.0, 1.0));
+			const double w = lerp(kHingeSeated, 1.0, standing) * smoothstep(kHingeLift1, kHingeLift0, lift);
+			forward[i] = (li.shin * Quat::yaw(-m_hingeYaw[i] * w)).rotate({0, 0, -1});
+		}
 
 		if (!m_initialized || !ls.initialized) {
 			// Start with the foot on the floor below the hip, the knee bent as the shin

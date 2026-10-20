@@ -332,7 +332,7 @@ public:
             vr::VR_Shutdown();
             return false;
         }
-        ov->SetOverlayWidthInMeters(handle_, 2.0f);
+        ov->SetOverlayWidthInMeters(handle_, 3.0f);
         ov->SetOverlayInputMethod(handle_, vr::VROverlayInputMethod_Mouse);
         const vr::HmdVector2_t mouseScale{{static_cast<float>(ui::kWidth), static_cast<float>(ui::kHeight)}};
         ov->SetOverlayMouseScale(handle_, &mouseScale);

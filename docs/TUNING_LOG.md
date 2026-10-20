@@ -143,3 +143,9 @@ learned walking (start 0.3 rad, ~17 deg) and the hinge turned to it, standing on
 (seated, the full correction brought the knees 13 cm apart instead of 28). Walking thigh
 abduction mean 8-11 -> 3-5 deg, p90 28 -> 17-19 deg, walking feet width 21-29 -> 13-24 cm;
 pelvis unchanged (GT fore-aft 11.7 -> 11.6 cm on this metric), seated unchanged.
+
+Same day, after the user's VR test: a raised knee with the full correction crossed the
+thighs (15-28 deg inward on the 15:04 recording): the correction now fades as the thigh
+rises from 0.5 to 0.9 rad (kHingeLift*), walking gains kept, raised legs as before.
+Planted feet felt too sticky: kPlantedOutput 1.0 -> 0.6, kAnchorLeak 2 -> 1 s (stance
+slide median 1.1 -> 3.9 cm/s, was 8 before the anchor output). Overlay 2 -> 3 m wide.
