@@ -157,6 +157,7 @@ private:
 		Vec3 insPos, insVel;
 		double swingTime = 0;
 		double footBlend = 0;  // 0 flat on the floor, 1 follows the shin
+		double outBlend = 0;  // output foot: 0 solved ankle, 1 stance anchor
 		bool footYawInit = false;
 		double footYaw = 0;  // flat foot yaw, held while planted
 		// Thigh direction (pelvis frame) of the last solve, and the one held when a

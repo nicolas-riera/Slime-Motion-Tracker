@@ -52,8 +52,9 @@ constexpr double kMaxHipLift = 0.07;
 constexpr double kKneeClearance = 0.05;
 constexpr double kHipClearance = 0.08;
 // Stance anchors follow the solution with this time constant (s), and jump to it
-// when farther than kAnchorReset (m)
-const double kAnchorLeak = tunable("kAnchorLeak", 1.0);
+// when farther than kAnchorReset (m). Planted feet are output at their anchor, so this
+// is how fast a planted foot drifts: 1 s let it slide ~2 cm/s, 2 s ~1.4 cm/s
+const double kAnchorLeak = tunable("kAnchorLeak", 2.0);
 const double kAnchorReset = tunable("kAnchorReset", 0.15);
 // Swing prediction is dropped after this long without a stance (s)
 constexpr double kMaxSwing = 1.5;
@@ -104,9 +105,10 @@ const double kSitBackRecline = tunable("kSitBackRecline", 1.0);
 // back against the bed head): its upper part follows the head's up axis by this
 // fraction, its lower part the pelvis (a straight spine along a reclined pelvis put
 // the hip in the belly)
-// Off: on the bed replays it lowered the hip ~10 cm and the planted feet followed
-// it to the floor; kept to try it again on user feedback
-const double kChestHead = tunable("kChestHead", 0.0);
+// Lying on the floor with the head raised (chin toward the chest, 2026-10-20), the
+// straight trunk held the hip 30 cm above the floor; 0.5 brings it to 21 cm (1: 12 cm,
+// but on the bed it then sank 12 cm, and the feet once followed it to the floor)
+const double kChestHead = tunable("kChestHead", 0.5);
 const double kUpperSpine = tunable("kUpperSpine", 0.5);
 // Not reclined (standing, seated upright), the same chest emulation by this
 // fraction: leaning the head forward bends the upper back instead of sliding the
@@ -140,7 +142,14 @@ const double kHipSigmaSeated = tunable("kHipSigmaSeated", 0.05);
 // ~10 deg per step and, with the SteamVR foot point ahead of the ankle, that twist
 // slid the foot. Beyond kFootYawFree (rad) it is dragged along (pivoting in place)
 const double kFootYawFree = tunable("kFootYawFree", 0.26);
+// SteamVR foot point ahead of the ankle (fraction of the height, as the engine places
+// it) and how far it may dip below the ankle's floor height (m)
+constexpr double kToeLength = 0.045;
+const double kToeSink = tunable("kToeSink", 0.01);
+// Planted, how much the output foot is the stance anchor rather than the solved ankle
+const double kPlantedOutput = tunable("kPlantedOutput", 1.0);
 const double kHipSigmaV = tunable("kHipSigmaV", 0.06);
+const double kHipStretch = tunable("kHipStretch", 0.06);  // m, see the hip offset solve
 // Reclined (pelvis up axis height from kReclineStart to kReclineFull: leaning back
 // on a bed, lying): the chest emulation applies, and the planted feet rest on the
 // same surface as the hip, kBedBelowHip under the hip joint, instead of the floor
@@ -189,6 +198,8 @@ const double kInsHipScale = tunable("kInsHipScale", 5.0);
 // bounce, kHoldBounce m/s), the thigh keeps the direction it had then in the pelvis
 // frame (kHoldSigma rad), fading over kHoldTime s past the dead reckoning. 0 disables
 const double kHoldTime = tunable("kHoldTime", 8.0);
+// Knee smoothness loosening when nothing places the foot (see the leg problem)
+const double kFreeSmooth = tunable("kFreeSmooth", 3.0);
 const double kHoldStart = tunable("kHoldStart", 0.6);
 const double kHoldSigma = tunable("kHoldSigma", 0.25);
 const double kHoldBounce = tunable("kHoldBounce", 0.25);
@@ -828,6 +839,11 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 				p.under *= smoothstep(0.3, 0.0, p.hold);
 			}
 			p.under *= 1 - kRaisedUse * m_raised.p[i];
+			// Nothing places the foot any more (no anchor, the dead reckoning over, not
+			// held): the knee prior must win within a fraction of a second. Against the
+			// frame-to-frame smoothness its small pull straightened a bent knee in ~4 s
+			// (legs raised lying on the back stayed folded)
+			if (!ls.planted && insSigma[i] <= 0 && p.hold < 0.05) p.sigmaPhi *= kFreeSmooth;
 			p.bedWeight = ls.planted ? bedness[i] * onBedWeight[i] : 0.0;
 			p.bedY = std::max(ankleY, (hip0 + hipOffset).y - kBedBelowHip);
 			p.otherHeight = std::max(0.0, (hip0 + hipOffset + legVector(o, phi[o])).y - ankleY);
@@ -867,7 +883,10 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 		hipOffset = toHeading.conj().rotate({num.x / den.x, num.y / den.y, num.z / den.z});
 		hipOffset.x = std::clamp(hipOffset.x, -hipLimitH, hipLimitH);
 		hipOffset.z = std::clamp(hipOffset.z, -hipLimitH, hipLimitH);
-		hipOffset.y = std::clamp(hipOffset.y, -0.3, 0.3);
+		// Standing, the hip cannot hang much below the head chain (a spine does not
+		// stretch): kneeling on a chair (head high, feet up on the seat) the support rule
+		// sank the feet anchors to the floor and they pulled the hip 16 cm down
+		hipOffset.y = std::clamp(hipOffset.y, -lerp(0.3, useWaistTracker ? kHipStretch : 0.3, standing), 0.3);
 		// The hip stays above the floor, and lifts the legs out of it (the leg search
 		// may leave an ankle a few cm in the floor rather than bend the knee)
 		hipOffset.y = std::max(hipOffset.y, in.floorY + kHipClearance - hip0.y);
@@ -972,8 +991,31 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 		}
 		Quat flat = Quat::yaw(ls.footYaw);
 		Quat footRot = slerp(flat, in.legs[i].shin, ls.footBlend);
+		{
+			// The SteamVR foot point is kToeLength * height ahead of the ankle along the
+			// foot: near the floor it never goes below the ankle's floor height. Following
+			// the shin in the air the foot pointed down, so that point went 5 cm into the
+			// floor at each touchdown until the foot flattened (kneeling, all the time)
+			const double toe = kToeLength * d.height;
+			const Vec3 fwd = footRot.rotate({0, 0, -1});
+			const double minUp = (ankleY - kToeSink - ankle.y) / toe;
+			if (fwd.y < minUp && minUp < 1) {
+				const double raise = std::asin(std::clamp(minUp, -1.0, 1.0)) - std::asin(std::clamp(fwd.y, -1.0, 1.0));
+				footRot = Quat::fromAxisAngle(footRot.rotate({1, 0, 0}), raise) * footRot;
+			}
+		}
 
-		out.feet[i] = {ankle, footRot};
+		// Planted, the output foot is the stance anchor itself: the leg has one degree
+		// of freedom (the knee), so the solved ankle went wherever the hip took it (the
+		// head chain sways it: 10 cm/s of foot slide while standing). SteamVR only gets
+		// the feet and the waist, the game solves the knees. Blended in at touchdown and
+		// out at lift-off. Horizontally only: the height stays the solution's (an anchor
+		// can keep a stale height, the floor's under a foot now on a bed)
+		ls.outBlend += ((ls.planted ? kPlantedOutput : 0.0) - ls.outBlend) * std::min(1.0, dt / (ls.planted ? 0.05 : 0.1));
+		Vec3 outAnkle = ankle;
+		outAnkle.x += (ls.anchor.x - ankle.x) * ls.outBlend;
+		outAnkle.z += (ls.anchor.z - ankle.z) * ls.outBlend;
+		out.feet[i] = {outAnkle, footRot};
 		out.planted[i] = ls.planted;
 		out.knees[i] = knee;
 		out.kneeAngles[i] = rad2deg(ls.phi);

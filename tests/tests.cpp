@@ -564,6 +564,21 @@ static void testBodySolver() {
 		std::printf("ski pose restart: feet %.3f m behind the hip\n", behind);
 	}
 
+	// Kneeling on a chair: head high (standing for the solver), knees on the seat, shins
+	// flat behind. The torso does not stretch: the hip stays near the head chain
+	{
+		BodySolver kneel;
+		kneel.configure(d, Settings{}, Mode::Three);
+		for (int f = 0; f < 60; f++) out = kneel.update(bodyInput(d, {0, d.standingHipHeight(), 0}, Quat{}, {}));
+		const Vec3 hip{0, 0.88, 0};
+		BodyInput in = bodyInput(d, hip, Quat{}, {});
+		for (auto& leg : in.legs) leg.shin = Quat::fromAxisAngle({1, 0, 0}, deg2rad(-90));
+		for (int f = 0; f < 450; f++) out = kneel.update(in);
+		CHECK(out.waist.position.y > hip.y - 0.07, "kneeling on a chair: hip %.3f below the head chain",
+			  hip.y - out.waist.position.y);
+		std::printf("kneeling on a chair: hip %.3f m below the head chain\n", hip.y - out.waist.position.y);
+	}
+
 	// Ankles-only mode standing
 	BodySolver ankles;
 	ankles.configure(d, Settings{}, Mode::Ankles);
