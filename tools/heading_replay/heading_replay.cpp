@@ -9,7 +9,8 @@
 // Options: --sensitivity S, --adaptive 0|1 (local field reference), --ref-time S,
 //          --mag-sigma DEG, --corr-time S, --heading-walk DEG_PER_SQRT_MIN, --consistent 0|1,
 //          --max-rate DEG_PER_MIN, --fast 0|1 (fast realignment), --restore 1 (start from the
-//          recorded live headings instead of acquiring)
+//          recorded live headings instead of acquiring), --autocal S (the tracker hub's automatic
+//          calibration, also fed while disturbed for more than S s: prints each replacement)
 // mag_deg: the heading the mag measures (the filter's target)
 #include <cstdio>
 #include <fstream>
@@ -35,6 +36,9 @@ struct Track {
 	double temperature = std::nan("");
 	bool restored = false;
 	int lastOutput = -1;
+	// --autocal: the tracker hub's automatic calibration
+	MagCalibrator calibrator;
+	double lastSolve = 0, disturbedSince = -1;
 };
 
 const char* stateName(HeadingFilter::State s) {
@@ -56,6 +60,7 @@ int main(int argc, char** argv) {
 	}
 	HeadingFilterSettings settings;
 	bool restore = false;
+	double autocal = -1;  // >= 0: automatic calibration, samples kept after that many s disturbed
 	for (int i = 3; i + 1 < argc; i += 2)
 		if (std::string(argv[i]) == "--sensitivity") settings.sensitivity = std::atof(argv[i + 1]);
 		else if (std::string(argv[i]) == "--adaptive") settings.adaptiveRef = std::atoi(argv[i + 1]) != 0;
@@ -65,6 +70,7 @@ int main(int argc, char** argv) {
 		else if (std::string(argv[i]) == "--consistent") settings.consistentRelock = std::atoi(argv[i + 1]) != 0;
 		else if (std::string(argv[i]) == "--fast") settings.fastRealign = std::atoi(argv[i + 1]) != 0;
 		else if (std::string(argv[i]) == "--restore") restore = std::atoi(argv[i + 1]) != 0;
+		else if (std::string(argv[i]) == "--autocal") autocal = std::atof(argv[i + 1]);
 		else if (std::string(argv[i]) == "--max-rate") settings.maxRate = deg2rad(std::atof(argv[i + 1])) / 60.0;
 		else if (std::string(argv[i]) == "--heading-walk")
 			settings.headingWalk = deg2rad(std::atof(argv[i + 1])) / std::sqrt(60.0);
@@ -135,6 +141,25 @@ int main(int argc, char** argv) {
 			std::array<int16_t, 3> raw{int16_t(m[0].get<int>()), int16_t(m[1].get<int>()), int16_t(m[2].get<int>())};
 			double dt = tr.lastMag > 0 ? std::clamp(t - tr.lastMag, 0.0, 0.2) : 0.02;
 			tr.lastMag = t;
+			if (autocal >= 0 && tr.cal.valid) {
+				// Same rules as TrackerHub (core/src/tracker_hub.cpp)
+				const bool disturbed = tr.filter.state() == HeadingFilter::State::Disturbed;
+				if (!disturbed) tr.disturbedSince = -1;
+				else if (tr.disturbedSince < 0) tr.disturbedSince = t;
+				if (!disturbed || t - tr.disturbedSince > autocal) tr.calibrator.addSample(tr.qWorld, raw, tr.angularSpeed, t);
+				if (t - tr.lastSolve > 20) {
+					tr.lastSolve = t;
+					if (auto cal = tr.calibrator.solve()) {
+						const MagCalibration& cur = tr.filter.calibration();
+						double curResidual = cur.valid ? tr.calibrator.residualOf(cur).value_or(cur.residual) : 1e9;
+						if (cal->residual < 0.065 && cal->residual < 0.8 * curResidual) {
+							tr.filter.updateCalibration(*cal, tr.qWorld, raw);
+							std::printf("%.1f %s: calibration replaced, residual %.4f (current %.4f), c %.2f %.2f %.2f\n", t - t0,
+										mac.c_str(), cal->residual, curResidual, cal->c.x, cal->c.y, cal->c.z);
+						}
+					}
+				}
+			}
 			tr.filter.update(tr.qWorld, raw, tr.angularSpeed, dt, settings, tr.temperature);
 			int second = int((t - t0) * 2);  // 2 Hz output
 			if (second != tr.lastOutput) {
