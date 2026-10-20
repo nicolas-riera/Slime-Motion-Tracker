@@ -59,7 +59,8 @@ replay, tuning and training.
 | `driver/` | SteamVR driver |
 | `overlay/` | SteamVR dashboard overlay (also opens a desktop window) |
 | `tests/` | Unit tests on synthetic data |
-| `tools/` | Flashing, Python test server/recorder, replay and monitor tools, installer |
+| `tools/` | Flashing, Python test server/recorder, replay and monitor tools, install script |
+| `installer/` | MSI installer (WiX) for the releases |
 | `docs/` | Design notes and the driver/overlay protocol |
 
 ## Requirements
@@ -79,13 +80,22 @@ It backs up the full flash first (`firmware/backup/<MAC>_full_4MB.bin`, once per
 builds, flashes the application only (WiFi and IMU calibration are kept) and checks that
 the magnetometer starts. See `firmware/backup/README.md` to go back to the original firmware.
 
-## 2. Build and install the driver
+## 2. Install the driver
 
-Close SteamVR and the SlimeVR server, then:
+**Installer**: download `SlimeMotionTracker-<version>.msi` from the
+[releases](https://github.com/nicolas-riera/Slime-Motion-Tracker/releases), close SteamVR and
+run it (no admin rights needed). It installs the driver in
+`%LOCALAPPDATA%\Slime Motion Tracker\driver`, registers it with SteamVR and adds the Start
+menu shortcut. Uninstall from Windows settings (Apps); your settings and calibrations are kept.
+
+**From source**: close SteamVR and the SlimeVR server, then:
 
 ```
 powershell -ExecutionPolicy Bypass -File tools\install.ps1
 ```
+
+To build the installer: `powershell -ExecutionPolicy Bypass -File installer\build_msi.ps1`
+(WiX Toolset v7, `dotnet tool install --global wix`, with its OSMF EULA accepted).
 
 The trackers work as soon as SteamVR starts. The dashboard app (calibration, settings,
 tracker states) is not started with SteamVR: launch it with the **Slime Motion Tracker** Start menu

@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Per-user MSI (no admin rights): the SteamVR driver folder in
+  %LOCALAPPDATA%\Slime Motion Tracker\driver\slime_motion_tracker (where tools/install.ps1
+  puts it too), registered with SteamVR by setup\smt_setup.ps1, and a Start menu shortcut
+  to the dashboard app. Built by installer/build_msi.ps1.
+  SteamVR keeps the driver DLL locked while it runs: the installer stops if it does.
+  The user's data (config, mag calibrations, recordings) one folder up is left alone.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Slime Motion Tracker" Manufacturer="Slime Motion Tracker" Version="$(Version)"
+           UpgradeCode="176a7cab-2f6c-41c4-b7bb-a35c39cb8d90" Scope="perUser" Compressed="yes">
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="A newer version of Slime Motion Tracker is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <Icon Id="smt.ico" SourceFile="!(bindpath.res)\smt.ico" />
+    <Property Id="ARPPRODUCTICON" Value="smt.ico" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/nicolas-riera/Slime-Motion-Tracker" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <!-- The binaries carry no version resource: replace them whatever is there (an
+         earlier build installed with tools/install.ps1) -->
+    <Property Id="REINSTALLMODE" Value="amus" />
+
+    <StandardDirectory Id="System64Folder" />
+    <StandardDirectory Id="ProgramMenuFolder" />
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="AppRoot" Name="Slime Motion Tracker">
+        <Directory Id="DriverRoot" Name="driver">
+          <Directory Id="INSTALLFOLDER" Name="slime_motion_tracker">
+            <Directory Id="SetupDir" Name="setup" />
+          </Directory>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <ComponentGroup Id="DriverFiles" Directory="INSTALLFOLDER">
+      <!-- The pose model is disabled (V3 solver only): left out -->
+      <Files Include="!(bindpath.pkg)\**">
+        <Exclude Files="!(bindpath.pkg)\bin\win64\models\pose_model.bin" />
+      </Files>
+    </ComponentGroup>
+
+    <Component Id="SetupScript" Directory="SetupDir">
+      <File Id="smt_setup.ps1" Source="!(bindpath.installer)\smt_setup.ps1" />
+    </Component>
+
+    <Component Id="StartMenuShortcut" Directory="ProgramMenuFolder">
+      <Shortcut Id="AppShortcut" Name="Slime Motion Tracker" Description="Trackers, calibration and settings"
+                Target="[INSTALLFOLDER]bin\win64\SlimeMotionTracker.exe" WorkingDirectory="INSTALLFOLDER" Icon="smt.ico" />
+      <RegistryValue Root="HKCU" Key="Software\Slime Motion Tracker" Name="StartMenuShortcut" Type="integer" Value="1"
+                     KeyPath="yes" />
+    </Component>
+
+    <Feature Id="Main" Title="Slime Motion Tracker">
+      <ComponentGroupRef Id="DriverFiles" />
+      <ComponentRef Id="SetupScript" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+
+    <!-- SteamVR running: stop (its DLL lock would leave the old driver in place). The
+         dashboard app and the standalone engine host are closed. The command is MSI
+         formatted text: no square brackets (property references, dropped when empty) and
+         braces escaped as [\{] [\}] (else {...} groups are dropped and the check always
+         failed). SMT_UI is "-Quiet" in silent installs (no popup). -->
+    <CustomAction Id="CheckSteamVR" Directory="System64Folder" Execute="immediate" Return="check"
+                  ExeCommand="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command &quot;if (Get-Process vrserver -ErrorAction SilentlyContinue) [\{] if ('[SMT_QUIET]' -ne '-Quiet') [\{] $null = (New-Object -ComObject WScript.Shell).Popup('SteamVR is running. Close it, then run the installer again.', 0, 'Slime Motion Tracker', 48) [\}]; exit 1 [\}]; Get-Process SlimeMotionTracker, smt_engine_host -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep -Milliseconds 500; exit 0&quot;" />
+
+    <SetProperty Id="SMT_QUIET" Value="-Quiet" Before="CostInitialize" Sequence="execute" Condition="UILevel = 2" />
+    <CustomAction Id="RegisterDriver" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="yes" Return="ignore"
+                  ExeCommand="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File &quot;[SetupDir]smt_setup.ps1&quot; register [SMT_QUIET]" />
+    <CustomAction Id="UnregisterDriver" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="yes" Return="ignore"
+                  ExeCommand="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File &quot;[SetupDir]smt_setup.ps1&quot; unregister -Quiet" />
+
+    <InstallExecuteSequence>
+      <Custom Action="CheckSteamVR" After="CostFinalize" />
+      <Custom Action="UnregisterDriver" Before="RemoveFiles" Condition="REMOVE~=&quot;ALL&quot;" />
+      <Custom Action="RegisterDriver" After="InstallFiles" Condition="NOT REMOVE~=&quot;ALL&quot;" />
+    </InstallExecuteSequence>
+  </Package>
+</Wix>
