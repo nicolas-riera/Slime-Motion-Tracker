@@ -134,6 +134,9 @@ struct BodyOutput {
 		// above the floor height
 		std::array<double, 2> touchdownSwing{}, touchdownHeight{};
 		std::array<double, 2> hingeYaw{};  // hinge turn from the shin heading (kTibial*), rad
+		std::array<double, 2> hold{};  // held raised leg weight (kHold*), and its latch
+		std::array<bool, 2> holdLatched{};
+		std::array<double, 2> lowerDisp{};
 	} debug;
 };
 

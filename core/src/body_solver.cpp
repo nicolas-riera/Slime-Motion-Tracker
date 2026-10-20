@@ -725,6 +725,10 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 			if (prevSwing < kHoldStart && ls.swingTime >= kHoldStart) {
 				ls.holdLatched = ls.insPos.y - ankleY > 0.12 && ls.insVel.y > -0.15;
 				ls.lowerDisp = 0;
+				// From the dead-reckoned velocity, still good this early: the leaky one had
+				// lost part of the lift, so stopping the leg at the top read as lowering it
+				// and dropped the hold 0.5 s later, the foot still 90 cm up
+				ls.lowerVel = ls.insVel.y;
 			}
 			if (ls.lowerDisp < kHoldLowerDisp) ls.holdLatched = false;
 		} else {
@@ -855,6 +859,9 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 				// Standing only: seated or squatting, a moving leg rests on the floor or the seat
 				p.hold = hold * standing;
 				held[i] = p.hold;
+				out.debug.hold[i] = p.hold;
+				out.debug.holdLatched[i] = ls.holdLatched;
+				out.debug.lowerDisp[i] = ls.lowerDisp;
 				p.holdThigh = pelvis.rotate(ls.holdThigh);
 				// Even partly held, the foot is not pulled under the hip (its horizontal
 				// pull alone dragged a raised knee down)

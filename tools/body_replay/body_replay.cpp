@@ -294,7 +294,7 @@ int main(int argc, char** argv) {
 				 "ankle_floor,eye_h,lc_x,lc_y,lc_z,rc_x,rc_y,rc_z,"
 				 "hmd_yaw,rec_w_yaw,rec_w_tilt,w_yaw,w_tilt,l_shin_yaw,r_shin_yaw,hip0_x,hip0_z,"
 				 "l_td_swing,r_td_swing,l_td_h,r_td_h,"
-				 "lkx,lky,lkz,rkx,rky,rkz,l_flex,r_flex,l_abd,r_abd,l_ins_x,l_ins_z,r_ins_x,r_ins_z,pelvis_fwd_y,pelvis_up_x,pelvis_up_z,l_toe_x,l_toe_y,l_toe_z,r_toe_x,r_toe_y,r_toe_z,l_hinge,r_hinge\n");
+				 "lkx,lky,lkz,rkx,rky,rkz,l_flex,r_flex,l_abd,r_abd,l_ins_x,l_ins_z,r_ins_x,r_ins_z,pelvis_fwd_y,pelvis_up_x,pelvis_up_z,l_toe_x,l_toe_y,l_toe_z,r_toe_x,r_toe_y,r_toe_z,l_hinge,r_hinge,l_hold,r_hold,l_latch,r_latch,l_lower,r_lower\n");
 
 	Config config;
 	bool haveConfig = false;
@@ -693,10 +693,11 @@ int main(int argc, char** argv) {
 			Vec3 toe[2];
 			for (int i = 0; i < 2; i++)
 				toe[i] = o.feet[i].position + o.feet[i].rotation.rotate(Vec3{0, 0, -0.045 * dims.height});
-			std::fprintf(csv, "%.4f,%.4f,%.4f,%.4f,%.3f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.1f,%.1f\n", dbg.ins[0].x,
+			std::fprintf(csv, "%.4f,%.4f,%.4f,%.4f,%.3f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.1f,%.1f,%.3f,%.3f,%d,%d,%.3f,%.3f\n", dbg.ins[0].x,
 						 dbg.ins[0].z, dbg.ins[1].x, dbg.ins[1].z, bin.hasWaist ? bin.waist.rotate({0, 0, 1}).y : 0.0,
 						 pelvisUp.x, pelvisUp.z, toe[0].x, toe[0].y, toe[0].z, toe[1].x, toe[1].y, toe[1].z,
-						 rad2deg(dbg.hingeYaw[0]), rad2deg(dbg.hingeYaw[1]));
+						 rad2deg(dbg.hingeYaw[0]), rad2deg(dbg.hingeYaw[1]), dbg.hold[0], dbg.hold[1],
+						 int(dbg.holdLatched[0]), int(dbg.holdLatched[1]), dbg.lowerDisp[0], dbg.lowerDisp[1]);
 		}
 	}
 	std::fclose(csv);
