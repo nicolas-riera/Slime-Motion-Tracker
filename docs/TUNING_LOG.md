@@ -132,3 +132,14 @@ standing recordings of 2026-10-20 as a no-regression check (outputs identical).
   to the floor within 6 cm. The touchdown height now decides bed or floor (closer
   of the two); lying flat keeps the bed. Shins at 55 deg: feet 4 cm up -> on the
   floor.
+
+## 2026-10-20 - knee hinge axis learned walking (kHinge*)
+
+The user saw the legs go outward walking (trackers on the outer side of the ankles).
+The shin rotation axis while walking, in the calibrated shin frame (twist ignored), is
+turned 15-30 deg from the calibrated hinge on all 3 recordings, outward on both legs:
+the ski pose measures the ankle's axis, turned outward from the knee's. The axis is now
+learned walking (start 0.3 rad, ~17 deg) and the hinge turned to it, standing only
+(seated, the full correction brought the knees 13 cm apart instead of 28). Walking thigh
+abduction mean 8-11 -> 3-5 deg, p90 28 -> 17-19 deg, walking feet width 21-29 -> 13-24 cm;
+pelvis unchanged (GT fore-aft 11.7 -> 11.6 cm on this metric), seated unchanged.

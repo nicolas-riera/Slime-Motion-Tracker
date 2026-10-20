@@ -133,6 +133,7 @@ struct BodyOutput {
 		// Touchdown this frame: swing duration (0: none), stance anchor height
 		// above the floor height
 		std::array<double, 2> touchdownSwing{}, touchdownHeight{};
+		std::array<double, 2> hingeYaw{};  // knee hinge correction (kHinge*), rad
 	} debug;
 };
 
@@ -215,6 +216,13 @@ private:
 	Vec3 m_waistAccMean;
 	double m_waistActivity = 0;
 	Quat m_seatPelvis;
+	// Knee hinge axis (kHinge*): rotation axis covariance in the shin frame (xx, xz, zz)
+	std::array<std::array<double, 3>, 2> m_hingeCov{};
+	std::array<double, 2> m_hingeYaw{};
+	std::array<Quat, 2> m_prevShin;
+	bool m_hingeInit = false, m_hingePrevValid = false;
+	Vec3 m_prevHmdXZ;
+	double m_walkSpeed = 0;
 	bool m_initialized = false;
 	std::array<OneEuro, 3> m_filters;  // left foot, right foot, waist
 	std::array<Vec3, 2> m_smoothedFeet;
