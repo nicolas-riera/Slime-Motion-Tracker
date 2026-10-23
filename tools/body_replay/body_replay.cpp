@@ -35,6 +35,7 @@
 #include "smt/config.h"
 #include "smt/foot_model.h"
 #include "smt/mag.h"
+#include "smt/tilt_fix.h"
 #include "smt/pose_model.h"
 #include "smt/protocol.h"
 
@@ -50,6 +51,9 @@ struct TrackerState {
 	double prevTime = 0;
 	double angularSpeed = 0;
 	Vec3 accelLocal;
+	// Same firmware glitch recovery as the tracker hub
+	TiltFix tiltFix;
+	Vec3 rawLinear;
 	bool hasHeading = false;
 	double heading = 0;
 	// SMT_MAG_REPLAY
@@ -61,7 +65,6 @@ struct TrackerState {
 	// trigger, then frozen (one instant would bake a transient disagreement in)
 	double alignSin = 0, alignCos = 0, alignStart = -1;
 	int boot = -1;
-	std::array<int16_t, 3> lastRaw{};
 };
 
 // ---- parsed events and their binary cache ----
@@ -442,9 +445,9 @@ int main(int argc, char** argv) {
 				for (const auto& [mac, tc] : config.trackers) {
 					TrackerState& ts = trackers[mac];
 					if (!tc.mag.valid || ts.magResidual == tc.mag.residual) continue;
-					// Same continuity rule as the tracker hub for a replaced calibration
+					// A replaced calibration carries the offset the tracker hub gave it
 					if (ts.magResidual < 0 || ts.lastMag == 0) ts.filter.setCalibration(tc.mag);
-					else ts.filter.updateCalibration(tc.mag, ts.qWorld, ts.lastRaw);
+					else ts.filter.updateCalibration(tc.mag);
 					ts.magResidual = tc.mag.residual;
 				}
 		} else if (ev.kind == Kind::Ev) {
@@ -471,20 +474,30 @@ int main(int argc, char** argv) {
 			Quat qw = proto::firmwareToWorld(Quat{f[0], f[1], f[2], f[3]});
 			TrackerState& ts = trackers[macNames[ev.mac]];
 			// Same angular speed estimate as the tracker hub
+			double rotDt = 0;
 			if (ts.prevTime > 0) {
 				double dt = t - ts.prevTime;
 				if (dt > 1e-4 && dt < 0.5) {
+					rotDt = dt;
 					double ang = (ts.prevRotation.conj() * qw).angle(), w = ang / dt;
-					if (magReplay && w > 40.0 && ang > deg2rad(20)) ts.filter.gyroGlitch();
+					if (w > 40.0 && ang > deg2rad(20)) {
+						if (magReplay) ts.filter.gyroGlitch();
+						ts.tiltFix.glitch(t);
+					}
 					ts.angularSpeed += (w - ts.angularSpeed) * std::min(1.0, dt / 0.05);
 				}
 			}
 			ts.prevRotation = qw;
 			ts.prevTime = t;
-			ts.qWorld = qw;
+			ts.tiltFix.update(qw, ts.rawLinear, ts.angularSpeed, t, rotDt);
+			if (magReplay && ts.tiltFix.still(ts.angularSpeed) && !ts.filter.relocking()) ts.filter.gyroGlitch();
+			ts.qWorld = ts.tiltFix.apply(qw);
+			ts.accelLocal = ts.tiltFix.linear(qw, ts.rawLinear);
 			ts.hasRotation = true;
 		} else if (ev.kind == Kind::Acc) {
-			trackers[macNames[ev.mac]].accelLocal = {f[0], f[1], f[2]};
+			TrackerState& ts = trackers[macNames[ev.mac]];
+			ts.rawLinear = {f[0], f[1], f[2]};
+			ts.accelLocal = ts.tiltFix.linear(ts.prevRotation, ts.rawLinear);
 		} else if (ev.kind == Kind::Trk) {
 			TrackerState& ts = trackers[macNames[ev.mac]];
 			if (magReplay) {
@@ -531,7 +544,6 @@ int main(int argc, char** argv) {
 			std::array<int16_t, 3> raw{int16_t(f[0]), int16_t(f[1]), int16_t(f[2])};
 			double dt = ts.lastMag > 0 ? std::clamp(t - ts.lastMag, 0.0, 0.2) : 0.02;
 			ts.lastMag = t;
-			ts.lastRaw = raw;
 			ts.filter.update(ts.qWorld, raw, ts.angularSpeed, dt, magSettings, ts.temperature);
 			if (ts.aligned) ts.heading = wrapAngle(ts.filter.heading() + ts.offset);
 		} else if (ev.kind == Kind::Dev) {

@@ -110,6 +110,13 @@ int main(int argc, char** argv) {
 			auto q = j["q"];
 			hmdYaw = 2.0 * std::atan2(q[2].get<double>(), q[0].get<double>());
 			hasHmd = true;
+		} else if (k == "hs") {
+			// Same rule as the tracker hub: a handshake after a silence is a reconnection
+			Track& tr = tracks[j["mac"].get<std::string>()];
+			if (tr.hasRotation && t - std::max(tr.prevRotTime, tr.lastMag) > 1.0) {
+				tr.filter.reconnected();
+				tr.prevRotTime = 0;
+			}
 		} else if (k == "tmp") {
 			tracks[j["mac"].get<std::string>()].temperature = j.value("c", 0.0);
 		} else if (k == "trk") {
@@ -152,14 +159,19 @@ int main(int argc, char** argv) {
 				if (!disturbed || t - tr.disturbedSince > autocal) tr.calibrator.addSample(tr.qWorld, raw, tr.angularSpeed, t);
 				if (t - tr.lastSolve > 20) {
 					tr.lastSolve = t;
-					if (auto cal = tr.calibrator.solve()) {
-						const MagCalibration& cur = tr.filter.calibration();
-						double curResidual = cur.valid ? tr.calibrator.residualOf(cur).value_or(cur.residual) : 1e9;
-						if (cal->residual < 0.065 && cal->residual < 0.8 * curResidual) {
-							tr.filter.updateCalibration(*cal, tr.qWorld, raw);
-							std::printf("%.1f %s: calibration replaced, residual %.4f (current %.4f), c %.2f %.2f %.2f\n", t - t0,
-										mac.c_str(), cal->residual, curResidual, cal->c.x, cal->c.y, cal->c.z);
-						}
+					const MagCalibration cur = tr.filter.calibration();
+					if (auto fit = tr.calibrator.solve())
+						std::printf("%.1f %s: candidate residual %.4f (current %.4f), consistency %.4f (current %.4f)\n",
+									t - t0, mac.c_str(), fit->residual, tr.calibrator.residualOf(cur).value_or(-1),
+									tr.calibrator.consistency(*fit).value_or(-1), tr.calibrator.consistency(cur).value_or(-1));
+					if (auto cal = tr.calibrator.replacement(cur)) {
+						// The old continuity rule (the new calibration's heading mapped onto the
+						// filtered heading of the moment) would have moved the north by:
+						const double oldOffset = wrapAngle(tr.filter.heading() - headingOf(tr.qWorld.rotate(cal->apply(raw))));
+						std::printf("%.1f %s: calibration replaced, residual %.4f (current %.4f), north kept (old rule: %+.1f deg)\n",
+									t - t0, mac.c_str(), cal->residual, tr.calibrator.residualOf(cur).value_or(-1),
+									rad2deg(wrapAngle(oldOffset - cal->headingOffset)));
+						tr.filter.updateCalibration(*cal);
 					}
 				}
 			}

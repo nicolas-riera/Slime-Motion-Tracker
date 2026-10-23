@@ -25,7 +25,7 @@ void HeadingFilter::reset() {
 	m_tempRef = std::nan("");
 	m_stillTime = m_cleanTime = m_rejectRatio = 0;
 	m_acqSin = m_acqCos = m_acqTime = 0;
-	m_relock = false;
+	m_relock = m_verify = false;
 	m_consistTime = 0;
 	m_fastTime = 0;
 	m_glide = 0;
@@ -33,13 +33,12 @@ void HeadingFilter::reset() {
 	m_refDip = m_cal.dip;
 }
 
-void HeadingFilter::updateCalibration(MagCalibration cal, const Quat& qWorld,
-									  const std::array<int16_t, 3>& raw) {
+void HeadingFilter::updateCalibration(const MagCalibration& cal) {
+	// The offset used to map the new calibration's heading onto the filtered heading of
+	// the moment: whatever error the filter had then (the field at the desk, a drift not
+	// yet corrected) became the new north, and the trackers' north wandered from one
+	// replacement to the next
 	if (m_initialized && m_cal.valid) {
-		// Keep the corrected frame continuous: whatever heading the new calibration
-		// measures right now, map it onto the current filtered heading
-		double hNew = headingOf(qWorld.rotate(cal.apply(raw)));
-		cal.headingOffset = wrapAngle(m_heading - hNew);
 		m_cal = cal;
 		return;
 	}
@@ -117,10 +116,29 @@ void HeadingFilter::update(const Quat& qWorld, const std::array<int16_t, 3>& raw
 	if (angularSpeed < s.stillSpeed) m_stillTime += dt;
 	else m_stillTime = 0;
 
+	double innovation = wrapAngle(h - m_heading);
+	if (m_verify) {
+		// Reconnected: a WiFi drop (the heading holds) or a reboot (the device yaw
+		// restarted, the mag offset is anywhere)
+		m_verifyWait += dt;
+		if (fieldOk && angularSpeed <= s.maxAngularSpeed) {
+			m_verifySin += std::sin(innovation);
+			m_verifyCos += std::cos(innovation);
+			m_verifyTime += dt;
+		}
+		if (m_verifyTime >= s.verifyTime) {
+			const double mean = std::atan2(m_verifySin, m_verifyCos);
+			if (std::fabs(mean) > s.rebootTol) jump(mean, s.magSigma, false);
+			m_verify = false;
+		} else if (m_verifyWait > s.verifyMaxWait) {
+			m_verify = false;
+		}
+		return;
+	}
+
 	// Fast rotations: q and m are not perfectly simultaneous, skip
 	if (angularSpeed > s.maxAngularSpeed) return;
 
-	double innovation = wrapAngle(h - m_heading);
 	if (m_relock) {
 		// After a gyro glitch, any clean field is right whatever the heading says
 		if (!fieldOk) {

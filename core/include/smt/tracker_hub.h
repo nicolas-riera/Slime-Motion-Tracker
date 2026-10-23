@@ -18,6 +18,7 @@
 #include "smt/linalg.h"
 #include "smt/mag.h"
 #include "smt/protocol.h"
+#include "smt/tilt_fix.h"
 
 namespace smt {
 

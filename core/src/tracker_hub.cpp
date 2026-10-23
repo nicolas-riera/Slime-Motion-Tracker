@@ -17,9 +17,6 @@ namespace smt {
 namespace {
 // rad/s between two rotation packets; no limb turns this fast (kicks peak ~20)
 constexpr double kGlitchAngularSpeed = 40.0;
-// Residual (field norm units) a new automatic fit needs to replace a valid
-// calibration (good ones: 0.045-0.055)
-constexpr double kMaxReplacingResidual = 0.065;
 }  // namespace
 
 const char* magStateName(MagState s) {
@@ -53,6 +50,10 @@ struct TrackerHub::Tracker {
 
 	Quat prevRotation;
 	double prevRotationTime = 0;
+	// Firmware orientation glitch recovery: the raw orientation and linear acceleration
+	TiltFix tiltFix;
+	Quat rawRotation;
+	Vec3 rawLinear;
 	bool hasMagData = false;
 	double lastMagTime = 0;
 
@@ -260,13 +261,18 @@ void TrackerHub::processEvent(const std::string& mac, const proto::Event& e, dou
 			case proto::Event::Kind::Rotation: {
 				if (e.sensorId != 0) break;
 				Quat q = proto::firmwareToWorld(e.rotation);
+				double rotDt = 0;
 				if (tr.prevRotationTime > 0) {
 					double dt = t - tr.prevRotationTime;
 					if (dt > 1e-4 && dt < 0.5) {
+						rotDt = dt;
 						double ang = (tr.prevRotation.conj() * q).angle();
 						double w = ang / dt;
 						// Faster than any limb: a sensor glitch, not a motion
-						if (w > kGlitchAngularSpeed && ang > deg2rad(20)) tr.heading.gyroGlitch();
+						if (w > kGlitchAngularSpeed && ang > deg2rad(20)) {
+							tr.heading.gyroGlitch();
+							tr.tiltFix.glitch(t);
+						}
 						s.angularSpeed += (w - s.angularSpeed) * std::min(1.0, dt / 0.05);
 						// Angular velocity vector in the tracker frame (q = prev * rel)
 						Quat rel = tr.prevRotation.conj() * q;
@@ -281,14 +287,23 @@ void TrackerHub::processEvent(const std::string& mac, const proto::Event& e, dou
 				}
 				tr.prevRotation = q;
 				tr.prevRotationTime = t;
-				s.qWorld = q;
+				tr.rawRotation = q;
+				tr.tiltFix.update(q, tr.rawLinear, s.angularSpeed, t, rotDt);
+				// While the firmware re-converges its yaw wanders too: the heading follows the mag,
+				// still only (moving, the orientation and the mag sample disagree by degrees)
+				if (tr.tiltFix.still(s.angularSpeed) && !tr.heading.relocking()) tr.heading.gyroGlitch();
+				s.qWorld = tr.tiltFix.apply(q);
+				s.accelLocal = tr.tiltFix.linear(q, tr.rawLinear);
 				s.hasRotation = true;
 				s.lastRotationTime = t;
 				tr.rotCount++;
 				break;
 			}
 			case proto::Event::Kind::Accel:
-				if (e.sensorId == 0) s.accelLocal = e.accel;
+				if (e.sensorId == 0) {
+					tr.rawLinear = e.accel;
+					s.accelLocal = tr.tiltFix.linear(tr.rawRotation, e.accel);
+				}
 				break;
 			case proto::Event::Kind::Mag: {
 				if (e.sensorId != 0 || !s.hasRotation) break;
@@ -314,21 +329,13 @@ void TrackerHub::processEvent(const std::string& mac, const proto::Event& e, dou
 					if (t - tr.guidedStart > 180) tr.guided = false;
 				} else if (t - tr.lastOnlineSolve > 20) {
 					// Automatic calibration: from scratch with enough orientations, then
-					// replaced when a new fit explains the recent samples clearly better
-					// than the current one (another room, the tracker's own field
-					// changed), both measured on the same samples. A valid calibration is
-					// only replaced by a good fit: near a local disturbance (a bed frame)
-					// the recent samples favor any new fit, and poor fits (residual
-					// 0.07-0.11 vs ~0.05) replaced each other and the heading drifted
+					// replaced when a new fit explains the samples clearly better than the
+					// current one (another room, the tracker's own field changed), keeping
+					// the north
 					tr.lastOnlineSolve = t;
-					if (auto cal = tr.calibrator.solve()) {
-						const MagCalibration& cur = tr.heading.calibration();
-						double curResidual = cur.valid ? tr.calibrator.residualOf(cur).value_or(cur.residual) : 1e9;
-						bool goodEnough = !cur.valid || cal->residual < kMaxReplacingResidual;
-						if (goodEnough && cal->residual < 0.8 * curResidual) {
-							tr.heading.updateCalibration(*cal, s.qWorld, e.mag);
-							found = tr.heading.calibration();
-						}
+					if (auto cal = tr.calibrator.replacement(tr.heading.calibration())) {
+						tr.heading.updateCalibration(*cal);
+						found = tr.heading.calibration();
 					}
 				}
 
@@ -450,8 +457,8 @@ void TrackerHub::networkLoop() {
 						tr.snap.hasRotation = false;
 						tr.prevRotationTime = 0;
 						tr.hasRssi = false;
-						// The device fusion restarts with an arbitrary yaw
-						tr.heading.reset();
+						// A WiFi drop, or a reboot (the device yaw restarted anywhere)
+						tr.heading.reconnected();
 					}
 					sendTo(from, proto::handshakeReply());
 				}

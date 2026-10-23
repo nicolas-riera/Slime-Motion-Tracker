@@ -149,3 +149,41 @@ thighs (15-28 deg inward on the 15:04 recording): the correction now fades as th
 rises from 0.5 to 0.9 rad (kHingeLift*), walking gains kept, raised legs as before.
 Planted feet felt too sticky: kPlantedOutput 1.0 -> 0.6, kAnchorLeak 2 -> 1 s (stance
 slide median 1.1 -> 3.9 cm/s, was 8 before the anchor output). Overlay 2 -> 3 m wide.
+
+## 2026-10-23 - mag north kept across automatic calibrations, reconnections
+
+The user reported the trackers' north wandering (legs slowly turned sideways, sometimes
+coming back) and sudden turns of the feet while still. On the same samples, the stored
+calibrations of consecutive sessions put the corrected north 12-19 deg apart: a replaced
+calibration took as its offset the filtered heading of that moment (whatever error the
+filter had then), and the fits compared by residual in the drifting device frame (0.5-2
+deg/min, bins hours apart) favored fits bent by the drift. Now the replacement keeps the
+north (offset from the old calibration averaged over the samples) and must be 30 % more
+consistent on norm and dip, which the drift does not touch. Synthetic: a fit bent by 15
+min of drift had a better residual (0.049 vs 0.061) and a 3x worse consistency, rejected.
+A tracker reconnecting (the 21/10 log: all three dropped 5 s at once) no longer resets
+its heading (re-acquired from the local field, learnt drift lost): it is kept unless the
+first clean mag samples are more than 25 deg off (a reboot).
+
+Seated thighs spread like the feet's V (thigh abduction followed the shin's turn 1:1, 10-35
+deg each): seated or lying, the hinge loses 10 deg of outward turn and is pulled 30 % toward
+the pelvis heading (kTibialTurnout 0.17, kTibialSeated 0.3), not crouched. Seated abduction
+33/16 -> 15/2 and 9/20 -> 5/14 deg on the 13:40 and 15:50 recordings; standing unchanged.
+In VR the knees came too close with the feet parallel (23/10 14:34 recording: -12/-9 deg
+instead of -6/-3): only the outward part of the shin's turn is now reduced, by 60 %
+(kTibialSeated 0.6, no fixed turnout). Feet in a V 22/24 -> 10/11 deg, parallel feet
+unchanged.
+
+Then the screenshot of 14:41: knees spread for real, shown together. The shins' turns there
+were 33 and 10 deg out for a symmetric pose: the spread came from the trackers' heading
+errors (both off ~12 deg the same way), not from the V. kTibialSeated back to 0.
+
+Same 14:41 recording, the sudden turned feet: the left tracker's own fusion jumped while
+still (tilt 16 -> 62 deg, yaw 31 deg in 13 ms) and took 6 s to converge back, its linear
+acceleration 10.7 m/s^2 (gravity removed along the wrong vertical). TiltFix (TrackerHub,
+body replay): after a rotation jump no limb makes, while still, the orientation is tilted
+onto the measured gravity and the acceleration recomputed (fading in 0.5 s when moving),
+and the heading re-locks on the mag. Replay: shin tilt 63 -> 10.5 deg (10.3 before), lateral
+accel 10.5 -> 0.2 m/s^2, yaw -130 -> -62 deg (-59 before); standing afterwards the left
+shin is at the body's heading (-89 vs waist -94) instead of 20 deg out. Only one clean
+glitch in all the recordings (seconds-long, gravity-sized); shorter ones are real motion.

@@ -279,6 +279,133 @@ static void testHeadingFilter() {
 		  "no re-lock after a gyro glitch: %.2f deg", angleBetween(afterGlitch, corrected));
 }
 
+// Heading spread of a calibration over random orientations (deg): 0 for a perfect one
+static double headingSpread(const MagCalibration& c, const SyntheticMag& mag, std::mt19937& rng) {
+	double ref = 0, maxErr = 0;
+	for (int i = 0; i < 500; i++) {
+		Quat q = randomQuat(rng);
+		double h = headingOf(q.rotate(c.apply(mag.raw(q, rng))));
+		if (i == 0) ref = h;
+		maxErr = std::max(maxErr, std::fabs(rad2deg(wrapAngle(h - ref))));
+	}
+	return maxErr;
+}
+
+static void testMagAutoCalibration() {
+	// Automatic calibration while the device yaw drifts by 1 deg/min
+	std::mt19937 rng(5);
+	SyntheticMag mag = makeMag();
+	const double dt = 0.05;
+	auto tilted = [&](double maxTilt) {
+		std::uniform_real_distribution<double> u(-1, 1);
+		return Quat::yaw(u(rng) * kPi) * Quat::fromAxisAngle(Vec3{u(rng), 0, u(rng)}.normalized(), maxTilt * std::fabs(u(rng)));
+	};
+	auto collect = [&](MagCalibrator& cal, double from, double to, double maxTilt) {
+		Quat q = tilted(maxTilt);
+		for (double t = from; t < to; t += dt) {
+			if (std::fmod(t, 2.0) < dt) q = tilted(maxTilt);  // a new pose every 2 s
+			cal.addSample(Quat::yaw(deg2rad(t / 60.0)) * q, mag.raw(q, rng), 0.5, t);
+		}
+	};
+
+	// A slightly wrong calibration (another hard and soft iron) whose north earlier
+	// replacements set (offset 0.4 rad): replaced by the fit of an hour of varied poses,
+	// the north kept
+	SyntheticMag other = mag;
+	other.softIron.m[0] *= 1.12;
+	other.hardIron = other.hardIron + Vec3{150, -100, 80};
+	MagCalibrator guided;
+	for (int i = 0; i < 3000; i++) {
+		Quat q = randomQuat(rng);
+		guided.addSample(q, other.raw(q, rng), 0.5, i * 0.05);
+	}
+	auto start = guided.solve();
+	CHECK(start.has_value(), "starting calibration");
+	if (!start) return;
+	start->headingOffset = 0.4;
+	MagCalibrator varied;
+	collect(varied, 0, 3600, kPi);
+	auto rep = varied.replacement(*start);
+	CHECK(rep.has_value(), "better fit not taken");
+	if (!rep) return;
+	double sn = 0, cs = 0;
+	for (int i = 0; i < 500; i++) {
+		Quat r = randomQuat(rng);
+		auto raw = mag.raw(r, rng);
+		double d = headingOf(r.rotate(start->apply(raw))) + start->headingOffset - headingOf(r.rotate(rep->apply(raw)))
+				 - rep->headingOffset;
+		sn += std::sin(d);
+		cs += std::cos(d);
+	}
+	const double northMove = rad2deg(std::atan2(sn, cs)), spread = headingSpread(*rep, mag, rng);
+	CHECK(std::fabs(northMove) < 1.5 && spread < 3.0, "replacement: north moved by %.2f deg, spread %.2f deg",
+		  northMove, spread);
+
+	// A good calibration, the trackers strapped on (2 min of any orientation) then an hour
+	// standing (tilts below 30 deg): the rare orientations' samples are an hour of drift
+	// older than the rest, the fit bends. It must not replace the good one.
+	MagCalibrator good;
+	collect(good, 0, 600, kPi);
+	auto exact = good.solve();
+	CHECK(exact.has_value(), "reference calibration");
+	if (!exact) return;
+	std::printf("mag auto calibration: north moved %.2f deg at a replacement\n", northMove);
+	for (double minutes : {5.0, 10.0, 15.0, 20.0, 30.0}) {
+		MagCalibrator worn;
+		collect(worn, 0, 120, kPi);
+		collect(worn, 120, 120 + minutes * 60, deg2rad(30));
+		auto bent = worn.solve();
+		auto spurious = worn.replacement(*exact);
+		const double bentSpread = bent ? headingSpread(*bent, mag, rng) : -1.0;
+		const bool oldRule = bent && bent->residual < 0.065 && bent->residual < 0.8 * worn.residualOf(*exact).value_or(1);
+		CHECK(!spurious.has_value() || bentSpread < 4.0,
+			  "%.0f min: a fit bent by the drift replaced a good calibration (spread %.2f vs %.2f deg)", minutes,
+			  bentSpread, headingSpread(*exact, mag, rng));
+		std::printf("  %2.0f min standing: fit spread %5.2f deg, residual %.3f vs %.3f, consistency %.3f vs %.3f: %s (old rule: %s)\n",
+					minutes, bentSpread, bent ? bent->residual : -1.0, worn.residualOf(*exact).value_or(-1),
+					bent ? worn.consistency(*bent).value_or(-1) : -1.0, worn.consistency(*exact).value_or(-1),
+					spurious ? "taken" : "rejected", oldRule ? "taken" : "rejected");
+	}
+}
+
+static void testHeadingReconnect() {
+	std::mt19937 rng(6);
+	SyntheticMag mag = makeMag();
+	MagCalibrator cal;
+	for (int i = 0; i < 4000; i++) {
+		Quat q = randomQuat(rng);
+		cal.addSample(q, mag.raw(q, rng), 0.5, i * 0.05);
+	}
+	auto c = cal.solve();
+	if (!c) return;
+	HeadingFilter hf;
+	hf.setCalibration(*c);
+	HeadingFilterSettings s;
+	const Quat drift = Quat::yaw(deg2rad(20)), truth = Quat::fromAxisAngle({1, 0, 0}, 0.3);
+	const double dt = 0.02;
+	for (int i = 0; i < 1500; i++) hf.update(drift * truth, mag.raw(truth, rng), 0.0, dt, s);
+	const double h0 = hf.heading();
+	const Quat corrected = Quat::yaw(-h0) * drift * truth;
+
+	// WiFi drop: the device fusion kept running, the feet are where the field is 15 deg off.
+	// The heading stays (re-acquiring took the local field)
+	HeadingFilter wifi = hf;
+	wifi.reconnected();
+	CHECK(!wifi.hasHeading(), "heading used before the reconnection check");
+	const Quat local = Quat::yaw(deg2rad(15));
+	for (int i = 0; i < 100; i++) wifi.update(drift * truth, mag.raw(local * truth, rng), 0.0, dt, s);
+	CHECK(wifi.hasHeading() && std::fabs(rad2deg(wrapAngle(wifi.heading() - h0))) < 0.5,
+		  "heading after a WiFi drop moved by %.2f deg", rad2deg(wrapAngle(wifi.heading() - h0)));
+
+	// Reboot: the device yaw restarted 120 deg away. The mag wins
+	HeadingFilter boot = hf;
+	boot.reconnected();
+	const Quat rebooted = Quat::yaw(deg2rad(120)) * drift;
+	for (int i = 0; i < 50; i++) boot.update(rebooted * truth, mag.raw(truth, rng), 0.0, dt, s);
+	const double err = angleBetween(Quat::yaw(-boot.heading()) * rebooted * truth, corrected);
+	CHECK(boot.hasHeading() && err < 1.5, "heading after a reboot off by %.2f deg", err);
+}
+
 static void testMounting() {
 	std::mt19937 rng(3);
 	for (int trial = 0; trial < 20; trial++) {
@@ -612,6 +739,8 @@ int main() {
 	testProtocol();
 	testMagCalibration();
 	testHeadingFilter();
+	testMagAutoCalibration();
+	testHeadingReconnect();
 	testPoseFusion();
 	testMounting();
 	testBodySolver();

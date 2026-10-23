@@ -56,6 +56,24 @@ public:
 	// qWorld: device orientation (sensor -> world, Y up). angularSpeed in rad/s.
 	void addSample(const Quat& qWorld, const std::array<int16_t, 3>& raw, double angularSpeed,
 				   double time);
+	// Automatic calibration: a fit that should replace `current` (none yet, or a clearly
+	// more consistent one), with the heading offset that keeps the north where `current`
+	// had it.
+	// The device yaw drifts (0.5-2 deg/min) and the bins keep samples from hours apart
+	// (the rare orientations: strapping the trackers on): the fit bends to absorb the
+	// drift between them and its residual, measured in the same drifting frame, called
+	// it better. Fits are compared on what the drift does not touch: the field norm and
+	// its angle to gravity (consistency()). And the offset used to be set from the
+	// filtered heading of the moment: whatever error the filter had then (a desk's field,
+	// drift not yet corrected) became the new north, which moved by 12-19 deg from one
+	// replacement to the next on the 20/10-21/10 sessions.
+	std::optional<MagCalibration> replacement(const MagCalibration& current) const;
+	// Heading offset for `to` so that it measures on the samples, on average over their
+	// orientations, the headings `from` measures (both see the same device frame)
+	std::optional<double> headingOffsetFor(const MagCalibration& from, const MagCalibration& to) const;
+	// RMS over the samples of the field norm error (field norm units) and of the dip
+	// error (rad): neither depends on the device yaw
+	std::optional<double> consistency(const MagCalibration& cal) const;
 	// Fraction of orientation bins with enough samples, 0..1
 	double coverage() const;
 	size_t sampleCount() const;
@@ -155,6 +173,12 @@ struct HeadingFilterSettings {
 	// Heading jumps (fast realignment, relocks) reach the output smoothly, with this
 	// time constant (s)
 	double glideTime = 0.3;
+	// Reconnection (reconnected()): verifyTime s of clean field decide, a mean offset
+	// above rebootTol is a reboot. After verifyMaxWait s without a clean field the
+	// heading is kept.
+	double verifyTime = 0.5;
+	double rebootTol = deg2rad(25.0);
+	double verifyMaxWait = 3.0;
 };
 
 class HeadingFilter {
@@ -163,9 +187,9 @@ public:
 
 	void setCalibration(const MagCalibration& cal);
 	const MagCalibration& calibration() const { return m_cal; }
-	// Replaces the calibration keeping the corrected heading continuous
-	void updateCalibration(MagCalibration cal, const Quat& qWorld,
-						   const std::array<int16_t, 3>& raw);
+	// Replaces the calibration keeping the heading (cal.headingOffset already keeps the
+	// north: MagCalibrator::replacement)
+	void updateCalibration(const MagCalibration& cal);
 	void reset();
 	// Hot reload: resume with a known heading instead of re-acquiring
 	void restore(double heading, double rate = 0) {
@@ -191,9 +215,20 @@ public:
 		m_relock = true;
 		m_relockSin = m_relockCos = m_relockTime = 0;
 	}
+	// The tracker reconnected (handshake after a silence). A WiFi drop leaves the device
+	// fusion running and the heading right: resetting it re-acquired the heading from
+	// the field where the feet were (off by 10-20 deg near the desk or the floor) and
+	// lost the learnt drift, all three trackers at once. After a reboot the device yaw
+	// restarted anywhere: the first clean samples tell (HeadingFilterSettings::rebootTol).
+	bool relocking() const { return m_relock; }
+	void reconnected() {
+		if (!m_initialized) return;
+		m_verify = true;
+		m_verifySin = m_verifyCos = m_verifyTime = m_verifyWait = 0;
+	}
 
 	// Yaw to apply on the left of the device orientation: q_corrected = Ry(-h) * q
-	bool hasHeading() const { return m_initialized; }
+	bool hasHeading() const { return m_initialized && !m_verify; }
 	double heading() const { return wrapAngle(m_heading + m_glide); }
 	// Learnt drift rate of the heading correction (rad/s) and its temperature slope
 	double rate() const { return m_rate; }
@@ -232,6 +267,9 @@ private:
 	// Re-lock after a gyro glitch: circular mean of the innovation
 	bool m_relock = false;
 	double m_relockSin = 0, m_relockCos = 0, m_relockTime = 0;
+	// Reboot check after a reconnection: circular mean of the innovation
+	bool m_verify = false;
+	double m_verifySin = 0, m_verifyCos = 0, m_verifyTime = 0, m_verifyWait = 0;
 	// Rotation-consistent relock window (consistentRelock)
 	void consistentRelock(double innovation, double norm, double dip, double angularSpeed, double dt,
 						  const HeadingFilterSettings& s);

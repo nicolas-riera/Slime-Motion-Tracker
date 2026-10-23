@@ -38,6 +38,11 @@ constexpr int kMinSamplesPerBin = 3;
 constexpr double kMinCoverage = 0.45;
 // Raw counts are ~1e3, the other unknowns ~1: scale the K columns
 constexpr double kRawScale = 1e-3;
+// Residual (field norm units) a new automatic fit needs to replace a valid
+// calibration (good ones: 0.045-0.055), and by how much it must beat the current one
+// on the same samples
+constexpr double kMaxReplacingResidual = 0.065;
+constexpr double kReplacingRatio = 0.7;
 
 }  // namespace
 
@@ -52,6 +57,50 @@ void MagCalibrator::addSample(const Quat& qWorld, const std::array<int16_t, 3>& 
 	auto& b = m_bins[bin];
 	b.push_back({qWorld.toMatrix(), Vec3{double(raw[0]), double(raw[1]), double(raw[2])}});
 	if (b.size() > kPerBin) b.pop_front();
+}
+
+std::optional<double> MagCalibrator::consistency(const MagCalibration& cal) const {
+	if (!cal.valid || sampleCount() < 30) return std::nullopt;
+	double sq = 0;
+	for (const auto& b : m_bins)
+		for (const auto& s : b) {
+			const Vec3 v = cal.K * s.m + cal.c;
+			const double n = v.norm();
+			if (n < 1e-9) return std::nullopt;
+			// Gravity in the sensor frame: R is sensor -> world
+			const Vec3 up = s.R.transposed() * Vec3{0, 1, 0};
+			const double dip = std::asin(std::clamp(-up.dot(v) / n, -1.0, 1.0));
+			sq += (n - 1) * (n - 1) + (dip - cal.dip) * (dip - cal.dip);
+		}
+	return std::sqrt(sq / double(sampleCount()));
+}
+
+std::optional<double> MagCalibrator::headingOffsetFor(const MagCalibration& from, const MagCalibration& to) const {
+	if (!from.valid || !to.valid || sampleCount() < 30) return std::nullopt;
+	double sn = 0, cs = 0;
+	for (const auto& b : m_bins)
+		for (const auto& s : b) {
+			const double d = headingOf(s.R * (from.K * s.m + from.c)) + from.headingOffset
+						   - headingOf(s.R * (to.K * s.m + to.c));
+			sn += std::sin(d);
+			cs += std::cos(d);
+		}
+	return std::atan2(sn, cs);
+}
+
+std::optional<MagCalibration> MagCalibrator::replacement(const MagCalibration& current) const {
+	auto cal = solve();
+	if (!cal) return std::nullopt;
+	if (!current.valid) return cal;
+	// Both measured on the same samples. Only a good fit replaces a valid calibration:
+	// near a local disturbance (a bed frame) the recent samples favor any new fit, and
+	// poor fits (residual 0.07-0.11 vs ~0.05) replaced each other
+	auto now = consistency(current), next = consistency(*cal);
+	auto offset = headingOffsetFor(current, *cal);
+	if (!now || !next || !offset || cal->residual >= kMaxReplacingResidual || *next >= kReplacingRatio * *now)
+		return std::nullopt;
+	cal->headingOffset = *offset;
+	return cal;
 }
 
 double MagCalibrator::coverage() const {

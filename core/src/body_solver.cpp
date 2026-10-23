@@ -219,8 +219,16 @@ const double kFreeSmooth = tunable("kFreeSmooth", 3.0);
 const double kTibialFree = tunable("kTibialFree", 0.7);
 const double kTibialFlex0 = tunable("kTibialFlex0", 0.5);
 const double kTibialFlex1 = tunable("kTibialFlex1", 1.3);
-// Seated (the foot rests and sets the tibia's turn) the pull is scaled by this
+// Seated or lying the feet rest turned out (a V) while the thighs stay near parallel: the
+// tibia turns out on the flexed knee. With the hinge following the shins the thighs spread
+// 10-35 deg each (13:40 and 15:50 recordings) and crossed legs looked side by side. Seated,
+// the outward part of the shin's turn from the pelvis heading can be reduced by
+// kTibialSeated (not crouched: the knee ahead of the ankle by more than kTibialSitAhead of
+// the shin). Off: knees spread for real were shown together (23/10 14:41, screenshot), and
+// the shins' turns there were asymmetric (33 vs 10 deg out for a symmetric pose): the
+// spread came from the trackers' heading errors, not from the feet's V.
 const double kTibialSeated = tunable("kTibialSeated", 0.0);
+const double kTibialSitAhead = tunable("kTibialSitAhead", 0.4);
 const double kHoldStart = tunable("kHoldStart", 0.6);
 const double kHoldSigma = tunable("kHoldSigma", 0.25);
 const double kHoldBounce = tunable("kHoldBounce", 0.25);
@@ -656,9 +664,14 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 			const double along = std::fabs(fp.dot(u));
 			const Vec3 target = fp - u * fp.dot(u);
 			const double twist = std::atan2(u.dot(fs.cross(target)), fs.dot(target));
-			const double pull = kTibialFree * smoothstep(kTibialFlex0, kTibialFlex1, ls.phi) *
-								smoothstep(0.95, 0.8, along) * lerp(kTibialSeated, 1.0, standing);
-			out.debug.hingeYaw[i] = pull * twist;
+			const double gate = smoothstep(kTibialFlex0, kTibialFlex1, ls.phi) * smoothstep(0.95, 0.8, along);
+			const double sit =
+				(1 - standing) * std::max(smoothstep(kTibialSitAhead + 0.1, kTibialSitAhead - 0.1, fp.dot(u)), reclined);
+			// Outward turn of the shin (a yaw about +Y turns forward to the left: outward for the
+			// left leg, the twist back is then negative)
+			const double outward = std::max(0.0, i == 0 ? -twist : twist);
+			out.debug.hingeYaw[i] =
+				gate * (kTibialFree * standing * twist - kTibialSeated * sit * (i == 0 ? outward : -outward));
 			forward[i] = (li.shin * Quat::yaw(out.debug.hingeYaw[i])).rotate({0, 0, -1});
 		}
 
