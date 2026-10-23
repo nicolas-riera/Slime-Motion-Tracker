@@ -77,6 +77,9 @@ struct UiState {
     double cdAt = 0.0;
     std::string soundPhase = "idle";
     int soundSecond = 0;
+    // Same for the single-tracker heading reset
+    std::string trkResetSoundPhase = "idle";
+    int trkResetSoundSecond = 0;
     // Last calibration result shown under the buttons
     std::string resultPhase;
     std::string resultMessage;

@@ -50,6 +50,14 @@ struct HipCalibrationInfo {
     std::string message;
 };
 
+// One tracker's heading reset (Tracker page): its yaw aligned to the headset's
+struct TrackerResetInfo {
+    std::string mac;
+    std::string phase = "idle";  // idle|countdown|done|error
+    float countdown = 0.0f;
+    std::string message;
+};
+
 struct CalibrationInfo {
     std::string phase = "idle";  // idle|stand|ski|done|error
     bool quick = false;  // quick reset (stand only) rather than the full calibration
@@ -157,6 +165,7 @@ struct DriverState {
     CalibrationInfo calibration;
     float hipSideOffset = 0.0f;  // m, > 0: hip center to the right of the head chain
     HipCalibrationInfo hipCalibration;
+    TrackerResetInfo trackerReset;
     DriverSettings settings;
     std::vector<TrackerInfo> trackers;
     // Assigned trackers not heard since the engine started (offline, for the Body page)
@@ -202,6 +211,8 @@ public:
     void hipCalibrate();
     void hipCancel();
     void hipReset();
+    void trackerReset(std::string_view mac);
+    void trackerResetCancel();
     void magCalibrate(std::string_view mac);
     void magCancel(std::string_view mac);
     void magReset(std::string_view mac);

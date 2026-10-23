@@ -962,6 +962,18 @@ void update(DriverLink& link, bool rendering) {
             g.resultDismissed = cal.phase != "done" && cal.phase != "error";
         }
         g.soundPhase = cal.phase;
+
+        const TrackerResetInfo& tr = s.trackerReset;
+        if (tr.phase == "countdown") {
+            const int second = static_cast<int>(std::ceil(std::max(0.0f, tr.countdown) - 1e-3f));
+            if (g.trkResetSoundPhase != "countdown") g.trkResetSoundSecond = INT_MAX;
+            if (second >= 1 && second < g.trkResetSoundSecond) play(sounds::Sound::Tick);
+            g.trkResetSoundSecond = second;
+        } else if (g.trkResetSoundPhase == "countdown") {
+            if (tr.phase == "done") play(sounds::Sound::Done);
+            if (tr.phase == "error") play(sounds::Sound::Error);
+        }
+        g.trkResetSoundPhase = tr.phase;
     }
 
     // 3D views: the engine streams poses only while they are shown

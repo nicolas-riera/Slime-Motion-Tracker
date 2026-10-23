@@ -25,6 +25,7 @@ publishes and sends commands. The driver starts the overlay process when SteamVR
   "calibrated": true,
   "ready": true,
   "calibration": { "phase": "idle", "quick": false, "countdown": 0.0, "message": "" },
+  "trackerReset": { "mac": "", "phase": "idle", "countdown": 0.0, "message": "" },
   "lastCalibration": { "full": 1792187460.0, "reset": null },
   "settings": {
     "magEnabled": true,
@@ -133,6 +134,8 @@ sensor frame) is included while the overlay asks for it or a guided calibration 
 { "type": "calibrate" }
 { "type": "quickReset" }
 { "type": "cancelCalibration" }
+{ "type": "trackerReset", "mac": "D8:BF:C0:F9:F0:F9" }
+{ "type": "trackerResetCancel" }
 { "type": "magCalibrate", "mac": "B4:E6:2D:36:36:94" }
 { "type": "magCancel", "mac": "B4:E6:2D:36:36:94" }
 { "type": "magReset", "mac": "B4:E6:2D:36:36:94" }
@@ -144,6 +147,9 @@ sensor frame) is included while the overlay asks for it or a guided calibration 
 - `calibrate`: full calibration. Stand straight (countdown), then ski pose (countdown).
   Needed once; it finds where each tracker is mounted (front, side, back...).
 - `quickReset`: stand straight only. Re-aligns heading, keeps the mounting.
+- `trackerReset`: one tracker's heading only (it drifted alone), after a 3 s countdown
+  (`trackerReset` in the state, phase idle|countdown|done|error): the waist forward, or the
+  leg hanging straight or stretched ahead, aligned to the headset's gaze.
 - `setSetting`: `value` is a number or a boolean depending on the key (see `settings`).
 - `resetSettings`: restores the default `settings` (not the mapping nor the calibrations).
 - `view`: the overlay shows a 3D view (skeleton, tracker page, mag calibration page).

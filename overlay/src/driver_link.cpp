@@ -215,6 +215,11 @@ DriverState parseState(const json& j) {
     s.hipCalibration.phase = getString(hip, "phase", "idle");
     s.hipCalibration.countdown = getFloat(hip, "countdown", 0.0f);
     s.hipCalibration.message = getString(hip, "message", "");
+    const json& tr = getObject(j, "trackerReset");
+    s.trackerReset.mac = getString(tr, "mac", "");
+    s.trackerReset.phase = getString(tr, "phase", "idle");
+    s.trackerReset.countdown = getFloat(tr, "countdown", 0.0f);
+    s.trackerReset.message = getString(tr, "message", "");
     const json& last = getObject(j, "lastCalibration");
     if (auto it = last.find("full"); it != last.end() && it->is_number()) s.calibration.lastFull = it->get<double>();
     if (auto it = last.find("reset"); it != last.end() && it->is_number()) s.calibration.lastReset = it->get<double>();
@@ -398,6 +403,10 @@ void DriverLink::hipCalibrate() { send({{"type", "hipCalibrate"}}); }
 void DriverLink::hipCancel() { send({{"type", "hipCancel"}}); }
 
 void DriverLink::hipReset() { send({{"type", "hipReset"}}); }
+
+void DriverLink::trackerReset(std::string_view mac) { send({{"type", "trackerReset"}, {"mac", mac}}); }
+
+void DriverLink::trackerResetCancel() { send({{"type", "trackerResetCancel"}}); }
 
 void DriverLink::magCalibrate(std::string_view mac) {
     send({{"type", "magCalibrate"}, {"mac", mac}});

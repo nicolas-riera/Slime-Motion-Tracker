@@ -35,6 +35,7 @@ public:
 private:
 	enum class CalPhase { Idle, Stand, Ski, Done, Error };
 	enum class HipPhase { Idle, Countdown, Measuring, Done, Error };
+	enum class TrackerResetPhase { Idle, Countdown, Done, Error };
 	struct Capture {
 		Quat q;  // corrected tracker orientation
 		bool inMagFrame = false;
@@ -105,6 +106,11 @@ private:
 	int m_hipCount = 0;
 	std::string m_hipMessage;
 	void updateHipCalibration(double now, const BodyOutput& out);
+	// One tracker's heading reset (it drifted alone): its yaw aligned to the headset's
+	TrackerResetPhase m_trkResetPhase = TrackerResetPhase::Idle;
+	std::string m_trkResetMac, m_trkResetMessage;
+	double m_trkResetDeadline = 0;
+	void updateTrackerReset(double now, const Pose& hmd, bool hmdValid, const std::vector<TrackerSnapshot>& trackers);
 	Pose m_standHmd;
 	std::map<std::string, Capture> m_standCaptures;
 	// Tracker boot counts at the last calibration: without the mag, the yaw

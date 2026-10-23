@@ -130,6 +130,34 @@ void drawLiveView(const TrackerDetail* d, float height) {
 void drawInfoCards(DriverLink& link, const TrackerInfo& t, const TrackerDetail* d) {
     const auto na = [&](bool known) { return known ? col::text : col::textFaint; };
 
+    if (t.role != "none") {
+        // This tracker alone turned (its heading drifted): align it to the headset
+        beginCard("##drift");
+        sectionTitle("DRIFT RESET");
+        helpText(t.role == "waist" ? "Only this tracker turned? Press Reset, then look straight ahead, standing or "
+                                     "sitting straight, until the countdown ends."
+                                   : "Only this tracker turned? Press Reset, then look straight ahead with this leg "
+                                     "straight down (standing) or stretched straight ahead, until the countdown ends.");
+        ImGui::Dummy(ImVec2(0, 4));
+        const TrackerResetInfo& tr = link.state().trackerReset;
+        const bool mine = tr.mac == t.mac;
+        const bool running = mine && tr.phase == "countdown";
+        if (running)
+            text(fonts.body, col::orange, "%s (%.0f s)", tr.message.c_str(), std::ceil(tr.countdown));
+        else if (mine && !tr.message.empty())
+            text(fonts.body, tr.phase == "error" ? col::red : col::green, "%s", tr.message.c_str());
+        ImGui::Dummy(ImVec2(0, 4));
+        if (running) {
+            if (button("Cancel##drift", ImVec2(160, 40))) link.trackerResetCancel();
+        } else {
+            ImGui::BeginDisabled(!t.connected);
+            if (button("Reset##drift", ImVec2(160, 40), ButtonStyle::Primary)) link.trackerReset(t.mac);
+            ImGui::EndDisabled();
+        }
+        endCard();
+        ImGui::Dummy(ImVec2(0, 2));
+    }
+
     beginCard("##device");
     sectionTitle("DEVICE");
     infoRow("MAC address", col::text, "%s", t.mac.c_str());

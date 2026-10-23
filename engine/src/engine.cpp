@@ -26,6 +26,7 @@ constexpr double kHipCountdownSeconds = 5.0;
 constexpr double kHipMeasureSeconds = 1.0;
 constexpr double kHipMaxOffset = 0.2;
 constexpr double kSkiSeconds = 3.0;
+constexpr double kTrackerResetSeconds = 3.0;
 
 Pose poseFromMatrix(const double m[3][4]) {
 	Pose p;
@@ -303,6 +304,7 @@ void Engine::frame(const SmtFrameInput& fin, SmtFrameOutput& fout) {
 		m_fuser.update(m_pose.latest(), hmd, m_floorY, m_eyeHeight, m_legReach, dt, out);
 	}
 	updateHipCalibration(now, out);
+	updateTrackerReset(now, hmd, hmdValid, trackers);
 	recordFrame(fin, out, trackers);
 	if (m_calPhase != m_recordedPhase) {
 		static const char* names[] = {"idle", "stand", "ski", "done", "error"};
@@ -448,6 +450,16 @@ void Engine::handleCommand(const json& cmd) {
 		m_hipPhase = HipPhase::Idle;
 		m_hipMessage.clear();
 		recordEvent("hip", "reset");
+	} else if (type == "trackerReset") {
+		m_trkResetMac = cmd.value("mac", "");
+		m_trkResetPhase = TrackerResetPhase::Countdown;
+		m_trkResetDeadline = TrackerHub::now() + kTrackerResetSeconds;
+		m_trkResetMessage = "Look straight ahead";
+		return;
+	} else if (type == "trackerResetCancel") {
+		m_trkResetPhase = TrackerResetPhase::Idle;
+		m_trkResetMessage.clear();
+		return;
 	} else if (type == "cancelCalibration") {
 		m_calPhase = CalPhase::Idle;
 		m_calMessage.clear();
@@ -628,6 +640,37 @@ void Engine::finishCalibration(const Pose& hmd) {
 	markDirty();
 }
 
+void Engine::updateTrackerReset(double now, const Pose& hmd, bool hmdValid,
+								const std::vector<TrackerSnapshot>& trackers) {
+	if (m_trkResetPhase != TrackerResetPhase::Countdown || now < m_trkResetDeadline) return;
+	auto fail = [&](const char* why) {
+		m_trkResetPhase = TrackerResetPhase::Error;
+		m_trkResetMessage = why;
+		recordEvent("trackerReset", m_trkResetMac + " error: " + why);
+	};
+	auto tc = m_config.trackers.find(m_trkResetMac);
+	auto t = std::find_if(trackers.begin(), trackers.end(), [&](const TrackerSnapshot& s) { return s.mac == m_trkResetMac; });
+	if (!hmdValid) return fail("Headset not tracked");
+	if (tc == m_config.trackers.end() || tc->second.role == Role::None || t == trackers.end())
+		return fail("Assign the tracker first");
+	Quat seg;
+	if (!trackerOrientation(*t, tc->second, seg)) return fail("Tracker offline, without heading or not calibrated");
+	// Waist: its forward along the gaze. Leg: the shin's forward plus its down, which points
+	// ahead whether the leg hangs straight, the shin is seated or the leg is stretched ahead
+	const bool waist = tc->second.role == Role::Waist;
+	Vec3 v = seg.rotate(waist ? Vec3{0, 0, -1} : Vec3{0, -1, -1});
+	v.y = 0;
+	if (v.norm() < 0.5) return fail(waist ? "Stand or sit straight" : "Leg straight down or stretched ahead");
+	const double delta = wrapAngle(hmd.rotation.yawAngle() - std::atan2(-v.x, -v.z));
+	tc->second.yawAlign = wrapAngle(tc->second.yawAlign + delta);
+	char msg[64];
+	std::snprintf(msg, sizeof(msg), "Done: turned by %.0f deg", rad2deg(delta));
+	m_trkResetPhase = TrackerResetPhase::Done;
+	m_trkResetMessage = msg;
+	recordEvent("trackerReset", m_trkResetMac + " " + msg);
+	markDirty();
+}
+
 void Engine::updateHipCalibration(double now, const BodyOutput& out) {
 	if (m_hipPhase == HipPhase::Countdown && now >= m_hipDeadline) {
 		m_hipPhase = HipPhase::Measuring;
@@ -670,6 +713,7 @@ void Engine::updateHipCalibration(double now, const BodyOutput& out) {
 void Engine::publishState(const std::vector<TrackerSnapshot>& trackers, const BodyOutput& out) {
 	static const char* phases[] = {"idle", "stand", "ski", "done", "error"};
 	static const char* hipPhases[] = {"idle", "countdown", "measuring", "done", "error"};
+	static const char* trkResetPhases[] = {"idle", "countdown", "done", "error"};
 	const Settings& s = m_config.settings;
 	double now = TrackerHub::now();
 
@@ -731,6 +775,11 @@ void Engine::publishState(const std::vector<TrackerSnapshot>& trackers, const Bo
 		 {{"phase", hipPhases[int(m_hipPhase)]},
 		  {"countdown", m_hipPhase == HipPhase::Countdown ? std::max(0.0, m_hipDeadline - now) : 0.0},
 		  {"message", m_hipMessage}}},
+		{"trackerReset",
+		 {{"mac", m_trkResetMac},
+		  {"phase", trkResetPhases[int(m_trkResetPhase)]},
+		  {"countdown", m_trkResetPhase == TrackerResetPhase::Countdown ? std::max(0.0, m_trkResetDeadline - now) : 0.0},
+		  {"message", m_trkResetMessage}}},
 		{"lastCalibration",
 		 {{"full", m_config.lastFullCalibration > 0 ? json(m_config.lastFullCalibration) : json(nullptr)},
 		  {"reset", m_config.lastQuickReset > 0 ? json(m_config.lastQuickReset) : json(nullptr)}}},
