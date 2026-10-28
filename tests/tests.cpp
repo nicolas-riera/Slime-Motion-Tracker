@@ -732,6 +732,35 @@ static void testBatteryEstimator() {
 	CHECK(!BatteryEstimator::plausible(0.0, 4.1) && !BatteryEstimator::plausible(0.5, 2.5) &&
 			  BatteryEstimator::plausible(0.5, 0.0),
 		  "battery: plausibility");
+
+	// Long-term learning. The level falls 5 %/h above 30 % and 10 %/h below (the curve's
+	// percent is not linear in charge), in 0.4 % steps with noise. Sessions of 3 h with
+	// 1 h off (no change), down to 8 %, a charge, then a new session at 60 %: right from
+	// the start the remaining time is the learnt one (6 h + 3 h), not 60 % at 5 %/h
+	std::mt19937 rng(9);
+	std::normal_distribution<double> noise(0, 0.003);
+	const std::string mac2 = "11:22:33:44:55:66";
+	BatteryEstimator l;
+	auto pace = [](double level) { return (level > 0.3 ? 0.05 : 0.10) / 3600.0; };
+	auto reading = [&](double level) { return std::round((level + noise(rng)) / 0.0042) * 0.0042; };
+	double level = 1.0, tt = 0;
+	while (level > 0.08) {
+		for (int i = 0; i < 3 * 3600 && level > 0.08; i++, tt += 1) {
+			l.add(mac2, reading(level), 3.8, tt);
+			level -= pace(level);
+		}
+		tt += 3600;
+	}
+	for (int i = 0; i < 2 * 3600; i++, tt += 1) l.add(mac2, std::min(1.0, 0.08 + i / 7200.0), 4.1, tt);  // charging
+	tt += 3600;
+	level = 0.6;
+	for (int i = 0; i < 70; i++, tt += 1) l.add(mac2, reading(level), 3.8, tt);
+	const auto first = l.estimate(mac2);
+	CHECK(first.state == BatteryEstimator::State::Ok && std::fabs(first.hours - 9.0) < 1.2,
+		  "battery: learnt estimate at the start of a session %.1f h (state %d), expected ~9", first.hours,
+		  int(first.state));
+	std::printf("battery: learnt %.1f h of discharge, estimate at 60 %% %.1f h (true 9.0)\n",
+				l.learntTime(mac2) / 3600.0, first.hours);
 }
 
 int main() {
