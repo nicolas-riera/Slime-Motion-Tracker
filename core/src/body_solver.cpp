@@ -99,8 +99,14 @@ const double kUnderHeightSigma = tunable("kUnderHeightSigma", 0.10);
 const double kSitBack = tunable("kSitBack", 0.092);
 // Lying (reclined), the sit-back shift goes along the pelvis back axis, which is
 // horizontal lying on the side and tilts sideways as the pelvis rolls on the
-// back: the hip ended up beside the body. Fraction of it removed when reclined
+// back: the hip ended up beside the body. Fraction of it removed as the pelvis up
+// axis height goes from kSitBackFade0 to kSitBackFade1. It used to fade from 32 deg of
+// tilt on: slouching on a chair, the pelvis wandering from 37 to 42 deg moved the hip
+// 5 cm forward and the seat anchor followed it. Now from 41 deg (lower starts moved the
+// hips of reclined poses on the 2026-10-20 recordings more)
 const double kSitBackRecline = tunable("kSitBackRecline", 1.0);
+const double kSitBackFade0 = tunable("kSitBackFade0", 0.75);
+const double kSitBackFade1 = tunable("kSitBackFade1", 0.5);
 // Seated or lying, there is no chest tracker and the spine curves (slumped, leaning
 // back against the bed head): its upper part follows the head's up axis by this
 // fraction, its lower part the pelvis (a straight spine along a reclined pelvis put
@@ -114,6 +120,15 @@ const double kUpperSpine = tunable("kUpperSpine", 0.5);
 // fraction: leaning the head forward bends the upper back instead of sliding the
 // whole rigid trunk, hip included, along with the head
 const double kChestStand = tunable("kChestStand", 0.5);
+// Seated with the pelvis tilted back (slouching: 40 deg seen, 2026-10-28), the head is
+// still held level and the upper back curves forward. The neck range and the chest
+// emulation start from a chest leaning back by at most this much (rad; fading out as the
+// trunk lies down). Taken from the pelvis, a level head already used up the neck range:
+// the chest swung back, the hip went 10 cm forward and 6 cm up, and came back whenever
+// the head looked down. Below it (seated tilts of 10-27 deg seen) nothing changes
+const double kSeatChestBackMax = tunable("kSeatChestBackMax", 0.44);
+// Fraction of a backward pelvis tilt left out of the standing test (see the solver)
+const double kStandBackTilt = tunable("kStandBackTilt", 1.0);
 // A knee raised high tilts the pelvis back (30 deg seen) while the trunk stays upright:
 // the lumbar spine bends. Taken as a rigid trunk, the hip went 25 cm forward. With a
 // leg off the ground and its thigh flexed (kTuckFlex0..1 rad in the pelvis frame), this
@@ -176,6 +191,11 @@ const double kLieHeadYawMax = tunable("kLieHeadYawMax", 0.7);
 const double kLyingFlat = tunable("kLyingFlat", 0.3);
 const double kSeatSigma = tunable("kSeatSigma", 0.02);
 const double kSeatLeak = tunable("kSeatLeak", 8.0);
+// Horizontally the leak follows the head chain's errors too (a nod, the pelvis tilt
+// wandering by a few degrees): with 8 s the hip crept 3 cm per 3 s with a still head
+// (2026-10-28). Vertically it keeps 8 s: sitting down without a waist jolt, the hip
+// has to come down onto the seat
+const double kSeatLeakH = tunable("kSeatLeakH", 20.0);
 constexpr double kSeatReach = 0.30;
 // The seat anchor only holds a hip resting on the seat. When the hip itself moves
 // (shifting on the chair, scooting up the bed after lying down across it, rolling
@@ -564,7 +584,21 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 	const Vec3 torsoUp = pelvis.rotate(up);
 	Vec3 neck = headPivot - torsoUp * d.neckDown;
 	Vec3 hip0 = neck - torsoUp * d.spine;
-	const double standing = smoothstep(0.55, 0.8, (hip0.y - in.floorY) / d.standingHipHeight());
+	// The standing test leaves out a backward pelvis tilt (kStandBackTilt): leaning
+	// forward with straight legs keeps the hip high, but slouching on a chair tilts the
+	// pelvis 40 deg back, which raised the rigid chain's hip until it read 30 % standing
+	// (less sit-back, a looser seat anchor: the hip slid forward)
+	double standHipY = hip0.y;
+	{
+		Vec3 fh = pelvis.rotate({0, 0, -1});
+		fh.y = 0;
+		const double back = fh.norm() > 0.3 ? -torsoUp.dot(fh.normalized()) : 0.0;
+		if (back > 0 && kStandBackTilt > 0) {
+			const Vec3 standUp = (torsoUp + fh.normalized() * (back * kStandBackTilt)).normalized();
+			standHipY = headPivot.y - standUp.y * (d.neckDown + d.spine);
+		}
+	}
+	const double standing = smoothstep(0.55, 0.8, (standHipY - in.floorY) / d.standingHipHeight());
 	const double seated = 1 - standing;  // seated, kneeling or lying: the hip is supported
 	const double reclined = seated * smoothstep(kReclineStart, kReclineFull, torsoUp.y);
 	// Lying, the head chain runs along an almost horizontal trunk: a waist tracker
@@ -608,26 +642,40 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 	}
 	if (reclined > 0 || kChestStand > 0) {
 		const double w = kChestHead * reclined + kChestStand * (1 - reclined);
+		// The chest the neck range is measured from: the pelvis, leaning back by at most
+		// kSeatChestBackMax when seated (slouching)
+		Vec3 chestRef = chainUp;
+		if (kSeatChestBackMax > 0 && seated > 0) {
+			Vec3 back = pelvis.rotate({0, 0, 1});
+			back.y = 0;
+			const double lean = std::acos(std::clamp(chainUp.y, -1.0, 1.0));
+			const Vec3 axis = chainUp.cross(up);
+			if (back.norm() > 0.3 && chainUp.dot(back) > 0 && lean > kSeatChestBackMax && axis.norm() > 1e-6) {
+				const double k = seated * smoothstep(kLyingFlat, 0.6, chainUp.y);
+				chestRef = Quat::fromAxisAngle(axis.normalized(), (lean - kSeatChestBackMax) * k).rotate(chainUp);
+			}
+		}
 		Vec3 headUp = hq.rotate(up);
-		const double tilt = std::acos(std::clamp(chainUp.dot(headUp), -1.0, 1.0));
+		const double tilt = std::acos(std::clamp(chestRef.dot(headUp), -1.0, 1.0));
 		const double neckRange =
 			kNeckRange * (kNeckStandOnly > 0 ? lerp(1.0, smoothstep(0.6, 0.8, eyeRatio), kNeckStandOnly) : 1.0);
 		if (neckRange > 0 && tilt > 1e-6) {
 			// Keep only the tilt beyond the neck's range
-			Vec3 axis = chainUp.cross(headUp);
+			Vec3 axis = chestRef.cross(headUp);
 			double excess = std::max(0.0, tilt - neckRange);
-			headUp = axis.norm() > 1e-9 ? Quat::fromAxisAngle(axis, excess).rotate(chainUp) : chainUp;
+			headUp = axis.norm() > 1e-9 ? Quat::fromAxisAngle(axis, excess).rotate(chestRef) : chestRef;
 		}
-		const Vec3 chestUp = (chainUp * (1 - w) + headUp * w).normalized();
+		const Vec3 chestUp = (chestRef * (1 - w) + headUp * w).normalized();
 		neck = headPivot - chestUp * d.neckDown;
 		hip0 = neck - chestUp * (d.spine * kUpperSpine) - chainUp * (d.spine * (1 - kUpperSpine));
 	}
 	{
 		// Seated, the trunk leans forward: the hip is behind the head chain. Horizontal,
-		// fading out as the pelvis tilts (lying down)
+		// fading out as the pelvis lies down (kSitBackFade*)
 		Vec3 pelvisBack = pelvis.rotate({0, 0, 1});
 		pelvisBack.y = 0;
-		hip0 += pelvisBack * (kSitBack * d.height * seated * (1 - kSitBackRecline * reclined));
+		const double fade = seated * smoothstep(kSitBackFade0, kSitBackFade1, torsoUp.y);
+		hip0 += pelvisBack * (kSitBack * d.height * seated * (1 - kSitBackRecline * fade));
 	}
 	// The user's own offset (calibrated with the controllers): a torso leaning sideways
 	// put the whole lower body to one side
@@ -827,8 +875,7 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 		m_seatValid = true;
 	} else {
 		// The hip moves on the seat (kSeatMove*, kSeatTurn*)
-		double release = dt / kSeatLeak +
-						 dt / kSeatMoveTime * smoothstep(kSeatMoveAccel0, kSeatMoveAccel1, m_waistActivity);
+		double release = dt / kSeatMoveTime * smoothstep(kSeatMoveAccel0, kSeatMoveAccel1, m_waistActivity);
 		const double turn = (m_seatPelvis.conj() * pelvis).angle();
 		if (turn > kSeatTurnFree) {
 			const double excess = turn - kSeatTurnFree;
@@ -836,7 +883,9 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 			release += excess / kSeatTurnFull;
 		}
 		m_seatPelvis = slerp(m_seatPelvis, pelvis, std::min(1.0, dt / kSeatLeak));
-		m_seat += (hip0 - m_seat) * std::min(1.0, release);
+		const Vec3 toChain = hip0 - m_seat;
+		const double kh = std::min(1.0, release + dt / kSeatLeakH), kv = std::min(1.0, release + dt / kSeatLeak);
+		m_seat += Vec3{toChain.x * kh, toChain.y * kv, toChain.z * kh};
 		Vec3 e = m_seat - hip0;
 		if (e.norm() > kSeatReach) m_seat = hip0 + e * (kSeatReach / e.norm());
 	}

@@ -556,6 +556,38 @@ static void testBodySolver() {
 		std::printf("seated lean: hip moved %.3f m\n", moved);
 	}
 
+	// Slouched on a chair (pelvis tilted 40 deg back), the head level, looking down
+	// 50 deg for 10 s, then level again: the hip stays on the seat (it went 10 cm forward
+	// with the head level and back with the head down, the seat anchor following)
+	{
+		BodySolver seat;
+		seat.configure(d, Settings{}, Mode::Three);
+		runPose(seat, d, eye, 0, 30);
+		BodyInput in;
+		in.dt = 1.0 / 90;
+		in.hmdValid = true;
+		in.hasWaist = true;
+		in.waist = Quat::fromAxisAngle({1, 0, 0}, deg2rad(40));
+		for (auto& leg : in.legs) leg.valid = true;
+		const Vec3 pivot{0, eye - 0.47 - d.headDown, 0.05};
+		auto look = [&](double pitchDeg) {
+			in.hmd.rotation = Quat::fromAxisAngle({1, 0, 0}, deg2rad(-pitchDeg));
+			in.hmd.position = pivot + in.hmd.rotation.rotate({0, d.headDown, -d.headBack});
+		};
+		look(0);
+		for (int f = 0; f < 90 * 10; f++) out = seat.update(in);
+		const Vec3 start = out.waist.position;
+		double worst = 0;
+		for (int f = 0; f < 90 * 20; f++) {
+			look(f < 90 * 10 ? 50 : 0);
+			out = seat.update(in);
+			Vec3 e = out.waist.position - start;
+			worst = std::max(worst, std::hypot(e.x, e.z));
+		}
+		CHECK(worst < 0.05, "slouched nod moved the hip by %.3f", worst);
+		std::printf("slouched nod: hip moved %.3f m\n", worst);
+	}
+
 	// Lying down across the bed from its edge, then scooting 25 cm sideways (toward the
 	// middle): the hip moves with the body, the seat anchor must not keep it at the edge
 	{

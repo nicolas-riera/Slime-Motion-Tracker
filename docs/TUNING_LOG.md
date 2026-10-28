@@ -198,3 +198,26 @@ right, the left thigh thrown 56-70 deg ahead (knee high). The twist now brings t
 axis onto the pelvis's left-right axis, the same with the shin hanging: twist -2..-15 /
 -10..-18 deg, thigh 13-32 / 12-34 deg, knees at the same height. Raised knees (20/10
 15:20-15:31) unchanged (abduction p95 change 2-4 deg).
+
+## 2026-10-28 - slouched seated hip no longer creeps forward
+
+Seated, the pelvis crept forward by itself with the head looking ahead (28/10 16:07): the
+waist tracker read the pelvis tilted 37-42 deg back (slouching), and three things followed
+that tilt. The neck range was measured from the pelvis, so a level head had already used it
+up: the chest swung back with the pelvis, the hip came 10 cm ahead of the head chain and
+6 cm up, and went back whenever the head looked down. The standing test ran the rigid
+chain along that tilt: the hip read 12-29 % standing, which cut the sit-back shift and
+loosened the seat anchor. The sit-back shift faded from 32 deg of tilt on, so the tilt
+wandering by 5 deg moved the hip 5 cm. The seat anchor followed all of it in ~8 s.
+
+Now the chest the neck range starts from leans back by at most 25 deg seated
+(kSeatChestBackMax), the standing test leaves out a backward tilt (kStandBackTilt), the
+sit-back fade starts at 41 deg (kSitBackFade0/1 0.75/0.5), and the seat anchor follows the
+head chain horizontally in 20 s (kSeatLeakH; vertically still 8 s, or a hip sitting down
+without a waist jolt stays high). 16:07 recording: creep with a still head 2.9 -> 1.0 cm
+per 3 s, hip 16.5 -> 29.7 s +14 -> +5 cm, hip 10 -> 3 cm ahead of the head, 5 cm lower.
+Seated sessions with 10-27 deg tilts: hip changes 3-5 mm on average; standing unchanged;
+reclined frames of 20/10 13:40 p95 4.4 cm. Tried and dropped: a fully upright chest
+reference (moved the validated 25 deg seated sessions 6-10 cm back), a wider neck range
+(standing changed 2-7 cm; seated only, 3 cm on the other seated sessions for 2 cm less
+creep). Test: slouched nod (hip 9.4 -> 4.3 cm).
