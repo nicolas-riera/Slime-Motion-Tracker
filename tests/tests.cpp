@@ -617,6 +617,42 @@ static void testBodySolver() {
 					out.knees[1].y, out.knees[0].y);
 	}
 
+	// Seated, the right thigh crossed over the left (its shin hanging across for 1 s), then
+	// the leg stretched out, the shin level across like an ankle on the knee: the knee stays
+	// on the other knee, the foot out past it (it jumped onto the knee)
+	{
+		BodySolver seat;
+		seat.configure(d, Settings{}, Mode::Three);
+		runPose(seat, d, eye, 0, 30);
+		runPose(seat, d, eye - 0.45, 0, 400);
+		BodyInput in;
+		in.dt = 1.0 / 90;
+		in.hmdValid = true;
+		in.hmd.position = {0, eye - 0.45, 0};
+		in.hasWaist = true;
+		for (auto& leg : in.legs) leg.valid = true;
+		const Quat hanging = Quat::fromTwoVectors({0, -1, 0}, Vec3{-0.45, -0.88, -0.16}.normalized());
+		const Quat level = Quat::fromTwoVectors({0, -1, 0}, Vec3{-0.93, -0.33, -0.1}.normalized());
+		for (int f = 0; f < 90 * 4; f++) {
+			const bool moving = f < 30 || (f >= 120 && f < 165);
+			in.legs[1].shin = f < 30 ? slerp(Quat{}, hanging, f / 30.0)
+						  : f < 120 ? hanging
+									: slerp(hanging, level, std::min(1.0, (f - 120) / 45.0));
+			in.legs[1].angularSpeed = moving ? 3.0 : 0.0;
+			in.legs[1].accelWorld = moving ? Vec3{0, 2.5, 0} : Vec3{};
+			out = seat.update(in);
+			if (f == 110)
+				CHECK(out.knees[1].y > out.knees[0].y + 0.05, "thigh over thigh knee %.3f vs other knee %.3f",
+					  out.knees[1].y, out.knees[0].y);
+		}
+		CHECK(out.knees[1].y > out.knees[0].y + 0.05, "stretched crossed knee %.3f vs other knee %.3f", out.knees[1].y,
+			  out.knees[0].y);
+		CHECK(out.feet[1].position.x < out.knees[0].x - 0.15, "stretched crossed foot x %.3f, other knee x %.3f",
+			  out.feet[1].position.x, out.knees[0].x);
+		std::printf("crossed leg stretched: knee y %.3f (other %.3f), foot x %.3f (other knee x %.3f)\n",
+					out.knees[1].y, out.knees[0].y, out.feet[1].position.x, out.knees[0].x);
+	}
+
 	// Lying down across the bed from its edge, then scooting 25 cm sideways (toward the
 	// middle): the hip moves with the body, the seat anchor must not keep it at the edge
 	{

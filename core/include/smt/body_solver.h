@@ -138,6 +138,8 @@ struct BodyOutput {
 		std::array<double, 2> hold{};  // held raised leg weight (kHold*), and its latch
 		std::array<bool, 2> holdLatched{};
 		std::array<double, 2> lowerDisp{};
+		std::array<double, 2> crossed{};  // crossed leg weight (kCross*), and resting on the other
+		std::array<bool, 2> crossRest{};
 	} debug;
 };
 
@@ -170,6 +172,11 @@ private:
 		Vec3 thighLocal{0, -1, 0}, holdThigh{0, -1, 0};
 		bool holdLatched = false;  // the leg is held up (see kHold*)
 		bool onBed = false;  // reclined, planted on the hip's surface rather than the floor
+		bool crossRest = false;  // planted on the other leg (crossed, see kCross*)
+		double crossHang = 0;  // s crossed thigh over thigh
+		bool kneeOnLatch = false;  // the knee stays on the other knee while crossed
+		Vec3 crossTarget;  // a crossed leg's late swing target, gliding to the rest
+		bool crossTargetValid = false;
 		// Leg being lowered (kHold*): low-passed vertical acceleration, its leaky velocity
 		// and displacement from the raw accelerometer
 		double lowerAcc = 0, lowerVel = 0, lowerDisp = 0;

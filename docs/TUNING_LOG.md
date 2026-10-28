@@ -242,3 +242,26 @@ foot 0.53, it used to stretch 70 cm to the right). Gated off kneeling (shin leve
 pointing back) and lying: on the 20/10 13:40 recording it first moved kneeling and lying legs
 by up to 80 cm, now 0.4 % of seated frames by up to 12 cm; 23/10 14:34 141-143 s (left shin
 57 deg across, foot on the floor before) now crossed. Standing unchanged. Test: crossed leg.
+
+## 2026-10-28 - thigh over thigh, the crossed leg stretched out, seated restart
+
+Thigh over thigh (19:21 recording, photo) the top foot stood on the floor and its knee sat
+inside the other knee at the same height: the shin hangs (25-37 deg), not level, so the
+ankle-on-knee rule did not see it. With the thigh in the tracker's hinge plane at a seated
+flexion (kCrossPhi) its ankle ends 18-22 cm past the body's middle (knees apart with the feet
+together stay near it): then the knee rests kCrossStack above the other knee, the foot hangs
+(no snap or sink to the floor while resting on the other leg). Knees 0.57-0.60 m over 0.49.
+
+Then the leg stretched out from there (19:25 recording, video): the shin goes level across
+exactly like an ankle on the knee (only the knee flexion differs, which no tracker sees) and
+the foot jumped onto the other knee. Thigh over thigh held kCrossLatch s, the knee now stays
+on the other knee until the leg uncrosses (foot out 26-36 cm past it); putting the ankle up
+is one quick move, the shin never hangs across that long. The foot glides to its rest
+(kCrossGlide) instead of being set there, also once the dead reckoning is over: from nothing
+to the rest the leg unfolded to the floor and the knee flipped (50 cm in a frame). The other
+knee must be up (on one knee, 20/10, it fired).
+
+The solver restarting while seated (replays of seated recordings) put a leg folded in the air
+(foot pulled under the hip): the init's horizontal under-hip pull now scales with standing.
+Changes elsewhere: 20/10 13:40 seated 3 % of frames up to 12 cm (mostly that init), short
+seated crossings on 20/10 15:50 and 23/10. Tests: crossed leg stretched.
