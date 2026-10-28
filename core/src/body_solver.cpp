@@ -84,6 +84,16 @@ const double kSeatSinkTime = tunable("kSeatSinkTime", 1.0);
 // up axis height above kCrossTrunk0..1 (lying on a bed, legs fold every way). The ankle
 // rests kCrossRest (m) above the other knee joint (the knee's top, the ankle's half
 // thickness)
+// Foot strike while swinging, seated (see the solver): world vertical acceleration above
+// kImpactAccel (m/s^2; 27-54 seen, a lift starts at 10-20), risen by more than
+// kImpactJump within ~0.15 s (a strike is sharp), the dead-reckoned foot within
+// kImpactHeight (m) of where it last stood (it drifts up to 30 cm between strikes); seated
+// upright only (lying on a bed the legs kick about). Taken for a strong lift, the dead
+// reckoning only loses the few cm of the push
+const double kImpactAccel = tunable("kImpactAccel", 25.0);
+const double kImpactJump = tunable("kImpactJump", 22.0);
+const double kImpactHeight = tunable("kImpactHeight", 0.35);
+const double kImpactEnd = tunable("kImpactEnd", 10.0);  // m/s^2, the jolt is over below
 const double kCrossShin0 = tunable("kCrossShin0", 0.7);
 const double kCrossShin1 = tunable("kCrossShin1", 0.55);
 const double kCrossIn0 = tunable("kCrossIn0", 0.3);
@@ -856,8 +866,16 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 			// Trust the accelerometer: the foot stays where it stopped (on the bed, held
 			// up...), at the dead-reckoned height (the solution may lag behind it), unless
 			// it is within a few cm of the floor
+			// After foot strikes (kImpact*), it rests where it struck: the dead reckoning
+			// drifts between strikes, and they keep the swing young (both feet stopped 30 cm
+			// up after a bout of tapping)
+			const double struckY = ls.anchor.y;
 			ls.anchor = ls.ankle;
-			if (ls.swingTime < kMaxSwing) ls.anchor.y = std::max(ankleY, ls.insPos.y);
+			if (ls.struck)
+				ls.anchor.y = struckY;
+			else if (ls.swingTime < kMaxSwing)
+				ls.anchor.y = std::max(ankleY, ls.insPos.y);
+			ls.struck = false;
 			// Reclined, the foot lands on the bed (the hip's surface) or on the floor,
 			// whichever its touchdown height is closer to: slouched on a couch, the feet
 			// on the floor used to be pulled up to the seat and floated
@@ -883,7 +901,11 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 		} else if (ls.planted && (a > 2.0 || li.angularSpeed > 4.0 || ls.stanceVel.norm() > kLiftOffSpeed)) {
 			// Lift-off: the swing starts with the motion already integrated
 			ls.planted = false;
+			// Off the other leg, a foot strike is on the floor (the anchor stays the surface
+			// struck: the knee's top, the foot uncrossed then rested 30 cm up)
+			if (ls.crossRest) ls.anchor.y = ankleY;
 			ls.crossRest = false;
+			ls.struck = ls.impact = false;
 			ls.swingTime = 0;
 			ls.insPos = ls.ankle + ls.stanceDisp;
 			ls.insVel = ls.stanceVel;
@@ -892,8 +914,29 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 		}
 		if (!ls.planted) {
 			const double prevSwing = ls.swingTime;
+			// Foot strikes (kImpact*): seated, a foot tapping or a leg bouncing (20 cm at 2.5
+			// Hz, 28/10) never stands still long enough to plant, and after ~0.5 s the dead
+			// reckoning was too loose to place it: the shin hardly turns, so the foot stopped
+			// moving. A sharp upward jolt while the dead-reckoned foot comes down near the
+			// surface it left is the foot hitting it. Where the jolt turns the dead-reckoned
+			// fall into a rise, the foot is at its lowest, on that surface: the dead reckoning
+			// restarts there (its velocity, zero then, kept). Zeroing the velocity anywhere in
+			// the jolt threw the foot up or down: it bounces off, it does not stop
+			ls.recentLowY = std::min(li.accelWorld.y, ls.recentLowY + dt * kImpactJump / 0.15);
+			if (!ls.impact && seated * (1 - reclined) > 0.5 && li.accelWorld.y > kImpactAccel &&
+				li.accelWorld.y - ls.recentLowY > kImpactJump && std::fabs(ls.insPos.y - ls.anchor.y) < kImpactHeight)
+				ls.impact = true;
+			const double fallVel = ls.insVel.y;
 			ls.insVel += li.accelWorld * dt;
 			ls.insPos += ls.insVel * dt;
+			if (ls.impact && ((fallVel < 0 && ls.insVel.y >= 0) || li.accelWorld.y < kImpactEnd)) {
+				// The bottom, or the jolt over without one (the dead reckoning drifting up)
+				ls.impact = false;
+				ls.struck = true;
+				ls.insPos.y = ls.anchor.y;
+				if (ls.insVel.y < 0) ls.insVel.y = 0;
+				ls.swingTime = 0;
+			}
 			ls.swingTime += dt;
 			// Held leg (kHold*): decided while the dead reckoning is still good (the foot
 			// up, not descending), dropped when the raw accelerometer sees the leg lowered
@@ -915,6 +958,7 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 		} else {
 			ls.holdLatched = false;
 			ls.lowerVel = 0;
+			ls.recentLowY = li.accelWorld.y;
 		}
 	}
 

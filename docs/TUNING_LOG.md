@@ -265,3 +265,23 @@ The solver restarting while seated (replays of seated recordings) put a leg fold
 (foot pulled under the hip): the init's horizontal under-hip pull now scales with standing.
 Changes elsewhere: 20/10 13:40 seated 3 % of frames up to 12 cm (mostly that init), short
 seated crossings on 20/10 15:50 and 23/10. Tests: crossed leg stretched.
+
+## 2026-10-28 - seated foot strikes (tapping, bouncing a leg)
+
+Seated, a leg bounced fast (20 cm at 2.5 Hz, 19:54 recording) showed for ~0.5 s and then
+stopped (the user thought the trackers saturated: they did not, 1300 deg/s and 12 g on
+4000 deg/s / 32 g sensors, 100 Hz without gaps). The foot never stood still 50 ms between
+strikes, so it stayed in one long swing whose dead reckoning loosens with the square of its
+age (1 cm, 7 cm at 0.5 s, 26 cm at 1 s); the shin hardly turns, so nothing else moved it.
+
+Now a sharp upward jolt (kImpact*: above 25 m/s^2, risen 22 within ~0.15 s; strikes 27-54,
+a lift starts at 10-20) with the dead-reckoned foot within 35 cm of where it last stood is a
+foot strike: where the jolt turns the dead-reckoned fall into a rise, the foot is at its
+lowest, on that surface, and the dead reckoning restarts there (zeroing the velocity in the
+jolt threw the foot 1 m up or under the floor: it bounces, it does not stop). After strikes
+the foot comes to rest where it struck (the dead reckoning drifted, both feet stopped 30 cm
+up); off the other leg (crossed) the struck surface is the floor. Seated upright only.
+19:54: the left foot keeps bouncing 10-30 cm through 4-11 s (it sat on the floor from ~5 s).
+All 25 recordings replayed: standing unchanged; seated changes only where feet strike (20/10
+13:40 sitting down to the floor then lying with the legs flat: foot 0.18 -> 0.07 m; a raised
+foot 0.19 -> 0.29 m for 10 s and 20/10 15:50 2 s, undecided).

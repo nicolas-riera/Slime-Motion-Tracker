@@ -177,6 +177,9 @@ private:
 		bool kneeOnLatch = false;  // the knee stays on the other knee while crossed
 		Vec3 crossTarget;  // a crossed leg's late swing target, gliding to the rest
 		bool crossTargetValid = false;
+		bool impact = false;  // in a foot strike's jolt (kImpact*), before its bottom
+		bool struck = false;  // a foot strike in this swing
+		double recentLowY = 0;  // lowest vertical acceleration of the last ~0.15 s
 		// Leg being lowered (kHold*): low-passed vertical acceleration, its leaky velocity
 		// and displacement from the raw accelerometer
 		double lowerAcc = 0, lowerVel = 0, lowerDisp = 0;
