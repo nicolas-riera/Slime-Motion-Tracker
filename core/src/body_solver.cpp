@@ -658,12 +658,17 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 		legOffset[i] = pelvis.rotate({(i == 0 ? -0.5 : 0.5) * d.hipWidth, 0, 0});
 		down[i] = li.shin.rotate({0, -1, 0});
 		{
-			// Twist about the shin axis toward the pelvis forward (kTibial*): the hinge
-			// plane turns to contain it, unless the shin points along it
-			const Vec3 u = -down[i], fs = li.shin.rotate({0, 0, -1}), fp = pelvis.rotate({0, 0, -1});
-			const double along = std::fabs(fp.dot(u));
-			const Vec3 target = fp - u * fp.dot(u);
-			const double twist = std::atan2(u.dot(fs.cross(target)), fs.dot(target));
+			// Twist about the shin axis bringing the knee's axis onto the pelvis's left-right
+			// axis (kTibial*), unless the shin points along it. Turning the shin's front toward
+			// the pelvis forward was the same with the shin hanging, but with the heel kicked
+			// back (shin level or above, its front facing down) the pelvis forward lay along the
+			// shin or behind its front: the twist came out anywhere, -80 deg on the left leg
+			// and -10 on the right for the same move (28/10 recording), the thigh thrown ahead
+			const Vec3 u = -down[i], xs = li.shin.rotate({1, 0, 0}), xp = pelvis.rotate({1, 0, 0});
+			const Vec3 fp = pelvis.rotate({0, 0, -1});
+			const double along = std::fabs(xp.dot(u));
+			const Vec3 target = xp - u * xp.dot(u);
+			const double twist = std::atan2(u.dot(xs.cross(target)), xs.dot(target));
 			const double gate = smoothstep(kTibialFlex0, kTibialFlex1, ls.phi) * smoothstep(0.95, 0.8, along);
 			const double sit =
 				(1 - standing) * std::max(smoothstep(kTibialSitAhead + 0.1, kTibialSitAhead - 0.1, fp.dot(u)), reclined);

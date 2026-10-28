@@ -187,3 +187,14 @@ and the heading re-locks on the mag. Replay: shin tilt 63 -> 10.5 deg (10.3 befo
 accel 10.5 -> 0.2 m/s^2, yaw -130 -> -62 deg (-59 before); standing afterwards the left
 shin is at the body's heading (-89 vs waist -94) instead of 20 deg out. Only one clean
 glitch in all the recordings (seconds-long, gravity-sized); shorter ones are real motion.
+
+## 2026-10-28 - knee twist referenced to the pelvis's left-right axis
+
+A heel kicked back (shin level or above, knee bent 110-140 deg) worked with the right leg
+and not the left (28/10 14:13 and 14:16 recordings): the tibial twist (kTibialFree) turned
+the shin's front toward the pelvis forward, which lies along the shin or behind its front
+in that pose, and came out anywhere: -50 to -80 deg on the left leg, -10 to -60 on the
+right, the left thigh thrown 56-70 deg ahead (knee high). The twist now brings the knee's
+axis onto the pelvis's left-right axis, the same with the shin hanging: twist -2..-15 /
+-10..-18 deg, thigh 13-32 / 12-34 deg, knees at the same height. Raised knees (20/10
+15:20-15:31) unchanged (abduction p95 change 2-4 deg).
