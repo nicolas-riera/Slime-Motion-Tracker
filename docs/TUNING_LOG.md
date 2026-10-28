@@ -221,3 +221,24 @@ reclined frames of 20/10 13:40 p95 4.4 cm. Tried and dropped: a fully upright ch
 reference (moved the validated 25 deg seated sessions 6-10 cm back), a wider neck range
 (standing changed 2-7 cm; seated only, 3 cm on the other seated sessions for 2 cm less
 creep). Test: slouched nod (hip 9.4 -> 4.3 cm).
+
+## 2026-10-28 - crossed leg (ankle on the other knee)
+
+Seated, the right ankle put on the left knee (28/10 18:59 recording, photo: knee high and out,
+the shin across, lateral side down) came out low and stretched: the dead reckoning through the
+swing over (the shin turning 70 deg) ended 30 cm low, the foot snapped to the floor (touchdown
+below kSeatFloorSnap) and, the thigh held in the knee hinge plane, the leg folded (knee 0.29 m,
+foot 0.13 m beside the left foot). The hinge plane was 37 deg away from the thigh: the hip
+rotates out and the tibia twists on the femur. After kMaxSwing, a still-moving leg was
+unconstrained and unfolded to the floor beside the chair (~0.5 s, each crossing).
+
+Now (kCross*), seated on a chair with an upright trunk, a shin 45-65+ deg from vertical, ankle
+below the knee, pointing across the body toward the other leg, is a crossed leg: the thigh goes
+from the hip toward the other knee's top (the ankle on the sphere the shin leaves it, the
+closest to it), the hinge turns to hold that thigh, the foot lands there, and a crossed leg
+still moving after the dead reckoning is pulled toward it. 18:59: right knee 0.29 -> 0.64 m
+(out 20 cm), foot 0.13 -> 0.48 m beside the left knee; left over right the same (knee 0.65,
+foot 0.53, it used to stretch 70 cm to the right). Gated off kneeling (shin level or rising,
+pointing back) and lying: on the 20/10 13:40 recording it first moved kneeling and lying legs
+by up to 80 cm, now 0.4 % of seated frames by up to 12 cm; 23/10 14:34 141-143 s (left shin
+57 deg across, foot on the floor before) now crossed. Standing unchanged. Test: crossed leg.

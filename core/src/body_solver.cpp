@@ -77,6 +77,23 @@ constexpr double kFloorSinkTime = 2.0;
 // couch itself) keep their height
 const double kSeatFloorSnap = tunable("kSeatFloorSnap", 0.20);
 const double kSeatSinkTime = tunable("kSeatSinkTime", 1.0);
+// Crossed leg (ankle on the other knee, seated on a chair): the shin up axis height
+// below kCrossShin0..1, its knee-to-ankle direction across the body (along the pelvis
+// left-right axis, toward the other leg) beyond kCrossIn0..1, the hip kCrossHip0..1 (m)
+// above the floor (sitting on the floor cross-legged, the feet are on it), the pelvis
+// up axis height above kCrossTrunk0..1 (lying on a bed, legs fold every way). The ankle
+// rests kCrossRest (m) above the other knee joint (the knee's top, the ankle's half
+// thickness)
+const double kCrossShin0 = tunable("kCrossShin0", 0.7);
+const double kCrossShin1 = tunable("kCrossShin1", 0.55);
+const double kCrossIn0 = tunable("kCrossIn0", 0.3);
+const double kCrossIn1 = tunable("kCrossIn1", 0.5);
+const double kCrossHip0 = tunable("kCrossHip0", 0.25);
+const double kCrossHip1 = tunable("kCrossHip1", 0.35);
+const double kCrossTrunk0 = tunable("kCrossTrunk0", 0.5);
+const double kCrossTrunk1 = tunable("kCrossTrunk1", 0.7);
+const double kCrossRest = tunable("kCrossRest", 0.08);
+const double kCrossSigma = tunable("kCrossSigma", 0.10);  // m, pull of the rest on a moving crossed leg
 // Standing with no planted foot on the floor, the lowest one sinks to it with this
 // time constant (s)
 constexpr double kNoSupportSinkTime = 0.5;
@@ -699,7 +716,8 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 	}
 
 	// ---- per-leg geometry, stance detection (zero velocity), swing dead reckoning ----
-	std::array<Vec3, 2> legOffset, down, forward;
+	std::array<Vec3, 2> legOffset, down, forward, crossAnkle;
+	std::array<double, 2> crossed{};
 	for (int i = 0; i < 2; i++) {
 		const auto& li = in.legs[i];
 		LegState& ls = m_legs[i];
@@ -725,6 +743,33 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 			const double outward = std::max(0.0, i == 0 ? -twist : twist);
 			out.debug.hingeYaw[i] =
 				gate * (kTibialFree * standing * twist - kTibialSeated * sit * (i == 0 ? outward : -outward));
+			// Crossed leg (kCross*): seated on a chair, a shin lying far from vertical and
+			// pointing across the body is an ankle resting on the other knee. The thigh goes
+			// from the hip toward that rest (the ankle on the sphere the shin leaves it, the
+			// closest to it), and the hinge turns to hold it: the hip rotates out and the
+			// tibia twists on the femur, 37 deg away from the tracker's plane (28/10)
+			// Not kneeling (the shin level or rising toward the ankle, pointing back) nor
+			// lying (the 20/10 recordings: on the knees beside the chair, on the bed)
+			const double inward = down[i].dot(xp) * (i == 0 ? 1 : -1);
+			const double across = inward / std::max(1e-6, std::hypot(down[i].x, down[i].z));
+			crossed[i] = seated * smoothstep(kCrossShin0, kCrossShin1, u.y) * smoothstep(0.05, 0.2, u.y) *
+						 smoothstep(kCrossIn0, kCrossIn1, inward) * smoothstep(0.6, 0.8, across) *
+						 smoothstep(kCrossHip0, kCrossHip1, (hip0 + m_hipOffset).y - in.floorY) *
+						 smoothstep(kCrossTrunk0, kCrossTrunk1, torsoUp.y);
+			if (crossed[i] > 0 && m_initialized) {
+				const int o = 1 - i;
+				const Vec3 otherKnee = m_legs[o].ankle + in.legs[o].shin.rotate({0, 1, 0}) * d.shin;
+				const Vec3 c = hip0 + m_hipOffset + legOffset[i] + down[i] * d.shin;
+				const Vec3 toRest = otherKnee + Vec3{0, kCrossRest, 0} - c;
+				const Vec3 thigh = toRest.normalized();
+				crossAnkle[i] = c + thigh * d.thigh;
+				const Vec3 fs = li.shin.rotate({0, 0, -1});
+				const Vec3 fwant = thigh - down[i] * thigh.dot(down[i]);
+				if (fwant.norm() > 0.2) {
+					const double crossTwist = std::atan2(u.dot(fs.cross(fwant)), fs.dot(fwant));
+					out.debug.hingeYaw[i] += crossed[i] * wrapAngle(crossTwist - out.debug.hingeYaw[i]);
+				}
+			}
 			forward[i] = (li.shin * Quat::yaw(out.debug.hingeYaw[i])).rotate({0, 0, -1});
 		}
 
@@ -779,7 +824,17 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 			ls.onBed = bedness[i] > 0.05 && ls.anchor.y - ankleY > 0.5 * (bedY - ankleY);
 			onBedWeight[i] = std::max(ls.onBed ? 1.0 : 0.0, flatLying);
 			const double floorWeight = lerp(seated, floorPref[i], onBedWeight[i]);
-			if (ls.anchor.y - ankleY < lerp(kFloorSnap, kSeatFloorSnap, floorWeight)) ls.anchor.y = ankleY;
+			// A crossed leg (see above) lands on the other knee: the foot cannot be on the
+			// floor with the shin lying flat. The dead reckoning through the swing over (the
+			// shin turning 70 deg) came out 30 cm low, the foot snapped to the floor and the
+			// leg folded up against the hinge
+			if (crossed[i] > 0.5 && m_initialized) {
+				ls.anchor = crossAnkle[i];
+				ls.anchor.y = std::max(ankleY, ls.anchor.y);
+				ls.onBed = false;
+			} else if (ls.anchor.y - ankleY < lerp(kFloorSnap, kSeatFloorSnap, floorWeight)) {
+				ls.anchor.y = ankleY;
+			}
 			out.debug.touchdownSwing[i] = ls.swingTime;
 			out.debug.touchdownHeight[i] = ls.anchor.y - ankleY;
 			ls.stanceVel = ls.stanceDisp = {};
@@ -917,6 +972,12 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 			p.anchorSigma = anchorSigma;
 			p.insSigma = insSigma[i];
 			p.ins = ls.insPos;
+			// A crossed leg still moving once the dead reckoning is over rests toward the other
+			// knee: unconstrained, it unfolded to the floor beside the chair for ~0.5 s
+			if (!ls.planted && p.insSigma <= 0 && crossed[i] > 0.5 && m_initialized) {
+				p.ins = crossAnkle[i];
+				p.insSigma = kCrossSigma;
+			}
 			p.support = standing * (ls.planted ? 1.0 : 0.1);
 			// Not reclined: the model never saw the user lying back, and there it bent
 			// the knees of the legs stretched on the bed
@@ -963,7 +1024,7 @@ BodyOutput BodySolver::update(const BodyInput& rawIn) {
 			// held): the knee prior must win within a fraction of a second. Against the
 			// frame-to-frame smoothness its small pull straightened a bent knee in ~4 s
 			// (legs raised lying on the back stayed folded)
-			if (!ls.planted && insSigma[i] <= 0 && p.hold < 0.05) p.sigmaPhi *= kFreeSmooth;
+			if (!ls.planted && p.insSigma <= 0 && p.hold < 0.05) p.sigmaPhi *= kFreeSmooth;
 			p.bedWeight = ls.planted ? bedness[i] * onBedWeight[i] : 0.0;
 			p.bedY = std::max(ankleY, (hip0 + hipOffset).y - kBedBelowHip);
 			p.otherHeight = std::max(0.0, (hip0 + hipOffset + legVector(o, phi[o])).y - ankleY);

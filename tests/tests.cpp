@@ -588,6 +588,35 @@ static void testBodySolver() {
 		std::printf("slouched nod: hip moved %.3f m\n", worst);
 	}
 
+	// Seated, the right ankle put on the left knee: the shin turns from vertical to 67 deg,
+	// pointing across to the left. The foot rests up on the knee, not on the floor (it
+	// snapped there and the leg folded against the knee hinge)
+	{
+		BodySolver seat;
+		seat.configure(d, Settings{}, Mode::Three);
+		runPose(seat, d, eye, 0, 30);
+		runPose(seat, d, eye - 0.45, 0, 400);
+		BodyInput in;
+		in.dt = 1.0 / 90;
+		in.hmdValid = true;
+		in.hmd.position = {0, eye - 0.45, 0};
+		in.hasWaist = true;
+		for (auto& leg : in.legs) leg.valid = true;
+		const Quat crossed = Quat::fromTwoVectors({0, -1, 0}, Vec3{-0.88, -0.39, 0.28}.normalized());
+		for (int f = 0; f < 90 * 3; f++) {
+			const double k = std::min(1.0, f / 45.0);
+			in.legs[1].shin = slerp(Quat{}, crossed, k);
+			in.legs[1].angularSpeed = f < 45 ? 3.0 : 0.0;
+			in.legs[1].accelWorld = f < 45 ? Vec3{0, f < 22 ? 3.0 : -3.0, 0} : Vec3{};
+			out = seat.update(in);
+		}
+		CHECK(out.feet[1].position.y > 0.35, "crossed leg foot at %.3f", out.feet[1].position.y);
+		CHECK(out.knees[1].y > out.knees[0].y + 0.05, "crossed knee %.3f vs other knee %.3f", out.knees[1].y,
+			  out.knees[0].y);
+		std::printf("crossed leg: foot y %.3f, knee y %.3f (other knee %.3f)\n", out.feet[1].position.y,
+					out.knees[1].y, out.knees[0].y);
+	}
+
 	// Lying down across the bed from its edge, then scooting 25 cm sideways (toward the
 	// middle): the hip moves with the body, the seat anchor must not keep it at the edge
 	{
